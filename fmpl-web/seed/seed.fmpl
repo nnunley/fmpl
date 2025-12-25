@@ -1,0 +1,9 @@
+object storylet {
+  prose: ""
+  choices: []
+}
+
+object crossroads {
+  prose: "You stand where two paths diverge in a yellow wood."
+  choices: []
+}

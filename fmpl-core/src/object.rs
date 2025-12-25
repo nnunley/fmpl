@@ -3,6 +3,7 @@
 use crate::compiler::CompiledCode;
 use crate::error::{Error, Result};
 use crate::value::Value;
+use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,21 +12,21 @@ use std::sync::Arc;
 pub type ObjectId = u64;
 
 /// A stored method.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Method {
     pub params: Vec<SmolStr>,
     pub code: Arc<CompiledCode>,
 }
 
 /// A facet definition.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Facet {
     pub members: Vec<SmolStr>,
     pub terminal: bool,
 }
 
 /// An FMPL object.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Object {
     pub id: ObjectId,
     pub parent: Option<ObjectId>,
@@ -80,6 +81,11 @@ impl ObjectDb {
     /// Look up a named object.
     pub fn lookup_name(&self, name: &str) -> Option<ObjectId> {
         self.named.get(name).copied()
+    }
+
+    /// Iterate named objects (name, id).
+    pub fn named_objects(&self) -> impl Iterator<Item = (&SmolStr, &ObjectId)> {
+        self.named.iter()
     }
 
     /// Get an object by ID.
