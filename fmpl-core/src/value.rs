@@ -44,6 +44,7 @@ pub enum StreamOp {
     Filter(Value),
     FlatMap(Value),
     Reduce(Value),
+    Parse { grammar: Value, rule: SmolStr },
 }
 
 /// A lambda closure.

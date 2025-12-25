@@ -464,6 +464,9 @@ impl Vm {
                 Instruction::StreamReduce => {
                     self.push_stream_op(StreamOp::Reduce)?;
                 }
+                Instruction::StreamParse(rule) => {
+                    self.push_stream_parse(rule)?;
+                }
                 Instruction::MatchPattern(_) => {
                     // Pattern matching handled differently
                     // This is a placeholder for more complex patterns
@@ -609,6 +612,26 @@ impl Vm {
 
         let mut ops = stream.ops.clone();
         ops.push(op(func));
+        let next = Stream {
+            source: stream.source.clone(),
+            ops,
+        };
+        self.stack.push(Value::Stream(Arc::new(next)));
+        Ok(())
+    }
+
+    fn push_stream_parse(&mut self, rule: SmolStr) -> Result<()> {
+        let grammar = self.pop()?;
+        let stream = self.pop()?;
+        let Value::Stream(stream) = stream else {
+            return Err(Error::Type {
+                expected: "stream".to_string(),
+                got: stream.type_name().to_string(),
+            });
+        };
+
+        let mut ops = stream.ops.clone();
+        ops.push(StreamOp::Parse { grammar, rule });
         let next = Stream {
             source: stream.source.clone(),
             ops,
@@ -978,6 +1001,21 @@ mod tests {
             r#"
             let (s = stream { [1, 2, 3] })
             s |> map(\x x + 1) |> filter(\x x > 2)
+        "#,
+        )
+        .unwrap();
+        assert!(matches!(result, Value::Stream(_)));
+    }
+
+    #[test]
+    fn test_stream_parse_operator() {
+        let mut vm = Vm::new();
+        let result = eval(
+            &mut vm,
+            r#"
+            let (g = grammar { digit = [0-9] })
+            let (s = stream { "5" })
+            s |> parse(g.digit)
         "#,
         )
         .unwrap();

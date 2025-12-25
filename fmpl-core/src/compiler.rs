@@ -98,6 +98,7 @@ pub enum Instruction {
     StreamFilter,
     StreamFlatMap,
     StreamReduce,
+    StreamParse(SmolStr),
 
     // Pattern matching
     MatchPattern(usize), // jump target if no match
@@ -624,6 +625,13 @@ impl Compiler {
             "filter" => Instruction::StreamFilter,
             "flatMap" => Instruction::StreamFlatMap,
             "reduce" => Instruction::StreamReduce,
+            "parse" => {
+                let (grammar, rule) = self.extract_parse_target(args)?;
+                self.compile_expr(left)?;
+                self.compile_stream_parse_grammar(&grammar)?;
+                self.code.emit(Instruction::StreamParse(rule));
+                return Ok(true);
+            }
             _ => return Ok(false),
         };
 
@@ -644,6 +652,49 @@ impl Compiler {
         }
         self.code.emit(instr);
         Ok(true)
+    }
+
+    fn extract_parse_target(&self, args: &[Arg]) -> Result<(Expr, SmolStr)> {
+        if args.len() != 1 {
+            return Err(Error::Compiler(
+                "stream operator parse expects 1 argument".to_string(),
+            ));
+        }
+        let Arg::Expr(expr) = &args[0] else {
+            return Err(Error::Compiler(
+                "stream operator arguments must be expressions".to_string(),
+            ));
+        };
+
+        match expr {
+            Expr::PropAccess(base, rule) => Ok((*base.clone(), rule.clone())),
+            Expr::Qualified(qn) if qn.parts.len() >= 2 => {
+                let rule = qn.parts.last().unwrap().clone();
+                let grammar_parts = qn.parts[..qn.parts.len() - 1].to_vec();
+                Ok((
+                    Expr::Qualified(QualifiedName {
+                        parts: grammar_parts,
+                    }),
+                    rule,
+                ))
+            }
+            _ => Err(Error::Compiler(
+                "parse expects a grammar.rule argument".to_string(),
+            )),
+        }
+    }
+
+    fn compile_stream_parse_grammar(&mut self, grammar: &Expr) -> Result<()> {
+        match grammar {
+            Expr::Qualified(qn) => {
+                self.code
+                    .emit(Instruction::LoadString(SmolStr::new(qn.to_string())));
+            }
+            _ => {
+                self.compile_expr(grammar)?;
+            }
+        }
+        Ok(())
     }
 
     fn compile_object_def(&mut self, def: &ObjectDef) -> Result<()> {
