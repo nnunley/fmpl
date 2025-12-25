@@ -69,9 +69,8 @@ pub fn decode_bytecode(bytes: &[u8]) -> Result<CompiledCode> {
                 }
                 let s = std::str::from_utf8(&bytes[offset..offset + len])
                     .map_err(|e| Error::Runtime(format!("invalid utf8: {}", e)))?;
-                let s = SmolStr::new(s);
                 offset += len;
-                Instruction::LoadString(s)
+                Instruction::LoadString(SmolStr::new(s))
             }
             _ => return Err(Error::Runtime("unknown opcode".to_string())),
         };
