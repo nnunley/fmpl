@@ -1,8 +1,7 @@
 //! FMPL Web REPL Server
 
 use axum::{
-    Form, Router,
-    extract::State,
+    Extension, Form, Router,
     http::StatusCode,
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -19,12 +18,16 @@ type SharedVm = Arc<Mutex<Vm>>;
 async fn main() {
     let vm = Arc::new(Mutex::new(Vm::new()));
 
+    let storylet = fmpl_web::storylet::build_app("data").expect("storylet app");
+
     let app = Router::new()
         .route("/", get(index))
         .route("/eval", post(eval_code))
         .route("/reset", post(reset_vm))
         .nest_service("/static", ServeDir::new("static"))
-        .with_state(vm);
+        .layer(Extension(vm));
+
+    let app = app.merge(storylet);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("FMPL Web REPL running at http://localhost:3000");
@@ -42,7 +45,10 @@ struct EvalRequest {
 }
 
 /// Evaluate FMPL code.
-async fn eval_code(State(vm): State<SharedVm>, Form(req): Form<EvalRequest>) -> impl IntoResponse {
+async fn eval_code(
+    Extension(vm): Extension<SharedVm>,
+    Form(req): Form<EvalRequest>,
+) -> impl IntoResponse {
     let code = req.code.trim();
 
     if code.is_empty() {
@@ -78,7 +84,7 @@ async fn eval_code(State(vm): State<SharedVm>, Form(req): Form<EvalRequest>) -> 
 }
 
 /// Reset the VM state.
-async fn reset_vm(State(vm): State<SharedVm>) -> impl IntoResponse {
+async fn reset_vm(Extension(vm): Extension<SharedVm>) -> impl IntoResponse {
     let mut vm = vm.lock().unwrap();
     *vm = Vm::new();
     Html(r#"<div class="entry system">VM state reset.</div>"#)
