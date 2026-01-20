@@ -32,6 +32,31 @@ pub enum ParseNext {
     End,
 }
 
+/// Errors for ParseState serialization/persistence.
+#[derive(Debug)]
+pub enum ParseStateError {
+    /// Serialization failed.
+    Serialize(serde_json::Error),
+    /// Deserialization failed.
+    Deserialize(serde_json::Error),
+    /// Fjall operation failed.
+    #[cfg(feature = "fjall-persistence")]
+    Fjall(fjall::Error),
+}
+
+impl std::fmt::Display for ParseStateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serialize(e) => write!(f, "serialize error: {}", e),
+            Self::Deserialize(e) => write!(f, "deserialize error: {}", e),
+            #[cfg(feature = "fjall-persistence")]
+            Self::Fjall(e) => write!(f, "fjall error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for ParseStateError {}
+
 /// Serialization support for ParseState (requires fjall-persistence feature).
 #[cfg(feature = "fjall-persistence")]
 impl ParseState {
@@ -43,6 +68,33 @@ impl ParseState {
     /// Deserialize from bytes.
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
+    }
+
+    /// Save parse state to Fjall partition.
+    pub fn save_to_fjall(
+        &self,
+        partition: &fjall::PartitionHandle,
+        key: &[u8],
+    ) -> Result<(), ParseStateError> {
+        let bytes = self.to_bytes().map_err(ParseStateError::Serialize)?;
+        partition
+            .insert(key, bytes)
+            .map_err(ParseStateError::Fjall)?;
+        Ok(())
+    }
+
+    /// Load parse state from Fjall partition.
+    pub fn load_from_fjall(
+        partition: &fjall::PartitionHandle,
+        key: &[u8],
+    ) -> Result<Option<Self>, ParseStateError> {
+        match partition.get(key).map_err(ParseStateError::Fjall)? {
+            Some(bytes) => {
+                let state = Self::from_bytes(&bytes).map_err(ParseStateError::Deserialize)?;
+                Ok(Some(state))
+            }
+            None => Ok(None),
+        }
     }
 }
 
@@ -130,6 +182,55 @@ mod tests {
             assert_eq!(restored.position_index, 0);
             assert!(restored.rule_stack.is_empty());
             assert!(restored.bindings.is_empty());
+        }
+
+        #[test]
+        fn test_parse_state_fjall_roundtrip() {
+            use tempfile::tempdir;
+
+            let temp_dir = tempdir().unwrap();
+            let keyspace = fjall::Config::new(temp_dir.path()).open().unwrap();
+            let partition = keyspace
+                .open_partition("parse_states", Default::default())
+                .unwrap();
+
+            let mut bindings = HashMap::new();
+            bindings.insert(SmolStr::new("result"), Value::Int(999));
+
+            let state = ParseState {
+                position_index: 42,
+                rule_stack: vec![(SmolStr::new("expr"), 10)],
+                bindings,
+            };
+
+            // Store in Fjall
+            let key = b"test_session_123";
+            state.save_to_fjall(&partition, key).unwrap();
+
+            // Load from Fjall
+            let restored = ParseState::load_from_fjall(&partition, key)
+                .unwrap()
+                .expect("should find saved state");
+
+            assert_eq!(restored.position_index, 42);
+            assert_eq!(
+                restored.bindings.get(&SmolStr::new("result")),
+                Some(&Value::Int(999))
+            );
+        }
+
+        #[test]
+        fn test_parse_state_fjall_not_found() {
+            use tempfile::tempdir;
+
+            let temp_dir = tempdir().unwrap();
+            let keyspace = fjall::Config::new(temp_dir.path()).open().unwrap();
+            let partition = keyspace
+                .open_partition("parse_states", Default::default())
+                .unwrap();
+
+            let result = ParseState::load_from_fjall(&partition, b"nonexistent");
+            assert!(result.unwrap().is_none());
         }
     }
 }
