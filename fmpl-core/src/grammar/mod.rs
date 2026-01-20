@@ -39,6 +39,7 @@
 //! ast @ ast::optimizer.add
 //! ```
 
+pub mod driver;
 pub mod incremental;
 pub mod input;
 pub mod parser;
