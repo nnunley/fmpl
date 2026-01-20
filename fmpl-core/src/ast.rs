@@ -14,9 +14,11 @@ impl QualifiedName {
     pub fn simple(name: SmolStr) -> Self {
         Self { parts: vec![name] }
     }
+}
 
-    pub fn to_string(&self) -> String {
-        self.parts.join("::")
+impl std::fmt::Display for QualifiedName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.parts.join("::"))
     }
 }
 

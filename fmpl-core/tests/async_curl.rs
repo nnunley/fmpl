@@ -89,24 +89,24 @@ async fn test_curl_get_receives_response() {
     let result = eval(&mut vm, &code).unwrap();
 
     // Get the source stream
-    if let Value::Map(m) = result {
-        if let Some(Value::AsyncStream(stream)) = m.get("source") {
-            // Wait a bit for the async operation to complete
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    if let Value::Map(m) = result
+        && let Some(Value::AsyncStream(stream)) = m.get("source")
+    {
+        // Wait a bit for the async operation to complete
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-            // Try to receive the response
-            let mut handle = stream.lock().unwrap();
-            if let Some(event) = handle.recv_blocking() {
-                match event {
-                    fmpl_core::StreamEvent::Ok(Value::String(s)) => {
-                        assert_eq!(s.as_str(), "test response");
-                    }
-                    other => panic!("expected Ok with string, got {:?}", other),
+        // Try to receive the response
+        let mut handle = stream.lock().unwrap();
+        if let Some(event) = handle.recv_blocking() {
+            match event {
+                fmpl_core::StreamEvent::Ok(Value::String(s)) => {
+                    assert_eq!(s.as_str(), "test response");
                 }
-            } else {
-                // Response not yet available - that's okay for async
-                // The test verifies the structure is correct
+                other => panic!("expected Ok with string, got {:?}", other),
             }
+        } else {
+            // Response not yet available - that's okay for async
+            // The test verifies the structure is correct
         }
     }
 }

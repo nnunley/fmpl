@@ -167,14 +167,14 @@ impl Display for Binding {
 
 impl Display for ObjectDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "object ^{}", self.name.to_string())?;
+        write!(f, "object ^{}", self.name)?;
         if !self.parents.is_empty() {
             write!(f, "(")?;
             for (i, p) in self.parents.iter().enumerate() {
                 if i > 0 {
                     write!(f, ", ")?;
                 }
-                write!(f, "^{}", p.to_string())?;
+                write!(f, "^{}", p)?;
             }
             write!(f, ")")?;
         }
@@ -218,7 +218,7 @@ impl Display for Expr {
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Null => write!(f, "null"),
             Expr::Ident(name) => write!(f, "{}", name),
-            Expr::Qualified(qn) => write!(f, "{}", qn.to_string()),
+            Expr::Qualified(qn) => write!(f, "{}", qn),
             Expr::ObjTag(name) => write!(f, "^{}", name),
             Expr::FnTag(name) => write!(f, "@{}", name),
             Expr::Self_ => write!(f, "self"),
@@ -710,7 +710,7 @@ mod tests {
         assert_eq!(Value::Null.source_repr(), "null");
         assert_eq!(Value::Bool(true).source_repr(), "true");
         assert_eq!(Value::Int(42).source_repr(), "42");
-        assert_eq!(Value::Float(3.14).source_repr(), "3.14");
+        assert_eq!(Value::Float(3.125).source_repr(), "3.125");
         assert_eq!(
             Value::String(SmolStr::new("hello")).source_repr(),
             "\"hello\""

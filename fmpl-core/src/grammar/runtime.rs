@@ -263,37 +263,37 @@ impl<'a, 'e> PegRuntime<'a, 'e> {
             }
 
             Pattern::Literal(s) => {
-                if let Some(text) = self.text_from(pos) {
-                    if text.starts_with(s.as_str()) {
-                        return Ok(ParseResult::Success(
-                            Value::String(s.clone()),
-                            pos + s.len(),
-                        ));
-                    }
+                if let Some(text) = self.text_from(pos)
+                    && text.starts_with(s.as_str())
+                {
+                    return Ok(ParseResult::Success(
+                        Value::String(s.clone()),
+                        pos + s.len(),
+                    ));
                 }
                 Ok(ParseResult::Failure)
             }
 
             Pattern::CharClass(ranges) => {
-                if let Some(c) = self.char_at(pos) {
-                    if ranges.iter().any(|r| r.matches(c)) {
-                        return Ok(ParseResult::Success(
-                            Value::String(SmolStr::new(c.to_string())),
-                            pos + c.len_utf8(),
-                        ));
-                    }
+                if let Some(c) = self.char_at(pos)
+                    && ranges.iter().any(|r| r.matches(c))
+                {
+                    return Ok(ParseResult::Success(
+                        Value::String(SmolStr::new(c.to_string())),
+                        pos + c.len_utf8(),
+                    ));
                 }
                 Ok(ParseResult::Failure)
             }
 
             Pattern::NegCharClass(ranges) => {
-                if let Some(c) = self.char_at(pos) {
-                    if !ranges.iter().any(|r| r.matches(c)) {
-                        return Ok(ParseResult::Success(
-                            Value::String(SmolStr::new(c.to_string())),
-                            pos + c.len_utf8(),
-                        ));
-                    }
+                if let Some(c) = self.char_at(pos)
+                    && !ranges.iter().any(|r| r.matches(c))
+                {
+                    return Ok(ParseResult::Success(
+                        Value::String(SmolStr::new(c.to_string())),
+                        pos + c.len_utf8(),
+                    ));
                 }
                 Ok(ParseResult::Failure)
             }
@@ -481,10 +481,11 @@ impl<'a, 'e> PegRuntime<'a, 'e> {
             }
 
             Pattern::ByteRange(lo, hi) => {
-                if let Some(b) = self.byte_at(pos) {
-                    if b >= *lo && b <= *hi {
-                        return Ok(ParseResult::Success(Value::Int(b as i64), pos + 1));
-                    }
+                if let Some(b) = self.byte_at(pos)
+                    && b >= *lo
+                    && b <= *hi
+                {
+                    return Ok(ParseResult::Success(Value::Int(b as i64), pos + 1));
                 }
                 Ok(ParseResult::Failure)
             }
@@ -588,10 +589,10 @@ impl<'a, 'e> PegRuntime<'a, 'e> {
 
             // === Object/Value Patterns ===
             Pattern::MatchValue(expected) => {
-                if let Some(v) = self.value_at(pos) {
-                    if v == expected {
-                        return Ok(ParseResult::Success(v.clone(), pos + 1));
-                    }
+                if let Some(v) = self.value_at(pos)
+                    && v == expected
+                {
+                    return Ok(ParseResult::Success(v.clone(), pos + 1));
                 }
                 Ok(ParseResult::Failure)
             }
@@ -618,10 +619,10 @@ impl<'a, 'e> PegRuntime<'a, 'e> {
             }
 
             Pattern::SymbolMatch(name) => {
-                if let Some(Value::Symbol(sym)) = self.value_at(pos) {
-                    if sym.as_str() == name.as_str() {
-                        return Ok(ParseResult::Success(Value::Symbol(sym.clone()), pos + 1));
-                    }
+                if let Some(Value::Symbol(sym)) = self.value_at(pos)
+                    && sym.as_str() == name.as_str()
+                {
+                    return Ok(ParseResult::Success(Value::Symbol(sym.clone()), pos + 1));
                 }
                 Ok(ParseResult::Failure)
             }
@@ -821,10 +822,10 @@ impl<'a, 'e> PegRuntime<'a, 'e> {
         }
 
         // Fallback: return matched value (or last binding if available)
-        if !self.bindings.is_empty() {
-            if let Some((_, v)) = self.bindings.iter().last() {
-                return Ok(v.clone());
-            }
+        if !self.bindings.is_empty()
+            && let Some((_, v)) = self.bindings.iter().last()
+        {
+            return Ok(v.clone());
         }
         Ok(matched)
     }

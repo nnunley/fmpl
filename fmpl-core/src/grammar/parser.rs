@@ -338,7 +338,7 @@ impl<'a> GrammarParser<'a> {
                 self.advance();
                 if self
                     .peek_char()
-                    .map_or(true, |c| !c.is_alphanumeric() && c != '_')
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_')
                 {
                     // Just `_` alone - this is the wildcard/any pattern
                     Ok(Pattern::Any)
@@ -703,15 +703,14 @@ impl<'a> GrammarParser<'a> {
     fn expect_keyword(&mut self, kw: &str) -> Result<()> {
         if self.source[self.pos..].starts_with(kw) {
             let after = self.source.get(self.pos + kw.len()..);
-            if let Some(rest) = after {
-                if let Some(c) = rest.chars().next() {
-                    if c.is_alphanumeric() || c == '_' {
-                        return Err(Error::Parser {
-                            token: self.pos,
-                            message: format!("expected keyword {:?}", kw),
-                        });
-                    }
-                }
+            if let Some(rest) = after
+                && let Some(c) = rest.chars().next()
+                && (c.is_alphanumeric() || c == '_')
+            {
+                return Err(Error::Parser {
+                    token: self.pos,
+                    message: format!("expected keyword {:?}", kw),
+                });
             }
             self.pos += kw.len();
             Ok(())

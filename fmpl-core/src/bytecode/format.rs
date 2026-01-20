@@ -129,12 +129,12 @@ fn build_string_table(instructions: &[Instruction]) -> (Vec<SmolStr>, HashMap<Sm
     let mut strings = Vec::new();
     let mut index = HashMap::new();
     for instr in instructions {
-        if let Instruction::LoadString(s) = instr {
-            if !index.contains_key(s) {
-                let pos = strings.len() as u32;
-                strings.push(s.clone());
-                index.insert(s.clone(), pos);
-            }
+        if let Instruction::LoadString(s) = instr
+            && !index.contains_key(s)
+        {
+            let pos = strings.len() as u32;
+            strings.push(s.clone());
+            index.insert(s.clone(), pos);
         }
     }
     (strings, index)
@@ -157,7 +157,7 @@ mod tests {
         let mut code = CompiledCode::new();
         code.instructions.push(Instruction::LoadInt(7));
         let bytes = encode_bytecode(&code).unwrap();
-        assert!(bytes.len() > 0);
+        assert!(!bytes.is_empty());
     }
 
     #[test]

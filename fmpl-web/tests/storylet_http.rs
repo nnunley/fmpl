@@ -1,19 +1,22 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, to_bytes};
 use axum::http::{Request, StatusCode};
-use serde_json;
 use tower::ServiceExt;
 
 use fmpl_web::storylet::build_app;
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_path() -> std::path::PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time")
         .as_nanos();
+    let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
     let mut path = std::env::temp_dir();
-    path.push(format!("fmpl-web-storylet-{}", nanos));
+    path.push(format!("fmpl-web-storylet-{}-{}", nanos, counter));
     std::fs::create_dir_all(&path).expect("create temp dir");
     path
 }

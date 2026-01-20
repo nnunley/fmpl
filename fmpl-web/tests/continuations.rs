@@ -1,15 +1,19 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fmpl_web::continuations::{ContinuationStore, MAX_STREAM_PAYLOAD_BYTES, SnapshotEnvelope};
 use serde_json::Value;
+
+static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 fn temp_path() -> std::path::PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("time")
         .as_nanos();
+    let counter = COUNTER.fetch_add(1, Ordering::SeqCst);
     let mut path = std::env::temp_dir();
-    path.push(format!("fmpl-web-continuations-{}", nanos));
+    path.push(format!("fmpl-web-continuations-{}-{}", nanos, counter));
     std::fs::create_dir_all(&path).expect("create temp dir");
     path
 }

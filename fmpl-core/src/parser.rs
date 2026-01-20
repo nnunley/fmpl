@@ -849,14 +849,14 @@ impl<'a> Parser<'a> {
     /// Parse a single map entry.
     fn parse_map_entry(&mut self) -> Result<MapEntry> {
         // Check for symbol key (name: value)
-        if let Some(Token::Ident(name)) = self.peek_token() {
-            if self.peek_ahead(1).map(|t| &t.token) == Some(&Token::Colon) {
-                let name = name.clone();
-                self.advance(); // ident
-                self.advance(); // colon
-                let value = self.parse_expr()?;
-                return Ok(MapEntry::Symbol(name, value));
-            }
+        if let Some(Token::Ident(name)) = self.peek_token()
+            && self.peek_ahead(1).map(|t| &t.token) == Some(&Token::Colon)
+        {
+            let name = name.clone();
+            self.advance(); // ident
+            self.advance(); // colon
+            let value = self.parse_expr()?;
+            return Ok(MapEntry::Symbol(name, value));
         }
 
         // Computed key (expr => value)
@@ -929,10 +929,8 @@ impl<'a> Parser<'a> {
 
             bindings.push(binding);
 
-            if !self.check(&Token::RParen) {
-                if self.check(&Token::Comma) {
-                    self.advance();
-                }
+            if !self.check(&Token::RParen) && self.check(&Token::Comma) {
+                self.advance();
             }
         }
         self.expect(&Token::RParen)?;

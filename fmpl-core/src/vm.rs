@@ -826,10 +826,10 @@ impl Vm {
         }
 
         // Check frame locals
-        if let Some(frame) = self.frames.last() {
-            if let Some(val) = frame.locals.get(name) {
-                return Ok(val.clone());
-            }
+        if let Some(frame) = self.frames.last()
+            && let Some(val) = frame.locals.get(name)
+        {
+            return Ok(val.clone());
         }
 
         // Check named objects
@@ -838,10 +838,10 @@ impl Vm {
         }
 
         // Check for constructor syntax (^name or @name)
-        if name.starts_with('^') {
-            if let Some(id) = self.objects.lookup_name(&name[1..]) {
-                return Ok(Value::Object(id));
-            }
+        if name.starts_with('^')
+            && let Some(id) = self.objects.lookup_name(&name[1..])
+        {
+            return Ok(Value::Object(id));
         }
 
         Err(Error::UndefinedVariable(name.to_string()))
