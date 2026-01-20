@@ -1,0 +1,54 @@
+-- Tests for the @ apply operator
+-- Run with: cargo test -p fmpl-core --test fmpl_runner
+
+-- =============================================================================
+-- Named grammar: value @ grammar.rule
+-- =============================================================================
+
+-- Text parsing with base::parser
+"12345" @ base::parser.integer   -- Should return "12345"
+"hello" @ base::parser.word      -- Should return "hello"
+"abc123" @ base::parser.word     -- Should fail (doesn't consume all)
+
+-- Value matching with base::tree
+42 @ base::tree.int              -- Should return 42
+true @ base::tree.bool           -- Should return true
+[42] @ base::tree.int            -- Should return 42 (list as element stream)
+
+-- =============================================================================
+-- Anonymous grammar blocks: value @ { pattern => action }
+-- =============================================================================
+
+-- Simple patterns
+"test" @ { [a-z]+ => "word" }    -- Should return "test" (actions not evaluated yet)
+42 @ { _ => "any" }              -- Should return 42
+true @ { . => "dot" }            -- Should return true
+
+-- Multiple cases (first match wins)
+"123" @ { [a-z]+ => "letters"; [0-9]+ => "digits" }  -- Returns "123"
+"abc" @ { [0-9]+ => "digits"; [a-z]+ => "letters" }  -- Returns "abc"
+
+-- =============================================================================
+-- Dynamic grammars (using let-in form)
+-- =============================================================================
+
+-- Grammar literal: let binds g in the body expression
+let (g = grammar { digit = [0-9] }) "5" @ g.digit   -- Should return "5"
+
+-- Grammar extension
+let (base = grammar { letter = [a-z] }) let (ext = base <: { digit = [0-9] }) "a" @ ext.letter   -- Should return "a"
+let (base = grammar { letter = [a-z] }) let (ext = base <: { digit = [0-9] }) "5" @ ext.digit    -- Should return "5"
+
+-- =============================================================================
+-- Edge cases
+-- =============================================================================
+
+-- Empty input with * (zero-or-more)
+"" @ { [a-z]* => "maybe" }       -- Should return "" (matched empty)
+
+-- Lists as streams
+[1, 2, 3] @ base::tree.int       -- Should FAIL (doesn't consume all)
+[42] @ base::tree.int            -- Should return 42
+
+-- Type checking
+42 @ base::tree.string           -- Should FAIL (type mismatch)

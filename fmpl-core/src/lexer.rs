@@ -158,6 +158,10 @@ pub enum Token {
     Ampersand,
     #[token("@")]
     At,
+    #[token("^")]
+    Caret,
+    #[token("?")]
+    Question,
 
     // Delimiters
     #[token("(")]

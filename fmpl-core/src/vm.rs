@@ -2,7 +2,7 @@
 
 use crate::compiler::{CompiledCode, Instruction};
 use crate::error::{Error, Result};
-use crate::grammar::{Grammar, GrammarRegistry, runtime};
+use crate::grammar::{Grammar, GrammarRegistry};
 use crate::object::{Facet, Method, ObjectDb, ObjectId};
 use crate::value::{Lambda, Stream, StreamOp, Value};
 use smol_str::SmolStr;
@@ -74,6 +74,57 @@ impl Vm {
         self.execute()?;
 
         self.stack.pop().ok_or(Error::StackUnderflow)
+    }
+
+    /// Evaluate an expression with bindings in scope (for semantic actions).
+    pub fn eval_with_bindings(
+        &mut self,
+        expr: &crate::ast::Expr,
+        bindings: &std::collections::HashMap<SmolStr, Value>,
+    ) -> Result<Value> {
+        use crate::compiler::Compiler;
+
+        // Compile the expression
+        let code = Compiler::new().compile(expr)?;
+
+        // Push a new scope with the bindings
+        let mut scope = Scope::default();
+        for (name, value) in bindings {
+            scope.bindings.insert(name.clone(), value.clone());
+        }
+        self.scopes.push(scope);
+
+        // Run the compiled code
+        let result = self.run(&code);
+
+        // Pop the scope
+        self.scopes.pop();
+
+        result
+    }
+
+    /// Apply a grammar to an input value, evaluating any semantic actions.
+    pub fn apply_grammar(
+        &mut self,
+        input: Value,
+        grammar: Arc<Grammar>,
+        rule_name: &str,
+    ) -> Result<Option<Value>> {
+        use crate::grammar::runtime::apply_grammar_to_value_with_evaluator;
+
+        // Clone the grammar registry so we can pass it to the runtime.
+        // This is cheap since grammars are Arc-wrapped.
+        let registry = self.grammars.clone();
+
+        // Create an action evaluator that calls back into the VM.
+        // This is safe now that ActionEvaluator<'e> supports non-'static lifetimes.
+        let evaluator = Box::new(
+            |expr: &crate::ast::Expr, bindings: &HashMap<SmolStr, Value>| {
+                self.eval_with_bindings(expr, bindings)
+            },
+        );
+
+        apply_grammar_to_value_with_evaluator(input, &grammar, &registry, rule_name, evaluator)
     }
 
     /// Main execution loop.
@@ -521,35 +572,13 @@ impl Vm {
                     let grammar_val = self.pop()?;
                     let input = self.pop()?;
 
-                    let input_str = match &input {
-                        Value::String(s) => s.as_str(),
-                        _ => {
-                            return Err(Error::Type {
-                                expected: "string".to_string(),
-                                got: input.type_name().to_string(),
-                            });
-                        }
-                    };
-
-                    // Grammar can be either a Value::Grammar or a qualified name string
-                    let result = match grammar_val {
-                        Value::Grammar(grammar) => {
-                            // Dynamic grammar: use the grammar value directly
-                            runtime::parse_full_with_grammar(
-                                input_str,
-                                &grammar,
-                                &self.grammars,
-                                &rule_name,
-                            )
-                        }
+                    // Resolve grammar to Arc<Grammar>
+                    let grammar = match grammar_val {
+                        Value::Grammar(g) => g,
                         Value::String(grammar_name) => {
-                            // Static grammar: look up by name in registry
-                            runtime::parse_full(
-                                input_str,
-                                &self.grammars,
-                                &grammar_name,
-                                &rule_name,
-                            )
+                            self.grammars.get(&grammar_name).ok_or_else(|| {
+                                Error::Runtime(format!("grammar not found: {}", grammar_name))
+                            })?
                         }
                         _ => {
                             return Err(Error::Type {
@@ -559,15 +588,17 @@ impl Vm {
                         }
                     };
 
+                    // Apply the grammar with action evaluation
+                    let result = self.apply_grammar(input, grammar, &rule_name)?;
+
                     match result {
-                        Ok(Some(value)) => self.stack.push(value),
-                        Ok(None) => {
+                        Some(value) => self.stack.push(value),
+                        None => {
                             return Err(Error::ParseFailed {
                                 position: 0,
                                 message: format!("failed to parse with rule {}", rule_name),
                             });
                         }
-                        Err(e) => return Err(e),
                     }
                 }
                 Instruction::LoadGrammar(grammar) => {
@@ -1022,5 +1053,65 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(result, Value::Stream(_)));
+    }
+
+    #[test]
+    fn test_grammar_apply_to_int() {
+        let mut vm = Vm::new();
+        // Apply tree grammar to an integer value
+        let result = eval(&mut vm, r#"42 @ base::tree.int"#).unwrap();
+        assert!(matches!(result, Value::Int(42)));
+    }
+
+    #[test]
+    fn test_grammar_apply_to_single_element_list() {
+        let mut vm = Vm::new();
+        // Apply tree grammar to a single-element list
+        let result = eval(&mut vm, r#"[42] @ base::tree.int"#).unwrap();
+        assert!(matches!(result, Value::Int(42)));
+    }
+
+    #[test]
+    fn test_grammar_apply_to_bool() {
+        let mut vm = Vm::new();
+        // Apply tree grammar to a boolean
+        let result = eval(&mut vm, r#"true @ base::tree.bool"#).unwrap();
+        assert!(matches!(result, Value::Bool(true)));
+    }
+
+    #[test]
+    fn test_anonymous_grammar_block_string() {
+        let mut vm = Vm::new();
+        // Anonymous grammar block with string input - semantic action evaluated
+        let result = eval(&mut vm, r#""hello" @ { [a-z]+ => "word" }"#).unwrap();
+        assert!(
+            matches!(result, Value::String(ref s) if s == "word"),
+            "got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_anonymous_grammar_block_int() {
+        let mut vm = Vm::new();
+        // Anonymous grammar block matching an integer (using _ for any)
+        let result = eval(&mut vm, r#"42 @ { _ => "matched" }"#).unwrap();
+        assert!(
+            matches!(result, Value::String(ref s) if s == "matched"),
+            "got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_anonymous_grammar_block_choice() {
+        let mut vm = Vm::new();
+        // Multiple cases - should match the first applicable one
+        let result = eval(&mut vm, r#"42 @ { . => "any" }"#).unwrap();
+        assert!(
+            matches!(result, Value::String(ref s) if s == "any"),
+            "got {:?}",
+            result
+        );
     }
 }

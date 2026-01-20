@@ -4,7 +4,7 @@ use axum::extract::{Path, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect};
 use axum::routing::{get, post};
-use fmpl_core::{Value, Vm, eval};
+use fmpl_core::{Value, Vm, eval, object_source_repr};
 use serde::Deserialize;
 use std::path::Path as FsPath;
 use std::sync::{Arc, Mutex};
@@ -398,17 +398,15 @@ fn render_from_db(vm: &mut Vm, token: &str, debug: bool, is_htmx: bool) -> Resul
 
     let debug_panel = if debug {
         if let Some(id) = vm.objects.lookup_name(object_name) {
-            if let Some(Value::String(debug_source)) = vm.objects.get_property(id, "debug_fmpl") {
-                format!(
-                    r#"<details class="response" id="debug-fmpl" open>
+            // Use dynamic source representation instead of stored debug_fmpl property
+            let source = object_source_repr(&vm.objects, id);
+            format!(
+                r#"<details class="response" id="debug-fmpl" open>
   <summary>Debug FMPL</summary>
   <pre>{}</pre>
 </details>"#,
-                    html_escape(debug_source.as_str())
-                )
-            } else {
-                String::new()
-            }
+                html_escape(&source)
+            )
         } else {
             String::new()
         }

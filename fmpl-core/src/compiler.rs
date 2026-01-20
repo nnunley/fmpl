@@ -436,6 +436,8 @@ impl Compiler {
                 let mut lambda_compiler = Compiler::new();
                 lambda_compiler.compile_expr(body)?;
                 lambda_compiler.code.emit(Instruction::Return);
+                // Store source representation for introspection
+                lambda_compiler.code.source = Some(SmolStr::new(format!("{}", body)));
 
                 let nested_idx = self.code.nested.len();
                 self.code.nested.push(lambda_compiler.code);
@@ -448,6 +450,8 @@ impl Compiler {
                 let mut lambda_compiler = Compiler::new();
                 lambda_compiler.compile_expr(body)?;
                 lambda_compiler.code.emit(Instruction::Return);
+                // Store source representation for introspection
+                lambda_compiler.code.source = Some(SmolStr::new(format!("{}", body)));
 
                 let nested_idx = self.code.nested.len();
                 self.code.nested.push(lambda_compiler.code);
@@ -715,6 +719,8 @@ impl Compiler {
                 let mut method_compiler = Compiler::new();
                 method_compiler.compile_expr(&binding.value)?;
                 method_compiler.code.emit(Instruction::Return);
+                // Store source representation for introspection
+                method_compiler.code.source = Some(SmolStr::new(format!("{}", binding.value)));
 
                 // TODO: pass nested_idx to DefineMethod for proper method lookup
                 self.code.nested.push(method_compiler.code);

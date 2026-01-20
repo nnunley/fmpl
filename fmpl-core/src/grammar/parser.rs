@@ -69,6 +69,67 @@ impl<'a> GrammarParser<'a> {
         Ok(grammar)
     }
 
+    /// Parse an anonymous match block: `{ pattern => action; pattern => action; ... }`
+    /// Creates a grammar with a single "main" rule that is a Choice of all patterns.
+    pub fn parse_match_block(&mut self) -> Result<Grammar> {
+        self.skip_whitespace();
+        self.expect_char('{')?;
+
+        let mut cases = Vec::new();
+
+        loop {
+            self.skip_whitespace();
+            if self.peek_char() == Some('}') {
+                self.advance();
+                break;
+            }
+            if self.is_eof() {
+                return Err(Error::Parser {
+                    token: self.pos,
+                    message: "unexpected end of match block".to_string(),
+                });
+            }
+
+            // Parse pattern => action
+            let pattern = self.parse_pattern()?;
+            self.skip_whitespace();
+
+            if !self.peek_str("=>") {
+                return Err(Error::Parser {
+                    token: self.pos,
+                    message: "expected '=>' in match case".to_string(),
+                });
+            }
+            self.advance_by(2);
+            self.skip_whitespace();
+
+            let action = self.parse_match_action()?;
+            cases.push(Pattern::Action(Box::new(pattern), action));
+
+            // Optional semicolon between cases
+            self.skip_whitespace();
+            if self.peek_char() == Some(';') {
+                self.advance();
+            }
+        }
+
+        if cases.is_empty() {
+            return Err(Error::Parser {
+                token: self.pos,
+                message: "match block must have at least one case".to_string(),
+            });
+        }
+
+        let mut grammar = Grammar::new(SmolStr::new("<match>"));
+        let main_pattern = if cases.len() == 1 {
+            cases.into_iter().next().unwrap()
+        } else {
+            Pattern::Choice(cases)
+        };
+        grammar.add_rule(SmolStr::new("main"), Rule::new(main_pattern));
+        Ok(grammar)
+    }
+
     /// Parse rules into an existing grammar until closing brace.
     fn parse_rules_into(&mut self, grammar: &mut Grammar) -> Result<()> {
         loop {
@@ -86,6 +147,12 @@ impl<'a> GrammarParser<'a> {
 
             let (rule_name, rule) = self.parse_rule()?;
             grammar.add_rule(rule_name, rule);
+
+            // Consume optional semicolon between rules
+            self.skip_whitespace();
+            if self.peek_char() == Some(';') {
+                self.advance();
+            }
         }
 
         Ok(())
@@ -150,11 +217,12 @@ impl<'a> GrammarParser<'a> {
 
         loop {
             self.skip_whitespace();
-            // Stop at choice separator, action arrow, rule end, or grammar end
+            // Stop at choice separator, action arrow, rule end, semicolon, or grammar end
             if self.is_eof()
                 || self.peek_char() == Some('|')
                 || self.peek_char() == Some('}')
                 || self.peek_char() == Some(')')
+                || self.peek_char() == Some(';')
                 || self.peek_str("=>")
                 || self.is_at_rule_start()
             {
@@ -265,7 +333,30 @@ impl<'a> GrammarParser<'a> {
                 self.expect_char('>')?;
                 Ok(Pattern::Super(name))
             }
-            Some(c) if c.is_alphabetic() || c == '_' => {
+            Some('_') => {
+                // Check if it's just `_` (wildcard) or an identifier starting with `_`
+                self.advance();
+                if self
+                    .peek_char()
+                    .map_or(true, |c| !c.is_alphanumeric() && c != '_')
+                {
+                    // Just `_` alone - this is the wildcard/any pattern
+                    Ok(Pattern::Any)
+                } else {
+                    // It's an identifier starting with `_`, continue parsing
+                    let mut name = String::from("_");
+                    while let Some(c) = self.peek_char() {
+                        if c.is_alphanumeric() || c == '_' {
+                            name.push(c);
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    Ok(Pattern::Rule(SmolStr::new(&name)))
+                }
+            }
+            Some(c) if c.is_alphabetic() => {
                 let name = self.parse_ident()?;
                 Ok(Pattern::Rule(name))
             }
@@ -419,6 +510,67 @@ impl<'a> GrammarParser<'a> {
             // Check if we're at a new rule (ident = ...)
             if brace_depth == 0 && paren_depth == 0 && self.is_at_rule_start() {
                 break;
+            }
+
+            self.advance();
+        }
+
+        let action_src = &self.source[start..self.pos].trim();
+        if action_src.is_empty() {
+            return Err(Error::Parser {
+                token: start,
+                message: "empty semantic action".to_string(),
+            });
+        }
+
+        // Parse as FMPL expression
+        let tokens = Lexer::new(action_src).tokenize()?;
+        let expr = ExprParser::with_source(&tokens, action_src).parse()?;
+        Ok(expr)
+    }
+
+    /// Parse a semantic action for match blocks (stops at ; or } at depth 0).
+    fn parse_match_action(&mut self) -> Result<Expr> {
+        let start = self.pos;
+        let mut brace_depth = 0;
+        let mut paren_depth = 0;
+        let mut in_string = false;
+        let mut escape_next = false;
+
+        while !self.is_eof() {
+            let c = self.peek_char().unwrap();
+
+            if escape_next {
+                escape_next = false;
+                self.advance();
+                continue;
+            }
+
+            if c == '\\' {
+                escape_next = true;
+                self.advance();
+                continue;
+            }
+
+            if c == '"' {
+                in_string = !in_string;
+                self.advance();
+                continue;
+            }
+
+            if in_string {
+                self.advance();
+                continue;
+            }
+
+            match c {
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                '}' => break, // End of match block
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                ';' if brace_depth == 0 && paren_depth == 0 => break, // Next case
+                _ => {}
             }
 
             self.advance();

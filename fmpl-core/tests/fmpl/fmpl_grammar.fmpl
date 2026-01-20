@@ -1,0 +1,34 @@
+-- FMPL grammar written in FMPL (metacircular parser)
+-- This demonstrates self-hosting capability
+
+-- Token-level grammar (lexical analysis)
+let (tokens = grammar {
+    digit = [0-9];
+    letter = [a-zA-Z];
+    alpha_num = letter | digit | [_];
+    ws = [ \t\n\r]*;
+
+    int = digit+;
+    ident = letter alpha_num*;
+
+    string_char = [^"\\] | "\\" .;
+    string = "\"" string_char* "\"";
+
+    symbol = ":" ident
+}) let (expr_grammar = tokens <: {
+    atom = int | string | symbol | ident | "(" ws expr ws ")" | "[" ws list_items? ws "]";
+    list_items = expr (ws "," ws expr)*;
+
+    primary = atom (ws "." ws ident (ws "(" ws args? ws ")")?)*;
+    args = expr (ws "," ws expr)*;
+
+    unary = ("-" | "!")? ws primary;
+
+    mul = unary (ws ("*" | "/" | "%") ws unary)*;
+    add = mul (ws ("+" | "-") ws mul)*;
+    cmp = add (ws ("==" | "!=" | "<=" | ">=" | "<" | ">") ws add)?;
+    and_expr = cmp (ws "&&" ws cmp)*;
+    or_expr = and_expr (ws "||" ws and_expr)*;
+
+    expr = or_expr
+}) "42" @ expr_grammar.int
