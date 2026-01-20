@@ -11,7 +11,6 @@
 use super::{Grammar, GrammarRegistry, Input, ParseResult, Pattern, Rule};
 use crate::error::{Error, Result};
 use crate::value::Value;
-use crate::vm::Vm;
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,25 +31,29 @@ enum MemoEntry {
     Done(ParseResult),
 }
 
+/// Action evaluator callback type.
+/// Takes the action expression and bindings, returns the evaluated result.
+pub type ActionEvaluator<'e> =
+    Box<dyn FnMut(&crate::ast::Expr, &HashMap<SmolStr, Value>) -> Result<Value> + 'e>;
+
 /// PEG parser runtime.
-pub struct PegRuntime<'a> {
+pub struct PegRuntime<'a, 'e> {
     input: Input,
     registry: &'a GrammarRegistry,
     grammar: Arc<Grammar>,
-    #[allow(dead_code)]
-    vm: Option<&'a mut Vm>,
+    action_evaluator: Option<ActionEvaluator<'e>>,
     memo: HashMap<MemoKey, MemoEntry>,
     bindings: HashMap<SmolStr, Value>,
 }
 
-impl<'a> PegRuntime<'a> {
+impl<'a, 'e> PegRuntime<'a, 'e> {
     /// Create a new runtime for parsing text with a specific grammar.
     pub fn new(input: &str, registry: &'a GrammarRegistry, grammar: Arc<Grammar>) -> Self {
         Self {
             input: Input::text(input),
             registry,
             grammar,
-            vm: None,
+            action_evaluator: None,
             memo: HashMap::new(),
             bindings: HashMap::new(),
         }
@@ -66,7 +69,7 @@ impl<'a> PegRuntime<'a> {
             input: Input::binary(input),
             registry,
             grammar,
-            vm: None,
+            action_evaluator: None,
             memo: HashMap::new(),
             bindings: HashMap::new(),
         }
@@ -82,15 +85,15 @@ impl<'a> PegRuntime<'a> {
             input: Input::values(input),
             registry,
             grammar,
-            vm: None,
+            action_evaluator: None,
             memo: HashMap::new(),
             bindings: HashMap::new(),
         }
     }
 
-    /// Set VM for evaluating semantic actions.
-    pub fn with_vm(mut self, vm: &'a mut Vm) -> Self {
-        self.vm = Some(vm);
+    /// Set an action evaluator callback for semantic actions.
+    pub fn with_action_evaluator(mut self, evaluator: ActionEvaluator<'e>) -> Self {
+        self.action_evaluator = Some(evaluator);
         self
     }
 
@@ -800,19 +803,25 @@ impl<'a> PegRuntime<'a> {
     }
 
     /// Evaluate a semantic predicate expression.
-    fn evaluate_predicate(&mut self, _expr: &crate::ast::Expr) -> Result<Value> {
-        // TODO: Full expression evaluation requires VM integration
-        // For now, just return true
+    fn evaluate_predicate(&mut self, expr: &crate::ast::Expr) -> Result<Value> {
+        // If we have an action evaluator, use it for predicates too
+        if let Some(ref mut evaluator) = self.action_evaluator {
+            return evaluator(expr, &self.bindings);
+        }
+
+        // Fallback: always succeed (for testing without VM)
         Ok(Value::Bool(true))
     }
 
     /// Evaluate a semantic action expression.
-    fn evaluate_action(&mut self, _action: &crate::ast::Expr, matched: Value) -> Result<Value> {
-        // TODO: Full expression evaluation with bindings requires VM integration
-        // For now, return the matched value with bindings available
+    fn evaluate_action(&mut self, action: &crate::ast::Expr, matched: Value) -> Result<Value> {
+        // If we have an action evaluator, use it
+        if let Some(ref mut evaluator) = self.action_evaluator {
+            return evaluator(action, &self.bindings);
+        }
+
+        // Fallback: return matched value (or last binding if available)
         if !self.bindings.is_empty() {
-            // If there are bindings, try to return the most recently bound value
-            // This is a simplification - real implementation needs full VM eval
             if let Some((_, v)) = self.bindings.iter().last() {
                 return Ok(v.clone());
             }
@@ -876,6 +885,118 @@ pub fn parse_full_with_grammar(
         ParseResult::Success(_, _) => Ok(None), // Didn't consume all input
         ParseResult::Failure => Ok(None),
     }
+}
+
+/// Apply a grammar rule to any value (polymorphic input).
+/// Coerces the input based on type:
+/// - String -> character stream (text parsing)
+/// - List -> element stream (each element is one input)
+/// - Other -> single-element stream (pattern matching)
+pub fn apply_grammar_to_value(
+    input: Value,
+    grammar: &Arc<Grammar>,
+    registry: &GrammarRegistry,
+    rule_name: &str,
+) -> Result<Option<Value>> {
+    match input {
+        Value::String(s) => {
+            // Text parsing
+            let mut runtime = PegRuntime::new(s.as_str(), registry, grammar.clone());
+            match runtime.parse(rule_name)? {
+                ParseResult::Success(v, pos) if pos == s.len() => Ok(Some(v)),
+                ParseResult::Success(_, _) => Ok(None),
+                ParseResult::Failure => Ok(None),
+            }
+        }
+        Value::List(items) => {
+            // List element stream
+            let values: Vec<Value> = (*items).clone();
+            let len = values.len();
+            let mut runtime = PegRuntime::new_values(values, registry, grammar.clone());
+            match runtime.parse(rule_name)? {
+                ParseResult::Success(v, pos) if pos == len => Ok(Some(v)),
+                ParseResult::Success(_, _) => Ok(None),
+                ParseResult::Failure => Ok(None),
+            }
+        }
+        other => {
+            // Single value stream (pattern matching mode)
+            let mut runtime = PegRuntime::new_values(vec![other], registry, grammar.clone());
+            match runtime.parse(rule_name)? {
+                ParseResult::Success(v, 1) => Ok(Some(v)),
+                ParseResult::Success(_, _) => Ok(None),
+                ParseResult::Failure => Ok(None),
+            }
+        }
+    }
+}
+
+/// Apply a grammar rule to any value with an action evaluator.
+pub fn apply_grammar_to_value_with_evaluator<'e>(
+    input: Value,
+    grammar: &Arc<Grammar>,
+    registry: &GrammarRegistry,
+    rule_name: &str,
+    evaluator: ActionEvaluator<'e>,
+) -> Result<Option<Value>> {
+    match input {
+        Value::String(s) => {
+            let mut runtime = PegRuntime::new(s.as_str(), registry, grammar.clone())
+                .with_action_evaluator(evaluator);
+            match runtime.parse(rule_name)? {
+                ParseResult::Success(v, pos) if pos == s.len() => Ok(Some(v)),
+                ParseResult::Success(_, _) => Ok(None),
+                ParseResult::Failure => Ok(None),
+            }
+        }
+        Value::List(items) => {
+            let values: Vec<Value> = (*items).clone();
+            let len = values.len();
+            let mut runtime = PegRuntime::new_values(values, registry, grammar.clone())
+                .with_action_evaluator(evaluator);
+            match runtime.parse(rule_name)? {
+                ParseResult::Success(v, pos) if pos == len => Ok(Some(v)),
+                ParseResult::Success(_, _) => Ok(None),
+                ParseResult::Failure => Ok(None),
+            }
+        }
+        other => {
+            let mut runtime = PegRuntime::new_values(vec![other], registry, grammar.clone())
+                .with_action_evaluator(evaluator);
+            match runtime.parse(rule_name)? {
+                ParseResult::Success(v, 1) => Ok(Some(v)),
+                ParseResult::Success(_, _) => Ok(None),
+                ParseResult::Failure => Ok(None),
+            }
+        }
+    }
+}
+
+/// Apply a grammar rule by name with an action evaluator.
+pub fn apply_grammar_by_name_with_evaluator<'e>(
+    input: Value,
+    grammar_name: &str,
+    registry: &GrammarRegistry,
+    rule_name: &str,
+    evaluator: ActionEvaluator<'e>,
+) -> Result<Option<Value>> {
+    let grammar = registry
+        .get(grammar_name)
+        .ok_or_else(|| Error::Runtime(format!("grammar not found: {}", grammar_name)))?;
+    apply_grammar_to_value_with_evaluator(input, &grammar, registry, rule_name, evaluator)
+}
+
+/// Apply a grammar rule by name to any value.
+pub fn apply_grammar_by_name(
+    input: Value,
+    grammar_name: &str,
+    registry: &GrammarRegistry,
+    rule_name: &str,
+) -> Result<Option<Value>> {
+    let grammar = registry
+        .get(grammar_name)
+        .ok_or_else(|| Error::Runtime(format!("grammar not found: {}", grammar_name)))?;
+    apply_grammar_to_value(input, &grammar, registry, rule_name)
 }
 
 #[cfg(test)]

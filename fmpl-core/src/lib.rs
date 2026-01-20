@@ -16,6 +16,7 @@ pub mod grammar;
 pub mod lexer;
 pub mod object;
 pub mod parser;
+pub mod repr;
 pub mod value;
 pub mod vm;
 
@@ -26,6 +27,7 @@ pub use grammar::{Grammar, GrammarRegistry, Pattern, Rule};
 pub use lexer::{Lexer, Token};
 pub use object::{Object, ObjectDb, ObjectId};
 pub use parser::Parser;
+pub use repr::{SourceRepr, object_source_repr};
 pub use value::Value;
 pub use vm::Vm;
 

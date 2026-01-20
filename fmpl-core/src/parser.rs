@@ -249,38 +249,50 @@ impl<'a> Parser<'a> {
                 left = Expr::Binary(Box::new(left), BinOp::Pipe, Box::new(right));
             } else if self.check(&Token::At) {
                 // Grammar application: expr @ grammar_expr.rule
-                // grammar_expr can be a qualified name, identifier, or any primary expression
+                // Or anonymous block: expr @ { pattern => action; ... }
                 self.advance();
-                let grammar_expr = self.parse_postfix()?;
 
-                // The grammar_expr should end with .rule access
-                // Extract the rule name from the last PropAccess
-                let (grammar, rule) = match grammar_expr {
-                    Expr::PropAccess(base, prop) => (*base, prop),
-                    Expr::Qualified(qn) => {
-                        // Handle qualified::name.rule case
-                        if qn.parts.len() >= 2 {
-                            // Last part is the rule name
-                            let rule = qn.parts.last().unwrap().clone();
-                            let grammar_parts = qn.parts[..qn.parts.len() - 1].to_vec();
-                            (
-                                Expr::Qualified(QualifiedName {
-                                    parts: grammar_parts,
-                                }),
-                                rule,
-                            )
-                        } else {
-                            return Err(self.error("grammar application requires grammar.rule"));
+                if self.check(&Token::LBrace) {
+                    // Anonymous grammar block: expr @ { pattern => action; ... }
+                    let anon_grammar = self.parse_anonymous_grammar_block()?;
+                    left = Expr::GrammarApply {
+                        input: Box::new(left),
+                        grammar: Box::new(Expr::GrammarLiteral(anon_grammar)),
+                        rule: SmolStr::new("main"), // Anonymous blocks use "main" rule
+                    };
+                } else {
+                    // Named grammar application: expr @ grammar_expr.rule
+                    let grammar_expr = self.parse_postfix()?;
+
+                    // The grammar_expr should end with .rule access
+                    // Extract the rule name from the last PropAccess
+                    let (grammar, rule) = match grammar_expr {
+                        Expr::PropAccess(base, prop) => (*base, prop),
+                        Expr::Qualified(qn) => {
+                            // Handle qualified::name.rule case
+                            if qn.parts.len() >= 2 {
+                                // Last part is the rule name
+                                let rule = qn.parts.last().unwrap().clone();
+                                let grammar_parts = qn.parts[..qn.parts.len() - 1].to_vec();
+                                (
+                                    Expr::Qualified(QualifiedName {
+                                        parts: grammar_parts,
+                                    }),
+                                    rule,
+                                )
+                            } else {
+                                return Err(self.error("grammar application requires grammar.rule"));
+                            }
                         }
-                    }
-                    _ => return Err(self.error("grammar application requires grammar.rule")),
-                };
+                        _ => return Err(self.error("grammar application requires grammar.rule")),
+                    };
 
-                left = Expr::GrammarApply {
-                    input: Box::new(left),
-                    grammar: Box::new(grammar),
-                    rule,
-                };
+                    left = Expr::GrammarApply {
+                        input: Box::new(left),
+                        grammar: Box::new(grammar),
+                        rule,
+                    };
+                }
             } else if self.check(&Token::Inherits) {
                 // Grammar extension: base <: { rules }
                 self.advance();
@@ -712,6 +724,47 @@ impl<'a> Parser<'a> {
         // Parse using GrammarParser
         let mut grammar_parser = GrammarParser::new(grammar_source);
         grammar_parser.parse_anonymous()
+    }
+
+    /// Parse anonymous grammar block for @ operator: `{ pattern => action; ... }`
+    fn parse_anonymous_grammar_block(&mut self) -> Result<Grammar> {
+        // We need source access to parse grammar body
+        let source = self
+            .source
+            .ok_or_else(|| self.error("anonymous grammar blocks require source access"))?;
+
+        // Find the opening brace token and its position
+        let lbrace_pos = self.pos;
+        self.expect(&Token::LBrace)?;
+        let start = self.tokens[lbrace_pos].span.start;
+
+        // Find matching closing brace (handling nesting)
+        let mut depth = 1;
+        while depth > 0 && !self.is_at_end() {
+            match self.peek_token() {
+                Some(Token::LBrace) => depth += 1,
+                Some(Token::RBrace) => depth -= 1,
+                _ => {}
+            }
+            if depth > 0 {
+                self.advance();
+            }
+        }
+
+        if depth != 0 {
+            return Err(self.error("unmatched brace in grammar block"));
+        }
+
+        // Get the end position (including the closing brace)
+        let end = self.tokens[self.pos].span.end;
+        self.advance(); // consume the closing brace
+
+        // Extract the grammar body source (from { to })
+        let grammar_source = &source[start..end];
+
+        // Parse using GrammarParser's match block parser
+        let mut grammar_parser = GrammarParser::new(grammar_source);
+        grammar_parser.parse_match_block()
     }
 
     /// Parse list literal.
