@@ -14,9 +14,16 @@ serde = { workspace = true }
 rkyv = { workspace = true }
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time"] }
 curl = "0.4"
+fjall = { version = "2", optional = true }
+serde_json = { version = "1.0", optional = true }
 
 [dev-dependencies]
 pretty_assertions = "1.4"
 serde_json = "1.0"
 tokio = { version = "1", features = ["full", "test-util"] }
 wiremock = "0.6"
+tempfile = "3"
+
+[features]
+default = []
+fjall-persistence = ["fjall", "serde_json"]

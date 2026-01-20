@@ -12,6 +12,8 @@ use crate::value::Value;
 use smol_str::SmolStr;
 use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(feature = "fjall-persistence")]
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -51,6 +53,21 @@ pub enum MemoEntry {
     Done(Option<Value>, usize),
 }
 
+/// Fjall-backed overflow storage for spilled positions.
+#[cfg(feature = "fjall-persistence")]
+struct FjallOverflow {
+    #[allow(dead_code)]
+    keyspace: fjall::Keyspace,
+    partition: fjall::PartitionHandle,
+}
+
+#[cfg(feature = "fjall-persistence")]
+impl std::fmt::Debug for FjallOverflow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FjallOverflow").finish_non_exhaustive()
+    }
+}
+
 /// Source of streaming data.
 #[derive(Debug)]
 enum StreamSource {
@@ -61,6 +78,12 @@ enum StreamSource {
         timeout: Option<Duration>,
         /// Cached positions for position index lookup.
         positions: Mutex<Vec<Rc<StreamPosition>>>,
+        /// Fjall overflow for spilled positions (optional).
+        #[cfg(feature = "fjall-persistence")]
+        fjall: Option<FjallOverflow>,
+        /// Memory limit before spilling (default: no limit).
+        #[cfg(feature = "fjall-persistence")]
+        memory_limit: Option<usize>,
     },
     /// From a static list of values (no blocking needed).
     Static(Vec<Value>),
@@ -78,6 +101,61 @@ impl StreamPosition {
             handle: Mutex::new(handle),
             timeout,
             positions: Mutex::new(Vec::new()),
+            #[cfg(feature = "fjall-persistence")]
+            fjall: None,
+            #[cfg(feature = "fjall-persistence")]
+            memory_limit: None,
+        });
+
+        // Pull the first value
+        let head = Self::pull_next(&source);
+        let pos = Rc::new(Self {
+            head,
+            tail: RefCell::new(None),
+            index: 0,
+            memo: RefCell::new(HashMap::new()),
+            source: source.clone(),
+        });
+
+        // Cache this position
+        if let StreamSource::Async { positions, .. } = source.as_ref() {
+            positions.lock().unwrap().push(pos.clone());
+        }
+
+        pos
+    }
+
+    /// Create a new stream from an async stream handle with Fjall overflow support.
+    ///
+    /// `timeout` is the timeout for blocking recv operations (use `None` for infinite blocking).
+    /// `fjall_path` is the optional directory for Fjall storage (None = no overflow).
+    /// `memory_limit` is the number of positions to keep in memory before spilling to Fjall.
+    #[cfg(feature = "fjall-persistence")]
+    pub fn from_async_with_fjall(
+        handle: StreamHandle,
+        timeout: Option<Duration>,
+        fjall_path: Option<PathBuf>,
+        memory_limit: usize,
+    ) -> Rc<Self> {
+        let fjall = fjall_path.map(|path| {
+            let keyspace = fjall::Config::new(path)
+                .open()
+                .expect("failed to open fjall keyspace");
+            let partition = keyspace
+                .open_partition("positions", Default::default())
+                .expect("failed to open positions partition");
+            FjallOverflow {
+                keyspace,
+                partition,
+            }
+        });
+
+        let source = Rc::new(StreamSource::Async {
+            handle: Mutex::new(handle),
+            timeout,
+            positions: Mutex::new(Vec::new()),
+            fjall,
+            memory_limit: Some(memory_limit),
         });
 
         // Pull the first value
@@ -247,6 +325,7 @@ impl StreamPosition {
     }
 
     /// Get the tail (next position), computing lazily if needed.
+    #[cfg(not(feature = "fjall-persistence"))]
     pub fn tail(self: &Rc<Self>) -> Rc<Self> {
         // Check if tail is already computed
         if let Some(ref tail) = *self.tail.borrow() {
@@ -257,11 +336,11 @@ impl StreamPosition {
         let new_tail = match self.source.as_ref() {
             StreamSource::Async { positions, .. } => {
                 // Check if we already have this position cached
-                let positions = positions.lock().unwrap();
-                if let Some(cached) = positions.get(self.index + 1) {
+                let positions_guard = positions.lock().unwrap();
+                if let Some(cached) = positions_guard.get(self.index + 1) {
                     cached.clone()
                 } else {
-                    drop(positions); // Release lock before pulling
+                    drop(positions_guard); // Release lock before pulling
 
                     // Pull next value from async source
                     let head = Self::pull_next(&self.source);
@@ -290,6 +369,142 @@ impl StreamPosition {
         // Cache the computed tail
         *self.tail.borrow_mut() = Some(new_tail.clone());
         new_tail
+    }
+
+    /// Get the tail (next position), computing lazily if needed.
+    /// With Fjall support for overflow handling.
+    #[cfg(feature = "fjall-persistence")]
+    pub fn tail(self: &Rc<Self>) -> Rc<Self> {
+        // Check if tail is already computed
+        if let Some(ref tail) = *self.tail.borrow() {
+            return tail.clone();
+        }
+
+        // Compute tail based on source type
+        let new_tail = match self.source.as_ref() {
+            StreamSource::Async {
+                positions,
+                fjall,
+                memory_limit,
+                ..
+            } => {
+                let target_index = self.index + 1;
+
+                // Check if we already have this position cached in memory
+                {
+                    let positions_guard = positions.lock().unwrap();
+                    // Try to find the position in memory
+                    for pos in positions_guard.iter() {
+                        if pos.index == target_index {
+                            return pos.clone();
+                        }
+                    }
+                }
+
+                // Check if it's in Fjall overflow
+                if let Some(fjall_overflow) = fjall {
+                    if let Some(pos) =
+                        Self::restore_from_fjall(fjall_overflow, target_index, self.source.clone())
+                    {
+                        // Cache it in memory (it will be spilled again if needed)
+                        positions.lock().unwrap().push(pos.clone());
+                        return pos;
+                    }
+                }
+
+                // Not found anywhere - pull next value from async source
+                let head = Self::pull_next(&self.source);
+                let new_pos = Rc::new(Self {
+                    head,
+                    tail: RefCell::new(None),
+                    index: target_index,
+                    memo: RefCell::new(HashMap::new()),
+                    source: self.source.clone(),
+                });
+
+                // Cache the new position and potentially spill old ones
+                {
+                    let mut positions_guard = positions.lock().unwrap();
+                    positions_guard.push(new_pos.clone());
+
+                    // Check if we need to spill to Fjall
+                    if let Some(limit) = memory_limit {
+                        if positions_guard.len() > *limit {
+                            if let Some(fjall_overflow) = fjall {
+                                // Spill the oldest positions
+                                let spill_count = positions_guard.len() - *limit;
+                                for pos in positions_guard.drain(0..spill_count) {
+                                    Self::spill_to_fjall(fjall_overflow, &pos);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                new_pos
+            }
+            StreamSource::Static(values) => {
+                Self::build_static_chain(self.source.clone(), values, self.index + 1)
+            }
+            StreamSource::Empty => Self::end_of_stream(),
+        };
+
+        // Cache the computed tail
+        *self.tail.borrow_mut() = Some(new_tail.clone());
+        new_tail
+    }
+
+    /// Spill a position to Fjall storage.
+    #[cfg(feature = "fjall-persistence")]
+    fn spill_to_fjall(fjall: &FjallOverflow, pos: &Rc<StreamPosition>) {
+        // Serialize the head value (if any) using serde_json
+        let head_bytes = pos
+            .head
+            .as_ref()
+            .map(|v| serde_json::to_vec(v).expect("failed to serialize value for fjall"));
+
+        // Key is the position index as bytes
+        let key = pos.index.to_be_bytes();
+
+        // Value is Option<Vec<u8>> serialized
+        let value =
+            serde_json::to_vec(&head_bytes).expect("failed to serialize position for fjall");
+
+        fjall
+            .partition
+            .insert(key, value)
+            .expect("failed to insert position into fjall");
+    }
+
+    /// Restore a position from Fjall storage.
+    #[cfg(feature = "fjall-persistence")]
+    fn restore_from_fjall(
+        fjall: &FjallOverflow,
+        index: usize,
+        source: Rc<StreamSource>,
+    ) -> Option<Rc<StreamPosition>> {
+        let key = index.to_be_bytes();
+
+        if let Ok(Some(value_bytes)) = fjall.partition.get(key) {
+            // Deserialize the Option<Vec<u8>>
+            let head_bytes: Option<Vec<u8>> =
+                serde_json::from_slice(&value_bytes).expect("failed to deserialize from fjall");
+
+            // Deserialize the head value (if any)
+            let head = head_bytes.map(|bytes| {
+                serde_json::from_slice(&bytes).expect("failed to deserialize value from fjall")
+            });
+
+            Some(Rc::new(StreamPosition {
+                head,
+                tail: RefCell::new(None),
+                index,
+                memo: RefCell::new(HashMap::new()),
+                source,
+            }))
+        } else {
+            None
+        }
     }
 
     /// Advance n positions, returning the new position.
@@ -397,6 +612,50 @@ impl StreamInput {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[cfg(feature = "fjall-persistence")]
+    #[test]
+    fn test_fjall_overflow_basic() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        let values: Vec<Value> = (0..10).map(|i| Value::Int(i)).collect();
+
+        // Create async stream with fjall backing
+        let (tx, rx) = mpsc::channel(100);
+
+        // Send all values
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            for v in values.iter() {
+                tx.send(crate::stream::StreamEvent::Data(v.clone()))
+                    .await
+                    .unwrap();
+            }
+        });
+        drop(tx);
+
+        let handle = crate::stream::StreamHandle::new(rx, 1);
+        // Use a memory limit of 5 positions - should trigger spilling after 5 positions
+        let stream = StreamPosition::from_async_with_fjall(
+            handle,
+            Some(std::time::Duration::from_secs(1)),
+            Some(temp_dir.path().to_path_buf()),
+            5,
+        );
+
+        // Advance through all positions to trigger potential spilling
+        let pos5 = stream.advance(5);
+        assert_eq!(pos5.head(), Some(&Value::Int(5)));
+
+        // Continue to the end
+        let pos9 = stream.advance(9);
+        assert_eq!(pos9.head(), Some(&Value::Int(9)));
+
+        // Going beyond end should give None
+        let end = pos9.tail();
+        assert!(end.is_at_end());
+    }
 
     #[test]
     fn test_static_stream_basic() {
