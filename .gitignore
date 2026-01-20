@@ -12,3 +12,8 @@
 
 # Private journal (personal notes)
 .private-journal/
+.opencode/
+data/
+
+# Git worktrees
+.worktrees/
