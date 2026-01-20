@@ -41,6 +41,7 @@
 
 pub mod parser;
 pub mod runtime;
+pub mod stream_input;
 
 use crate::ast::Expr;
 use crate::value::Value;

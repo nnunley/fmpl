@@ -127,13 +127,18 @@ impl Vm {
     }
 
     /// Apply a grammar to an input value, evaluating any semantic actions.
+    ///
+    /// If the input is an `AsyncStream`, uses `StreamingPegRuntime` which pulls
+    /// values lazily from the stream with blocking recv.
     pub fn apply_grammar(
         &mut self,
         input: Value,
         grammar: Arc<Grammar>,
         rule_name: &str,
     ) -> Result<Option<Value>> {
-        use crate::grammar::runtime::apply_grammar_to_value_with_evaluator;
+        use crate::grammar::runtime::{
+            apply_grammar_to_stream_with_evaluator, apply_grammar_to_value_with_evaluator,
+        };
 
         // Clone the grammar registry so we can pass it to the runtime.
         // This is cheap since grammars are Arc-wrapped.
@@ -146,6 +151,29 @@ impl Vm {
                 self.eval_with_bindings(expr, bindings)
             },
         );
+
+        // If input is an AsyncStream, use streaming grammar application
+        if let Value::AsyncStream(stream_arc) = input {
+            // Extract the StreamHandle from the Mutex
+            // We need to take ownership, which means the stream is consumed
+            let mut guard = stream_arc
+                .lock()
+                .map_err(|_| Error::Runtime("failed to lock async stream".to_string()))?;
+
+            // Create a new receiver by swapping with a closed one
+            let (_, dummy_rx) = tokio::sync::mpsc::channel(1);
+            let original_receiver = std::mem::replace(&mut guard.receiver, dummy_rx);
+            let stream_handle = crate::stream::StreamHandle::new(original_receiver, guard.id());
+            drop(guard);
+
+            return apply_grammar_to_stream_with_evaluator(
+                stream_handle,
+                &grammar,
+                &registry,
+                rule_name,
+                evaluator,
+            );
+        }
 
         apply_grammar_to_value_with_evaluator(input, &grammar, &registry, rule_name, evaluator)
     }
