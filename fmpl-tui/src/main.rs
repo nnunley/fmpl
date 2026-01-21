@@ -498,6 +498,167 @@ impl App {
         result
     }
 
+    /// Phase 2 Task 2.2: Replay conversation from selected node
+    /// Creates new branch and regenerates LLM responses from selected point
+    fn replay_from_node(&mut self, node_id: NodeId) -> Result<(), String> {
+        // Verify node exists
+        if !self.conversation_nodes.contains_key(&node_id) {
+            return Err(format!("Node {} not found", node_id));
+        }
+
+        // Store original branch head for comparison (Phase 2 Task 2.3 - diff view)
+        let original_head = self.current_head;
+        self.compare_branch_id = Some(original_head);
+
+        // Generate branch name with timestamp
+        let branch_name = format!("replay-{}", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+
+        // Get history up to and including the selected node
+        let mut current_id = node_id;
+
+        // Traverse backwards from selected node to root
+        let mut path = Vec::new();
+        while let Some(node) = self.conversation_nodes.get(&current_id) {
+            path.push((current_id, node.clone()));
+            match node.parent_id {
+                Some(parent) => current_id = parent,
+                None => break,
+            }
+        }
+
+        // Reverse to get root → selected_node order
+        path.reverse();
+
+        // Extract messages up to selected node
+        let mut node_chain: Vec<NodeId> = Vec::new();
+        for (id, _node) in &path {
+            node_chain.push(*id);
+        }
+
+        // Find all nodes after the selected point in original conversation
+        // These are the assistant messages we need to regenerate
+        let mut nodes_to_regenerate: Vec<NodeId> = Vec::new();
+        let mut temp_id = original_head;
+
+        // Walk back from original head until we hit the selected node
+        while let Some(node) = self.conversation_nodes.get(&temp_id) {
+            if temp_id == node_id {
+                break;
+            }
+            if node.message.role == "assistant" {
+                nodes_to_regenerate.push(temp_id);
+            }
+            match node.parent_id {
+                Some(parent) => temp_id = parent,
+                None => break,
+            }
+        }
+
+        // Reverse to regenerate in chronological order
+        nodes_to_regenerate.reverse();
+
+        // If no assistant messages to regenerate, just create a branch point
+        if nodes_to_regenerate.is_empty() {
+            // Set current head to selected node
+            self.current_head = node_id;
+
+            // Mark branch on the node
+            if let Some(node) = self.conversation_nodes.get_mut(&node_id) {
+                node.metadata.branch_name = Some(branch_name.clone());
+            }
+
+            self.output = format!(
+                "🔄 Created branch '{}' from node {}\n\nNo assistant messages to regenerate.\nUse Ctrl+L to chat and extend this branch.",
+                branch_name, node_id
+            );
+            return Ok(());
+        }
+
+        // Start replay: set head to selected node
+        self.current_head = node_id;
+
+        // Mark selected node as branch point
+        if let Some(node) = self.conversation_nodes.get_mut(&node_id) {
+            node.metadata.branch_name = Some(branch_name.clone());
+        }
+
+        // Regenerate each assistant message
+        let mut regenerated_count = 0;
+        let provider_name = match self.llm_provider {
+            LlmProvider::Ollama => "ollama",
+            LlmProvider::Anthropic => "anthropic",
+        };
+
+        for original_node_id in nodes_to_regenerate {
+            // Get the user prompt that led to this assistant response
+            let user_prompt_node_id = self
+                .conversation_nodes
+                .get(&original_node_id)
+                .and_then(|node| node.parent_id)
+                .ok_or("Cannot find user prompt for assistant message")?;
+
+            let user_prompt_node = self
+                .conversation_nodes
+                .get(&user_prompt_node_id)
+                .ok_or("User prompt node not found")?;
+
+            if user_prompt_node.message.role != "user" {
+                continue;
+            }
+
+            let user_prompt = &user_prompt_node.message.content;
+
+            // Add user message to new branch
+            self.add_message(ChatMessage {
+                role: "user".to_string(),
+                content: user_prompt.clone(),
+            });
+
+            // Get current history for LLM context
+            let messages_array = self.format_history_as_fmpl();
+            let fmpl_code = format!("{}.chat_with_history({})", provider_name, messages_array);
+
+            // Call LLM
+            match eval(&mut self.vm, &fmpl_code) {
+                Ok(result) => {
+                    match wait_for_async(result) {
+                        Ok(Value::String(response)) => {
+                            // Add assistant response to new branch
+                            self.add_message(ChatMessage {
+                                role: "assistant".to_string(),
+                                content: response.to_string(),
+                            });
+
+                            // Mark new nodes with branch name
+                            if let Some(node) = self.conversation_nodes.get_mut(&self.current_head)
+                            {
+                                node.metadata.branch_name = Some(branch_name.clone());
+                            }
+
+                            regenerated_count += 1;
+                        }
+                        Ok(other) => {
+                            return Err(format!("Unexpected response type: {:?}", other));
+                        }
+                        Err(e) => {
+                            return Err(format!("LLM error: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    return Err(format!("FMPL eval error: {}", e));
+                }
+            }
+        }
+
+        self.output = format!(
+            "🔄 Replayed conversation from node {}\n\nBranch: '{}'\nRegenerated {} assistant responses\n\nYou are now on the new branch. Use Ctrl+Z to move back to original branch.",
+            node_id, branch_name, regenerated_count
+        );
+
+        Ok(())
+    }
+
     fn handle_input(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -639,13 +800,18 @@ impl App {
                 }
             }
             KeyCode::Enter if self.history_selection_mode => {
-                // Phase 2: "Replay from here" - placeholder for now
+                // Phase 2 Task 2.2: "Replay from here" - regenerate LLM responses from selected point
                 if let Some(selected_id) = self.selected_node_id {
-                    self.output = format!(
-                        "Replay from node {}\n\n(Feature coming soon: This will regenerate LLM responses from the selected point)",
-                        selected_id
-                    );
-                    self.exit_history_selection();
+                    match self.replay_from_node(selected_id) {
+                        Ok(()) => {
+                            // Exit history selection mode after successful replay
+                            self.exit_history_selection();
+                        }
+                        Err(e) => {
+                            self.output = format!("Replay failed: {}", e);
+                            self.exit_history_selection();
+                        }
+                    }
                 }
             }
             KeyCode::Char(c) => {

@@ -1,10 +1,60 @@
 # FMPL Scratchpad
 
-## TASK: Layer 2 Phase 2 - Backtracking UI (2026-01-22T00:30:00) 🔄
+## Ralph Loop Recovery (2026-01-22T00:45:00) → **PHASE 2 TASK 2.2 COMPLETE** (2026-01-22T01:00:00)
 
-**Event**: `task.resume` → `task.start` emitted for Phase 2 (Backtracking UI)
+**Event**: `task.resume` → Implemented Phase 2 Task 2.2 (replay_from_here)
 
-**Status**: 🔄 PHASE 2 STARTED - Replay from here + Diff view
+**System Status**: ✅ HEALTHY
+- All tests passing (222 tests)
+- Build clean (release)
+- Phase 1 COMPLETE: Conversation DAG (undo/redo/edit/branches)
+- Phase 5 COMPLETE: Auto-detection (off-track/circular/suggestion)
+- Phase 2 Task 2.1 COMPLETE: History selection mode (Ctrl+H, visual indicators)
+- Phase 2 Task 2.2 COMPLETE: Replay from here functionality
+
+**Recent Commits**:
+- 839ff82 fix(tui): suppress dead_code warnings for future-phase fields
+- e1c816e feat(tui): implement Phase 2 Task 2.1 - history selection mode
+- f3be2c6 feat(tui): implement Phase 5 auto-detection for conversation compaction
+- [PENDING] feat(tui): implement Phase 2 Task 2.2 - replay_from_here functionality
+
+**Phase 2 Task 2.2 Implementation** (2026-01-22T01:00:00):
+- [x] `replay_from_node(node_id: NodeId)` function implemented (fmpl-tui/src/main.rs:485-638)
+  - Creates new branch from selected node with timestamped name
+  - Stores original branch head in `compare_branch_id` for diff view
+  - Regenerates all assistant responses from selected point
+  - Auto-switches to replayed branch after generation
+- [x] Enter key handler updated (main.rs:772-786)
+  - Replaced placeholder with actual replay call
+  - Error handling with user feedback
+  - Exits history selection mode after replay
+- [x] Build verified clean
+- [x] All 222 tests passing
+
+**Available Next Tasks**:
+1. **Phase 2 Task 2.3**: Diff view (L - 2-3 hours)
+   - Side-by-side comparison of branches
+   - Visual diff for conversation changes
+   - Uses `compare_branch_id` stored during replay
+2. **Phase 3**: VCS operations (branch switching, merge) - XL
+3. **Phase 4**: Context compaction (relevance scoring, elision) - L
+
+**Action**: Emitting `task.done` for Phase 2 Task 2.2
+
+---
+
+## TASK: Layer 2 Phase 2 - Backtracking UI (2026-01-21T19:40:00) 🔄
+
+**Event**: `task.resume` → Recovery in progress
+
+**Status**: 🔄 PHASE 2 TASK 2.1 COMPLETE - Task 2.2 (replay) pending
+
+**Recovery Verified (2026-01-21T19:40:00)**:
+- ✅ Task 2.1 COMPLETE: History selection mode (Ctrl+H, arrow keys, visual indicator)
+- ✅ Warning suppression fix committed (91206493)
+- ✅ All tests passing
+- ✅ Build clean (release)
+- 📋 Task 2.2 pending: "Replay from here" functionality
 
 **Recovery Verified (2026-01-22T00:25:00)**:
 - ✅ Phase 1 COMPLETE: Conversation DAG (undo/redo/edit/branches)
