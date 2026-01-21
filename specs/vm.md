@@ -2,7 +2,7 @@
 
 Stack-based bytecode virtual machine with async support.
 
-**Location**: [fmpl-core/src/vm.rs](../fmpl-core/src/vm.rs)
+**Location**: [fmpl-core/src/vm.rs](../fmpl-core/src/vm.rs:46)
 
 ---
 
@@ -14,6 +14,7 @@ The VM executes compiled bytecode using:
 - **Indexed RPN** — Flat bytecode format (from burakemir.ch)
 - **Async runtime** — Tokio-based for `<-` and streams
 - **Object integration** — Method dispatch via ObjectDb
+- **Grammar integration** — PEG grammar application with semantic actions
 
 ---
 
@@ -28,15 +29,15 @@ The VM executes compiled bytecode using:
 │  └─────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────┐   │
 │  │ Call Stack (Frames)                              │   │
-│  │ [Frame { ip, locals, ... }, ...]                 │   │
+│  │ [Frame { ip, code, locals, this, caller }, ...]  │   │
 │  └─────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────┐   │
-│  │ Globals                                          │   │
-│  │ { name → Value }                                 │   │
+│  │ Scopes (let bindings)                            │   │
+│  │ [{ name → Value }, ...]                          │   │
 │  └─────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────┐   │
-│  │ ObjectDb                                         │   │
-│  │ { id → Object }                                  │   │
+│  │ ObjectDb + GrammarRegistry                       │   │
+│  │ { id → Object } + { name → Grammar }             │   │
 │  └─────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -45,62 +46,106 @@ The VM executes compiled bytecode using:
 
 ## Bytecode Format
 
-Instructions are flat opcodes with inline operands:
+Instructions are defined in [compiler.rs:12](../fmpl-core/src/compiler.rs:12):
 
 ```rust
-pub enum Op {
-    // Stack operations
-    Push(Value),
-    Pop,
-    Dup,
+pub enum Instruction {
+    // Literals
+    LoadNull,
+    LoadBool(bool),
+    LoadInt(i64),
+    LoadFloat(f64),
+    LoadString(SmolStr),
+    LoadSymbol(SmolStr),
+
+    // Variable access
+    LoadVar(SmolStr),
+    StoreVar(SmolStr),
+
+    // Special references
+    LoadSelf,
+    LoadParent,
+    LoadCaller,
+    LoadUser,
+    LoadArgs,
 
     // Arithmetic
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    Neg,
+    Add, Sub, Mul, Div, Mod, Neg,
 
     // Comparison
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
+    Eq, NotEq, Lt, Gt, LtEq, GtEq,
 
     // Logical
-    Not,
-    And,
-    Or,
-
-    // Variables
-    LoadLocal(usize),
-    StoreLocal(usize),
-    LoadGlobal(SmolStr),
-    StoreGlobal(SmolStr),
+    Not, And, Or,
 
     // Control flow
     Jump(usize),
     JumpIfFalse(usize),
-    Call(usize),
+    JumpIfTrue(usize),
+
+    // Functions and calls
+    Call(usize),               // arg count
+    TailCall(usize),
+    MethodCall(SmolStr, usize),
     Return,
 
     // Objects
-    GetProperty(SmolStr),
-    SetProperty(SmolStr),
-    MethodCall(SmolStr, usize),
+    GetProp(SmolStr),
+    SetProp(SmolStr),
+    Spawn(usize),
+    GetFacet(SmolStr),
+
+    // Sync/Async
+    SyncCall,
+    AsyncCall,
+
+    // Data structures
+    MakeList(usize),
+    MakeMap(usize),
+    Index,
+    Slice,
+
+    // Binding
+    PushScope,
+    PopScope,
+    Bind(SmolStr),
+
+    // Lambda
+    MakeLambda(Vec<SmolStr>, usize),
+
+    // Stack
+    Pop,
+    Dup,
+    Pipe,
 
     // Streams
-    Pipe,
-    Spawn,
-    Await,
+    MakeStream,
+    StreamMap,
+    StreamFilter,
+    StreamFlatMap,
+    StreamReduce,
+    StreamParse(SmolStr),
 
-    // Grammars
-    Apply(SmolStr),
+    // Pattern matching
+    MatchPattern(usize),
+    ExtractMapKey(SmolStr),
+    ExtractListIndex(usize),
 
-    // ...more opcodes
+    // Object definition
+    DefineObject(SmolStr),
+    DefineMethod(SmolStr, usize),
+    DefineProp(SmolStr),
+    DefineFacet(SmolStr, usize, bool),
+
+    // Grammar
+    GrammarApply(SmolStr),
+    LoadGrammar(Arc<Grammar>),
+    ExtendGrammar(Grammar),
+
+    // Exception handling
+    PushHandler(usize),
+    PopHandler,
+    Throw,
 }
 ```
 
@@ -111,16 +156,16 @@ pub enum Op {
 ### Stack Operations
 
 ```
-Push(42)     : [] → [42]
-Push(3)      : [42] → [42, 3]
+LoadInt(42)  : [] → [42]
+LoadInt(3)   : [42] → [42, 3]
 Add          : [42, 3] → [45]
 ```
 
 ### Function Calls
 
 ```
-Push(args...)
-Push(function)
+LoadInt(args...)
+LoadVar(function)
 Call(arity)  : creates new frame, jumps to function body
 Return       : pops frame, pushes result
 ```
@@ -128,9 +173,9 @@ Return       : pops frame, pushes result
 ### Async Operations
 
 ```
-Spawn        : creates async task, pushes Promise
-Await        : suspends until Promise resolves
-Pipe         : connects stream to operator
+AsyncCall    : wraps value in AsyncStream (requires runtime)
+MakeStream   : creates Stream from source value
+Pipe         : applies function to argument (x |> f → f(x))
 ```
 
 ---
@@ -139,35 +184,46 @@ Pipe         : connects stream to operator
 
 ### Vm
 
+[vm.rs:46](../fmpl-core/src/vm.rs:46):
+
 ```rust
 pub struct Vm {
+    pub objects: ObjectDb,
+    pub grammars: GrammarRegistry,
     stack: Vec<Value>,
     frames: Vec<Frame>,
-    globals: HashMap<SmolStr, Value>,
-    pub objects: ObjectDb,
-    grammars: GrammarRegistry,
-    // ... async runtime state
+    scopes: Vec<Scope>,
+    pub current_user: Option<ObjectId>,
+    exception_handlers: Vec<(usize, usize, usize)>,
+    runtime: Option<tokio::runtime::Handle>,
 }
 ```
 
 ### Frame
 
+[vm.rs:13](../fmpl-core/src/vm.rs:13):
+
 ```rust
-pub struct Frame {
-    ip: usize,
+struct Frame {
     code: Arc<CompiledCode>,
-    locals: Vec<Value>,
-    base: usize,  // stack base
+    ip: usize,
+    base: usize,
+    locals: HashMap<SmolStr, Value>,
+    this: Option<ObjectId>,
+    caller: Option<ObjectId>,
+    next_nested: usize,
 }
 ```
 
 ### CompiledCode
 
+[compiler.rs:128](../fmpl-core/src/compiler.rs:128):
+
 ```rust
 pub struct CompiledCode {
-    pub ops: Vec<Op>,
-    pub constants: Vec<Value>,
-    pub local_count: usize,
+    pub instructions: Vec<Instruction>,
+    pub nested: Vec<CompiledCode>,  // lambdas, methods
+    pub source: Option<SmolStr>,
 }
 ```
 
@@ -175,27 +231,35 @@ pub struct CompiledCode {
 
 ## Public API
 
+[vm.rs:60](../fmpl-core/src/vm.rs:60):
+
 ```rust
 impl Vm {
     pub fn new() -> Self;
 
+    /// Create VM with tokio runtime handle (required for async)
+    pub fn with_runtime(handle: tokio::runtime::Handle) -> Self;
+
+    /// Set runtime handle after construction
+    pub fn set_runtime(&mut self, handle: tokio::runtime::Handle);
+
     /// Run compiled code
     pub fn run(&mut self, code: &CompiledCode) -> Result<Value>;
 
-    /// Call a method on an object
-    pub fn call_method(
+    /// Evaluate expression with bindings (for semantic actions)
+    pub fn eval_with_bindings(
         &mut self,
-        obj: ObjectId,
-        method: &str,
-        args: Vec<Value>,
+        expr: &Expr,
+        bindings: &HashMap<SmolStr, Value>,
     ) -> Result<Value>;
 
-    /// Evaluate FMPL source
-    pub fn eval(&mut self, source: &str) -> Result<Value>;
-
-    /// Get/set globals
-    pub fn get_global(&self, name: &str) -> Option<Value>;
-    pub fn set_global(&mut self, name: SmolStr, value: Value);
+    /// Apply grammar to input with semantic action evaluation
+    pub fn apply_grammar(
+        &mut self,
+        input: Value,
+        grammar: Arc<Grammar>,
+        rule_name: &str,
+    ) -> Result<Option<Value>>;
 }
 ```
 
@@ -203,81 +267,83 @@ impl Vm {
 
 ## Async Support
 
-### Promises
+### Async Calls
 
 ```fmpl
-let promise = spawn(async_task)
-<- promise  -- await result
+<- expr  -- wraps expr in AsyncStream (requires runtime)
 ```
 
 ### Streams
 
 ```fmpl
-let stream = <- http.get(url)
-stream |> map(f) |> filter(g) |> collect
+let stream = <- curl.get(url)
+stream |> map(\x x.body) |> filter(\x x != null)
 ```
 
-### Tokio Integration
+### Runtime Initialization
 
 ```rust
-impl Vm {
-    pub async fn run_async(&mut self, code: &CompiledCode) -> Result<Value> {
-        // Uses tokio::spawn for async operations
-        // Handles channel-based stream communication
-    }
-}
+// Async operations require runtime handle
+let mut vm = Vm::with_runtime(tokio::runtime::Handle::current());
+
+// Or set later
+vm.set_runtime(handle);
 ```
 
 ---
 
 ## Exception Handling
 
-Cross-frame exception unwinding:
+Cross-frame exception unwinding ([vm.rs:784](../fmpl-core/src/vm.rs:784)):
 
 ```fmpl
 try {
-  risky_operation()
+  1 / 0
 } catch (e) {
-  handle(e)
+  99  -- returns 99
 }
 ```
 
 Implemented via:
-- Exception frames pushed on catch
-- Unwinding pops frames until handler found
-- Error values carry stack trace
+- `PushHandler(catch_ip)` — register handler with stack/frame depth
+- On error: unwind to handler depth, push error value, jump to catch
+- `PopHandler` — remove handler on normal exit
 
 ---
 
 ## Grammar Integration
 
-The VM integrates with the grammar system:
+The VM integrates with the grammar system ([vm.rs:657](../fmpl-core/src/vm.rs:657)):
 
 ```rust
-Op::Apply(rule) => {
+Instruction::GrammarApply(rule_name) => {
+    let grammar_val = self.pop()?;
     let input = self.pop()?;
-    let grammar = self.pop()?;
-    let result = self.apply_grammar(grammar, rule, input)?;
-    self.push(result);
+    let result = self.apply_grammar(input, grammar, &rule_name)?;
+    self.stack.push(result.unwrap());
 }
 ```
+
+Grammar application supports both string and AsyncStream inputs.
 
 ---
 
 ## Builtins
 
-Built-in functions available in the VM:
+Built-in methods available via special symbols:
 
 | Builtin | Description |
 |---------|-------------|
-| `print(x)` | Print to stdout |
-| `type(x)` | Get type as symbol |
-| `len(x)` | Length of list/string |
-| `map(f, list)` | Map function over list |
-| `filter(f, list)` | Filter list |
-| `range(start, end)` | Generate range |
-| `http_get(url)` | HTTP GET request |
-| `json_parse(s)` | Parse JSON string |
+| `curl.get(url)` | HTTP GET, returns `%{source: stream, sink: null}` |
+| `curl.post(url, body)` | HTTP POST, returns `%{source: stream, sink: null}` |
+
+List methods (built-in):
+- `.len()`, `.first()`, `.last()`, `.push(item)`
+
+String methods (built-in):
+- `.len()`, `.upper()`, `.lower()`
+
+See [builtins/curl.rs](../fmpl-core/src/builtins/curl.rs:17) for HTTP implementation.
 
 ---
 
