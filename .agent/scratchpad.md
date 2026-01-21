@@ -1,8 +1,45 @@
 # FMPL Scratchpad
 
-## TASK: Wire LLM Loop into TUI (2026-01-21T21:00:00)
+## TASK: Recovery - System Healthy, Awaiting Task Start (2026-01-21T22:50:01)
 
-**Event**: `task.resume` → Previous iteration completed json::stringify(). Next: Wire LLM loop into TUI
+**Event**: `task.resume` → System verified healthy, all tasks complete, awaiting task.start
+
+**Status**: ✅ All 213 tests passing (verified at 2026-01-21T22:50:01)
+
+### Ralph Loop Recovery Analysis
+
+**Previous Work Complete**:
+- ✅ Task 1: Fix REPL Async Handling (COMPLETED)
+- ✅ Task 2: Add Header Support to curl (COMPLETED)
+- ✅ Task 3: Implement load() Builtin (COMPLETED)
+- ✅ Task 4: Implement env.get() Builtin (COMPLETED)
+- ✅ Task 5: Wire LLM Loop into TUI (COMPLETED - commit ddb2c34)
+- ✅ Task 6: Tool Registry via @ Patterns (ALREADY WORKING - 13/13 tests pass)
+- ✅ json::stringify() builtin (COMPLETED - commit e7e65f2)
+
+**Test Results**: ✅ All 213 tests passing
+- 143 core tests
+- 13 tool_calling tests
+- 3 async_curl tests
+- 6 exceptions tests
+- 4 continuations tests
+- 1 seed_loader test
+- 4 storylet_http tests
+- 1 fmpl_runner test
+- 1 object_methods test
+- 3 streaming_parse tests
+- 34 apply_operator tests
+
+**Available Next Steps** (in priority order):
+1. SSE streaming response parsing (better UX for LLM responses)
+2. Conversation history management (multi-turn context in TUI)
+3. Enhanced TUI features (context visualization, tool management UI)
+4. 12-layer architecture implementation (Layers 2, 4+)
+5. Additional builtins and language features
+
+### LOOP_COMPLETE
+
+All tasks from prioritized list are complete. System is healthy with all tests passing. Awaiting `task.start` from planner for next needle-moving task.
 
 ### ✅ COMPLETED: LLM Integration for TUI (2026-01-21T21:30:00)
 
@@ -192,15 +229,41 @@ result
 - [ ] Message accumulation for context-aware conversations
 - [ ] Tool calling workflow integration
 
-### Ralph Loop Complete ✅ (2026-01-21T21:30:00)
+### Recovery Analysis Complete ✅ (2026-01-21T22:30:00)
 
-**Test Results**: ✅ All 213 tests passing (no regressions)
+**Status Review**:
+- ✅ All 213 tests passing (no regressions)
+- ✅ LLM TUI integration complete (commit ddb2c34)
+- ✅ Tool calling tests passing (13/13)
+- ✅ Map pattern matching in `@` blocks working
 
-**Commit**: Ready for commit
+**Completed Capabilities** (from prioritized list):
+- [x] Task 1: Fix REPL Async Handling ✅
+- [x] Task 2: Add Header Support to curl ✅
+- [x] Task 3: Implement load() Builtin ✅
+- [x] Task 4: Implement env.get() Builtin ✅
+- [x] Task 5: Wire LLM Loop into TUI ✅
+- [x] **Task 6: Tool Registry via @ Patterns** ✅ (ALREADY WORKING!)
 
-**Event Published**: `task.done` → LLM loop wired into TUI
+**Discovery**: Map patterns `%{k: v}` in `@` blocks ARE NOW WORKING. All 13 tool_calling tests pass, including `test_pattern_matching_tool_registry` which uses `%{tool: "curl.get", args: %{url: url}}` syntax.
 
-**Next**: Awaiting `task.start` from planner for next needle-moving task
+**Remaining Tasks** (future work):
+- [ ] SSE stream parsing for real-time LLM response display
+- [ ] Multi-turn conversation history buffer in TUI
+- [ ] Message accumulation for context-aware conversations
+- [ ] Advanced tool calling workflows (tool result streaming)
+
+### Ralph Loop Complete ✅ (2026-01-21T22:30:00)
+
+**Test Results**: ✅ All 213 tests passing
+**Commit**: `ddb2c34` - feat(tui): integrate LLM chat with provider switching
+**Status**: All tasks complete. Awaiting `task.start` from planner for next needle-moving task
+
+**Available Next Steps** (in priority order):
+1. SSE streaming response parsing (better UX)
+2. Conversation history management (multi-turn context)
+3. Enhanced TUI features (context visualization, tool management UI)
+4. 12-layer architecture implementation (Layers 2, 4+)
 
 ---
 
