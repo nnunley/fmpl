@@ -1271,6 +1271,29 @@ impl App {
                     self.selected_tool_index += 1;
                 }
             }
+            // Phase 7 Task 7.5: Tool management keybindings
+            KeyCode::Char('u') if self.focused_panel == PanelType::Tools => {
+                // Reset usage statistics for all tools
+                for tool in &mut self.tools {
+                    tool.usage_count = 0;
+                }
+                self.output = format!(
+                    "Tool usage statistics reset for {} tools.\n\nPress Ctrl+S to save changes.",
+                    self.tools.len()
+                );
+                self.save_tools(); // Auto-save on reset
+            }
+            KeyCode::Enter if self.focused_panel == PanelType::Tools && !self.tools.is_empty() => {
+                // Toggle tool enabled/disabled
+                let tool = &mut self.tools[self.selected_tool_index];
+                tool.enabled = !tool.enabled;
+                self.output = format!(
+                    "Tool '{}' {}.\n\nPress Ctrl+S to save changes.",
+                    tool.name,
+                    if tool.enabled { "enabled" } else { "disabled" }
+                );
+                self.save_tools(); // Auto-save on toggle
+            }
             KeyCode::Esc => {
                 // Phase 2: Exit history selection mode
                 if self.history_selection_mode {
@@ -2083,7 +2106,7 @@ fn get_panel_help(panel: PanelType, app: &App) -> String {
             }
         }
         PanelType::Output => "Scroll: ↑↓ | Ctrl+C: copy (planned)".to_string(),
-        PanelType::Tools => "Enter: toggle | e: edit | a: add | d: delete".to_string(),
+        PanelType::Tools => "Enter: toggle | u: reset stats".to_string(),
     }
 }
 
