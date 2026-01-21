@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["fmpl-core", "fmpl-cli", "fmpl-web", "fmpl-tui", "fmpl-llm"]
+members = ["fmpl-core", "fmpl-cli", "fmpl-web", "fmpl-tui"]
 
 [workspace.package]
 version = "0.1.0"

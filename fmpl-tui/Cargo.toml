@@ -8,6 +8,5 @@ repository.workspace = true
 
 [dependencies]
 fmpl-core = { path = "../fmpl-core" }
-fmpl-llm = { path = "../fmpl-llm" }
 ratatui = "0.29"
 crossterm = "0.28"

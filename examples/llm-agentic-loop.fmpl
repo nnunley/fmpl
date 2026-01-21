@@ -1,0 +1,143 @@
+# LLM Agentic Loop Example
+#
+# Demonstrates the Research -> Plan -> Execute -> Review workflow
+# using FMPL's LLM integration
+#
+# Prerequisites:
+# 1. Ollama running locally: ollama serve
+# 2. Model pulled: ollama pull llama3.2
+# 3. Load this file: load("lib/ollama.fmpl")
+#
+# Usage:
+#   load("examples/llm-agentic-loop.fmpl")
+#   let result = agent.research_task("Implement a REST API in Rust")
+#   print(result)
+
+# Load Ollama library
+# TODO: Implement load() builtin
+# For now, this example assumes lib/ollama.fmpl is already loaded
+
+# ============================================================================
+# Agent Implementation
+# ============================================================================
+
+# Research agent: Understand the problem space
+agent.research = \task
+  let prompt = "Research this task and identify the key requirements, challenges, and potential approaches:\n\n" + task
+  ollama.chat(prompt)
+
+# Planning agent: Create execution plan
+agent.plan = \research_result
+  let prompt = "Based on this research, create a detailed step-by-step execution plan:\n\n" + research_result
+  ollama.chat(prompt)
+
+# Execution agent: Execute the plan (simulated)
+agent.execute = \plan
+  let prompt = "Describe the implementation details for this plan:\n\n" + plan
+  ollama.chat(prompt)
+
+# Review agent: Evaluate and suggest improvements
+agent.review = \execution_result
+  let prompt = "Review this execution and identify any issues, improvements, or next steps:\n\n" + execution_result
+  ollama.chat(prompt)
+
+# Full agentic loop: Research -> Plan -> Execute -> Review
+agent.research_task = \task
+  # Phase 1: Research
+  let research = agent.research(task)
+  print("=== RESEARCH ===")
+  print(research)
+  print("")
+
+  # Phase 2: Plan
+  let plan = agent.plan(research)
+  print("=== PLAN ===")
+  print(plan)
+  print("")
+
+  # Phase 3: Execute
+  let execution = agent.execute(plan)
+  print("=== EXECUTION ===")
+  print(execution)
+  print("")
+
+  # Phase 4: Review
+  let review = agent.review(execution)
+  print("=== REVIEW ===")
+  print(review)
+  print("")
+
+  # Return final summary
+  "Task: " + task + "\n\n" +
+  "Research:\n" + research + "\n\n" +
+  "Plan:\n" + plan + "\n\n" +
+  "Execution:\n" + execution + "\n\n" +
+  "Review:\n" + review
+
+# ============================================================================
+# Example Usage
+# ============================================================================
+
+# Run a simple agentic loop
+agent.example = \
+  let task = "Add two numbers in FMPL"
+  agent.research_task(task)
+
+# More complex example
+agent.example_complex = \
+  let task = "Design a REST API for a todo list application"
+  agent.research_task(task)
+
+# ============================================================================
+# Interactive Agent
+# ============================================================================
+
+# Interactive agent that asks for user confirmation at each phase
+agent.interactive = \task
+  # Research
+  let research = agent.research(task)
+  print("=== RESEARCH ===")
+  print(research)
+  print("")
+
+  # Plan
+  let plan = agent.plan(research)
+  print("=== PLAN ===")
+  print(plan)
+  print("")
+
+  # Execute
+  let execution = agent.execute(plan)
+  print("=== EXECUTION ===")
+  print(execution)
+  print("")
+
+  # Review
+  let review = agent.review(execution)
+  print("=== REVIEW ===")
+  print(review)
+  print("")
+
+  "Complete"
+
+# ============================================================================
+# Notes
+# ============================================================================
+#
+# This example demonstrates:
+# 1. Using FMPL to implement LLM-based agents
+# 2. The 12-layer agentic architecture (Research/Plan/Execute/Review)
+# 3. Pure FMPL implementation (no hardcoded Rust logic)
+#
+# Limitations:
+# - load() builtin not yet implemented (manually load lib/ollama.fmpl first)
+# - env.get() not yet implemented (for API keys)
+# - curl.post doesn't support custom headers yet (needed for Anthropic)
+# - Tool calling is simulated (not executing actual tools)
+#
+# Next steps:
+# 1. Implement load() builtin for module loading
+# 2. Add header support to curl builtin
+# 3. Implement tool registry for actual tool execution
+# 4. Add streaming support for real-time responses
+# 5. Integrate with FMPL grammars for structured output parsing

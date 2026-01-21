@@ -16,7 +16,6 @@ tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time"] }
 curl = "0.4"
 fjall = { version = "2", optional = true }
 serde_json = "1.0"
-fmpl-llm = { path = "../fmpl-llm" }
 
 [dev-dependencies]
 pretty_assertions = "1.4"

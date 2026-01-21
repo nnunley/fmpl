@@ -1,0 +1,74 @@
+# Ollama LLM Client Library
+#
+# Provides chat completion using Ollama's local API (localhost:11434)
+#
+# Usage:
+#   load("lib/ollama.fmpl")
+#   let response = ollama.chat("What is 2+2?")
+#   print(response)
+#
+# Reference: https://github.com/ollama/ollama/blob/main/docs/api.md
+
+# Ollama API endpoint
+ollama.endpoint = "http://localhost:11434"
+
+# Default model (can be overridden)
+ollama.model = "llama3.2"
+
+# Send a chat completion request to Ollama
+# Returns the response text as a string
+ollama.chat = \prompt
+  let body = json::stringify(%{
+    model: ollama.model,
+    prompt: prompt,
+    stream: false
+  })
+
+  let response = ::__builtin_curl.post(ollama.endpoint + "/api/generate", body)
+
+  # Wait for the response stream
+  response.source |> stream::collect
+  @ {
+    %{error: msg} => "Error: " + msg
+    text => ollama.parse_response(text)
+  }
+
+# Parse Ollama's JSON response to extract the text
+# Ollama returns: {"response": "...", "done": true}
+ollama.parse_response = \json_text
+  let parsed = json::parse(json_text)
+
+  @ parsed {
+    %{response: text, done: true} => text
+    %{response: text} => text
+    _ => "Unexpected response: " + json_text
+  }
+
+# Stream completion (returns a stream for real-time responses)
+# Note: This requires stream parsing of SSE events
+ollama.chat_stream = \prompt
+  let body = json::stringify(%{
+    model: ollama.model,
+    prompt: prompt,
+    stream: true
+  })
+
+  ::__builtin_curl.post(ollama.endpoint + "/api/generate", body)
+
+# List available models
+ollama.list_models = \
+  let response = ::__builtin_curl.get(ollama.endpoint + "/api/tags")
+  response.source |> stream::collect
+  @ {
+    %{error: msg} => "Error: " + msg
+    text => text
+  }
+
+# Show model info
+ollama.show_model = \model_name
+  let response = ::__builtin_curl.get(ollama.endpoint + "/api/show?" + model_name)
+  response.source |> stream::collect
+  @ {
+    %{error: msg} => "Error: " + msg
+    text => text
+  }

@@ -1,6 +1,65 @@
 # FMPL Scratchpad
 
-## TASK: LLM Integration for Agentic TUI (2026-01-21T09:00:00)
+## TASK: Rewrite LLM Chat in FMPL (2026-01-21T16:00:00)
+
+**Event**: `task.resume` → User wants LLM chat written in FMPL, not hardcoded Rust
+
+### ✅ COMPLETED: LLM Chat Rewritten in FMPL (2026-01-21T16:30:00)
+
+**Changes Made**:
+1. ✅ Removed `fmpl-llm` crate from workspace
+2. ✅ Removed `fmpl-core/src/builtins/llm.rs` (Rust-based LLM builtins)
+3. ✅ Removed `llm_chat` and `init_llm` from VM builtin dispatcher (vm.rs:1102-1135)
+4. ✅ Removed LLM provider switching from TUI (LlmProviderType enum)
+5. ✅ Created FMPL library files:
+   - `lib/ollama.fmpl` - Ollama API client using `curl.post`
+   - `lib/anthropic.fmpl` - Claude API client (placeholder, needs header support)
+   - `lib/llm-common.fmpl` - Shared agentic patterns and utilities
+   - `examples/llm-agentic-loop.fmpl` - Demonstrates Research→Plan→Execute→Review
+
+**Files Removed**:
+- `fmpl-llm/` directory (entire crate)
+- `fmpl-core/src/builtins/llm.rs`
+
+**Files Modified**:
+- `Cargo.toml` - Removed fmpl-llm from workspace members
+- `fmpl-core/Cargo.toml` - Removed fmpl-llm dependency
+- `fmpl-core/src/builtins/mod.rs` - Removed llm module export
+- `fmpl-core/src/vm.rs` - Removed __builtin_llm dispatcher (34 lines)
+- `fmpl-tui/Cargo.toml` - Removed fmpl-llm dependency
+- `fmpl-tui/src/main.rs` - Removed LlmProviderType enum and switch_llm_provider()
+
+**Files Created**:
+- `lib/ollama.fmpl` - Ollama client (localhost:11434)
+- `lib/anthropic.fmpl` - Claude client (api.anthropic.com)
+- `lib/llm-common.fmpl` - Agentic loop patterns
+- `examples/llm-agentic-loop.fmpl` - Example workflow
+
+**Test Results**:
+- ✅ All 191 tests pass (no regressions)
+
+**Key Design**:
+- LLM interactions now use `curl.post` + `json::parse` builtins
+- Agentic workflows written in pure FMPL
+- No Rust-specific LLM code
+- TUI simplified: loads FMPL files for LLM functionality
+
+**Limitations Documented**:
+1. `load()` builtin not yet implemented (must manually eval lib files)
+2. `env.get()` not implemented (API keys hardcoded for now)
+3. `curl.post` doesn't support custom headers (needed for Anthropic)
+4. Tool calling is simulated (no actual tool execution yet)
+
+**Next Steps** (future iterations):
+- Implement `load()` builtin for module loading
+- Add header support to `curl.post` for Anthropic API
+- Implement `env.get()` for secure API key access
+- Create tool registry for actual tool execution
+- Add streaming support (SSE parsing)
+
+---
+
+## PREVIOUS TASK: LLM Integration for Agentic TUI (2026-01-21T09:00:00)
 
 **Event**: `task.resume` → Recovery: Multi-line editor complete, next needle-moving task identified
 
