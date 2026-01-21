@@ -133,10 +133,8 @@ struct App {
     // Phase 2: Backtracking UI
     selected_node_id: Option<NodeId>, // Currently selected node in history (for replay)
     history_selection_mode: bool,     // When true, arrow keys navigate history
-    #[allow(dead_code)] // Phase 2 Task 2.3 (diff view)
     compare_branch_id: Option<NodeId>, // Branch to compare with (for diff view)
-    #[allow(dead_code)] // Phase 2 Task 2.3 (diff view)
-    diff_view_mode: bool, // When true, show diff between branches
+    diff_view_mode: bool,             // When true, show diff between branches
 }
 
 impl App {
@@ -760,6 +758,31 @@ impl App {
                     );
                 }
             }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Phase 2 Task 2.3: Toggle diff view mode
+                if self.llm_mode {
+                    if self.compare_branch_id.is_some() {
+                        self.diff_view_mode = !self.diff_view_mode;
+                        if self.diff_view_mode {
+                            self.output = String::from(
+                                "Diff view enabled.\n\nShowing comparison between current branch and saved comparison branch.\nPress Ctrl+D to exit diff view.",
+                            );
+                        } else {
+                            self.output = String::from(
+                                "Diff view disabled.\n\nShowing normal conversation history.",
+                            );
+                        }
+                    } else {
+                        self.output = String::from(
+                            "No comparison branch available.\n\nUse Ctrl+H to select a node, then Enter to replay from there.\nThis creates a new branch and saves the original for diff viewing.",
+                        );
+                    }
+                } else {
+                    self.output = String::from(
+                        "Diff view requires LLM mode.\n\nUse Ctrl+L to enter LLM chat mode first.",
+                    );
+                }
+            }
             KeyCode::Esc => {
                 // Phase 2: Exit history selection mode
                 if self.history_selection_mode {
@@ -1205,6 +1228,132 @@ impl App {
         text
     }
 
+    fn format_diff_view(&self) -> String {
+        let compare_node_id = match self.compare_branch_id {
+            Some(id) => id,
+            None => return "No comparison branch selected.\n\nUse Ctrl+H to select a node, then Enter to replay.\nAfter replay, use Ctrl+D to view diff.".to_string(),
+        };
+
+        // Get history from both branches
+        let current_history = self.get_history();
+        let compare_history = self.get_history_from_node(compare_node_id);
+
+        if current_history.is_empty() && compare_history.is_empty() {
+            return "Both branches are empty.\n".to_string();
+        }
+
+        let mut text = String::from("Branch Diff View:\n");
+        text.push_str(&"=".repeat(50));
+        text.push_str(&format!(
+            "\nCurrent Branch (Node {}) vs Comparison Branch (Node {})\n",
+            self.current_head, compare_node_id
+        ));
+        text.push_str(&"=".repeat(50));
+        text.push('\n');
+
+        // Find common ancestor and display divergent messages
+        let max_len = current_history.len().max(compare_history.len());
+
+        for i in 0..max_len {
+            let current_msg = current_history.get(i);
+            let compare_msg = compare_history.get(i);
+
+            match (current_msg, compare_msg) {
+                (Some(curr), Some(comp)) => {
+                    // Both branches have message at this position
+                    if curr.content == comp.content && curr.role == comp.role {
+                        // Same message - show as unchanged
+                        let role_label = if curr.role == "user" {
+                            "👤 User"
+                        } else {
+                            "🤖 Assistant"
+                        };
+                        text.push_str(&format!("\n  [{}] {} (unchanged)\n", i + 1, role_label));
+                        text.push_str(&format!(
+                            "  {}\n",
+                            curr.content.lines().next().unwrap_or("")
+                        ));
+                    } else {
+                        // Different message - show as modified
+                        let role_label = if curr.role == "user" {
+                            "👤 User"
+                        } else {
+                            "🤖 Assistant"
+                        };
+                        text.push_str(&format!("\n🔄 [{}] {} (MODIFIED)\n", i + 1, role_label));
+                        text.push_str(&format!("  ── Comparison branch:\n"));
+                        text.push_str(&format!(
+                            "  {}\n",
+                            comp.content.lines().next().unwrap_or("")
+                        ));
+                        text.push_str(&format!("  ── Current branch:\n"));
+                        text.push_str(&format!(
+                            "  {}\n",
+                            curr.content.lines().next().unwrap_or("")
+                        ));
+                    }
+                }
+                (Some(curr), None) => {
+                    // Only current branch has message - added
+                    let role_label = if curr.role == "user" {
+                        "👤 User"
+                    } else {
+                        "🤖 Assistant"
+                    };
+                    text.push_str(&format!(
+                        "\n➕ [{}] {} (ADDED in current)\n",
+                        i + 1,
+                        role_label
+                    ));
+                    text.push_str(&format!(
+                        "  {}\n",
+                        curr.content.lines().next().unwrap_or("")
+                    ));
+                }
+                (None, Some(comp)) => {
+                    // Only compare branch has message - removed
+                    let role_label = if comp.role == "user" {
+                        "👤 User"
+                    } else {
+                        "🤖 Assistant"
+                    };
+                    text.push_str(&format!(
+                        "\n➖ [{}] {} (REMOVED from current)\n",
+                        i + 1,
+                        role_label
+                    ));
+                    text.push_str(&format!(
+                        "  {}\n",
+                        comp.content.lines().next().unwrap_or("")
+                    ));
+                }
+                (None, None) => unreachable!(),
+            }
+            text.push_str(&"-".repeat(40));
+            text.push('\n');
+        }
+
+        text.push_str(&"\nPress Ctrl+D to exit diff view.\n");
+        text
+    }
+
+    fn get_history_from_node(&self, node_id: NodeId) -> Vec<ChatMessage> {
+        let mut history = Vec::new();
+        let mut current_id = Some(node_id);
+
+        while let Some(id) = current_id {
+            if let Some(node) = self.conversation_nodes.get(&id) {
+                history.push(node.message.clone());
+                current_id = node.parent_id;
+            } else {
+                break;
+            }
+        }
+
+        history.reverse();
+        history
+    }
+
     fn get_code(&self) -> String {
         self.code_lines.join("\n")
     }
@@ -1227,20 +1376,30 @@ fn draw_ui(f: &mut Frame, app: &App) {
 
     // Research panel - show conversation history in LLM mode
     let research_content = if app.llm_mode {
-        app.format_history()
+        if app.diff_view_mode {
+            app.format_diff_view()
+        } else {
+            app.format_history()
+        }
     } else {
         app.research_content.clone()
+    };
+
+    let panel_title = if app.llm_mode {
+        if app.diff_view_mode {
+            "Branch Diff View"
+        } else {
+            "Conversation History"
+        }
+    } else {
+        "Research View"
     };
 
     let research_panel = Paragraph::new(research_content.as_str())
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(if app.llm_mode {
-                    "Conversation History"
-                } else {
-                    "Research View"
-                })
+                .title(panel_title)
                 .title_alignment(Alignment::Center),
         )
         .wrap(Wrap { trim: true });
