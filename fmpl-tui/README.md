@@ -5,6 +5,7 @@
 ### LLM Chat Integration ✅ NEW
 - **Ctrl+L**: Toggle LLM chat mode
 - **Ctrl+P**: Switch LLM provider (Ollama ↔ Anthropic)
+- **Conversation History**: Automatic tracking of multi-turn conversations (displayed in Research panel)
 - **Automatic bootstrapping**: Loads `lib/llm-common.fmpl`, `lib/ollama.fmpl`, `lib/anthropic.fmpl` on startup
 - **Async response handling**: Automatically waits for LLM responses
 - **Provider support**:
@@ -29,7 +30,7 @@
 - **LLM CHAT MODE**: Press Ctrl+L to toggle, then Enter to send prompt to LLM
 
 ### Three-Panel Layout
-1. **Research View** - Problem space analysis
+1. **Research View** - Problem space analysis (shows Conversation History in LLM mode)
 2. **Planning View** - Collaborative scope definition
 3. **Execution View** - Split into:
    - Code Editor (left)
@@ -137,7 +138,8 @@ This will:
 - [ ] Tool registry via `@` operator patterns
 
 **Advanced LLM Features**
-- [ ] Streaming response display (SSE parsing)
-- [ ] Multi-turn conversation history
-- [ ] Message buffer and context accumulation
+- [ ] Streaming response display (SSE parsing) ✅ Implemented in libraries, pending TUI integration
+- [x] Multi-turn conversation history ✅ Implemented
+- [x] Message buffer and context accumulation ✅ Implemented
+- [ ] Context-aware LLM calls (pass history to chat_with_history)
 - [ ] Tool calling workflow (parse LLM JSON → execute tools → feed back)

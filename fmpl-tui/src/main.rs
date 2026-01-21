@@ -61,6 +61,13 @@ enum LlmProvider {
     Anthropic,
 }
 
+/// A single message in the conversation history
+#[derive(Clone, Debug)]
+struct ChatMessage {
+    role: String, // "user" or "assistant"
+    content: String,
+}
+
 struct App {
     research_content: String,
     planning_content: String,
@@ -74,6 +81,7 @@ struct App {
     llm_mode: bool,     // When true, sends code to LLM instead of executing
     llm_provider: LlmProvider,
     vm: Vm,
+    conversation_history: Vec<ChatMessage>, // Track conversation turns
 }
 
 impl App {
@@ -102,6 +110,7 @@ impl App {
             llm_mode: false,
             llm_provider: LlmProvider::Ollama,
             vm,
+            conversation_history: Vec::new(),
         }
     }
 
@@ -322,7 +331,14 @@ impl App {
             LlmProvider::Anthropic => "anthropic",
         };
 
-        // Construct FMPL code to call the appropriate LLM
+        // Add user message to history
+        self.conversation_history.push(ChatMessage {
+            role: "user".to_string(),
+            content: prompt.to_string(),
+        });
+
+        // For now, use simple chat() without history
+        // TODO: Implement chat_with_history in LLM libraries
         let fmpl_code = format!("{}.chat({:?})", provider_name, prompt);
 
         match eval(&mut self.vm, &fmpl_code) {
@@ -330,6 +346,12 @@ impl App {
                 // Wait for async response if needed
                 match wait_for_async(result) {
                     Ok(Value::String(response)) => {
+                        // Add assistant response to history
+                        self.conversation_history.push(ChatMessage {
+                            role: "assistant".to_string(),
+                            content: response.to_string(),
+                        });
+
                         self.output = format!(
                             ">>> LLM ({})\n{}\n\nResponse:\n{}",
                             provider_name, prompt, response
@@ -353,6 +375,31 @@ impl App {
         }
     }
 
+    /// Format conversation history for display
+    fn format_history(&self) -> String {
+        if self.conversation_history.is_empty() {
+            return "No conversation history yet.\n\nUse Ctrl+L to enter LLM chat mode and start a conversation.".to_string();
+        }
+
+        let mut text = String::from("Conversation History:\n");
+        text.push_str(&"=".repeat(40));
+        text.push('\n');
+
+        for (i, msg) in self.conversation_history.iter().enumerate() {
+            let role_label = if msg.role == "user" {
+                "👤 User"
+            } else {
+                "🤖 Assistant"
+            };
+            text.push_str(&format!("\n[{}] {}\n", i + 1, role_label));
+            text.push_str(&format!("{}\n", msg.content));
+            text.push_str(&"-".repeat(40));
+            text.push('\n');
+        }
+
+        text
+    }
+
     fn get_code(&self) -> String {
         self.code_lines.join("\n")
     }
@@ -373,12 +420,22 @@ fn draw_ui(f: &mut Frame, app: &App) {
         )
         .split(f.area());
 
-    // Research panel
-    let research_panel = Paragraph::new(app.research_content.as_str())
+    // Research panel - show conversation history in LLM mode
+    let research_content = if app.llm_mode {
+        app.format_history()
+    } else {
+        app.research_content.clone()
+    };
+
+    let research_panel = Paragraph::new(research_content.as_str())
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Research View")
+                .title(if app.llm_mode {
+                    "Conversation History"
+                } else {
+                    "Research View"
+                })
                 .title_alignment(Alignment::Center),
         )
         .wrap(Wrap { trim: true });
