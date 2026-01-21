@@ -11,8 +11,8 @@ Push-based incremental parsing for async streams.
 Extends the grammar system to handle async streams (LLM output, HTTP chunks) with:
 
 - **Push-based parsing** — Values arrive asynchronously, grammar emits matches
-- **Unlimited backtracking** — Buffered positions with Fjall overflow
-- **Packrat memoization** — Persisted memo tables survive suspension
+- **Unlimited backtracking** — OMeta-style cons-cell positions with Fjall overflow
+- **Packrat memoization** — Per-position memo tables with optional Fjall backing
 - **Incremental API** — `start()`/`resume()` for durable parse states
 
 ---
@@ -22,23 +22,26 @@ Extends the grammar system to handle async streams (LLM output, HTTP chunks) wit
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    ParseDriver                          │
-│  - Connects async stream to grammar                     │
-│  - Manages ParseState suspension/resumption             │
-│  - Emits parsed values downstream                       │
+│  driver.rs:24                                           │
+│  - Collects values from async stream                    │
+│  - Runs grammar against each value                      │
+│  - Emits matched values downstream                      │
 └─────────────────────┬───────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────┐
 │                   PegRuntime                            │
+│  runtime.rs:900                                         │
 │  - start(rule) → ParseState                             │
 │  - resume(state) → ParseNext                            │
-│  - Packrat memoization                                  │
+│  - Per-position packrat memoization                     │
 └─────────────────────┬───────────────────────────────────┘
                       │
 ┌─────────────────────▼───────────────────────────────────┐
 │               StreamPosition                            │
-│  - In-memory buffer for hot path                        │
-│  - Fjall overflow for large streams                     │
-│  - Position tracking with unlimited backtrack           │
+│  stream_input.rs:42                                     │
+│  - Immutable cons-cell with lazy tail                   │
+│  - Per-position memo table                              │
+│  - Fjall overflow in StreamSource::Async                │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -46,51 +49,73 @@ Extends the grammar system to handle async streams (LLM output, HTTP chunks) wit
 
 ## Key Types
 
-### ParseState
+### ParseState (`incremental.rs:15`)
 
 Represents suspended parse state:
 
 ```rust
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ParseState {
-    /// Position in input stream
+    /// Current position index in input
     pub position_index: usize,
-    /// Stack of (rule_name, position) for backtracking
+    /// Rule call stack: (rule_name, entry_position_index)
     pub rule_stack: Vec<(SmolStr, usize)>,
-    /// Bound variables from pattern matching
+    /// Current variable bindings
     pub bindings: HashMap<SmolStr, Value>,
 }
 ```
 
-### ParseNext
+Serialization methods (`incremental.rs:65-97`, feature-gated):
+- `to_bytes()` / `from_bytes()` — rkyv serialization
+- `save_to_fjall()` / `load_from_fjall()` — durable persistence
+
+### ParseNext (`incremental.rs:26`)
 
 Result of incremental parse step:
 
 ```rust
 pub enum ParseNext {
-    /// Successful match with value
+    /// Rule matched, here's the result value
     Match(Value),
-    /// Need more input, save state
+    /// Need more input - here's state to resume from
     NeedInput(ParseState),
-    /// End of input reached
+    /// Input stream ended
     End,
 }
 ```
 
-### StreamPosition
+### StreamPosition (`stream_input.rs:42`)
 
-Position in a potentially infinite stream:
+OMeta-style immutable cons-cell for streaming input:
 
 ```rust
 pub struct StreamPosition {
-    /// In-memory buffer for recent positions
-    buffer: Vec<Value>,
-    /// Start offset (positions before this are in Fjall)
-    start_offset: usize,
-    /// Current read position
-    position: usize,
-    /// Fjall partition for overflow (optional)
+    /// The value at this position (None = end of stream)
+    head: Option<Value>,
+    /// The next position (lazily computed)
+    tail: RefCell<Option<Rc<StreamPosition>>>,
+    /// Position index (for memoization keys)
+    index: usize,
+    /// Per-position memoization table
+    memo: RefCell<HashMap<SmolStr, MemoEntry>>,
+    /// Source reference for pulling more data
+    source: Rc<StreamSource>,
+    /// Optional Fjall partition for memo persistence
     #[cfg(feature = "fjall-persistence")]
-    overflow: Option<FjallOverflow>,
+    memo_fjall: Option<Arc<Mutex<MemoFjall>>>,
+}
+```
+
+### MemoEntry (`stream_input.rs:59`)
+
+Cached parse result for packrat memoization:
+
+```rust
+pub enum MemoEntry {
+    /// Parsing in progress (left recursion detection)
+    InProgress,
+    /// Completed: (value, end_position_index)
+    Done(Option<Value>, usize),
 }
 ```
 
@@ -108,23 +133,24 @@ llm_stream |> parser.tool_call |> execute_tool
 llm_stream |> AsyncParse { grammar: ToolParser, rule: "output" } |> handler
 ```
 
-### Incremental API
+### Incremental API (`runtime.rs:900-945`)
 
 ```rust
 // Start parsing
-let mut runtime = PegRuntime::new(grammar, registry);
+let input = StreamingInput::from_values(values);
+let mut runtime = PegRuntime::new(input, &registry, grammar);
 let state = runtime.start("rule_name");
 
-// Resume with more input
-loop {
-    match runtime.resume(state) {
-        ParseNext::Match(value) => emit(value),
-        ParseNext::NeedInput(s) => {
-            state = s;
-            let chunk = stream.next().await;
-            runtime.feed(chunk);
-        }
-        ParseNext::End => break,
+// Resume and get result
+match runtime.resume(state)? {
+    ParseNext::Match(value) => {
+        // Successfully matched - use value
+    }
+    ParseNext::NeedInput(state) => {
+        // Need more input - state can be saved for later
+    }
+    ParseNext::End => {
+        // Input stream ended
     }
 }
 ```
@@ -133,97 +159,123 @@ loop {
 
 ## Fjall Backing
 
-### Stream Position Overflow
+### Stream Source Overflow (`stream_input.rs:99-116`)
 
-When buffer exceeds threshold, older positions spill to disk:
+For async streams, positions can spill to Fjall when memory is limited:
 
 ```rust
-impl StreamPosition {
-    fn push(&mut self, value: Value) {
-        self.buffer.push(value);
-        if self.buffer.len() > THRESHOLD {
-            self.spill_to_fjall();
-        }
-    }
-
-    fn get(&self, pos: usize) -> Option<Value> {
-        if pos < self.start_offset {
-            self.read_from_fjall(pos)
-        } else {
-            self.buffer.get(pos - self.start_offset).cloned()
-        }
-    }
+enum StreamSource {
+    Async {
+        handle: Mutex<StreamHandle>,
+        timeout: Option<Duration>,
+        /// Cached positions for index lookup
+        positions: Mutex<Vec<Rc<StreamPosition>>>,
+        /// Fjall overflow for spilled positions
+        #[cfg(feature = "fjall-persistence")]
+        fjall: Option<FjallOverflow>,
+        /// Memory limit before spilling
+        #[cfg(feature = "fjall-persistence")]
+        memory_limit: Option<usize>,
+    },
+    Static(Vec<Value>),
+    Empty,
 }
 ```
 
-### Memo Table Persistence
+### Per-Position Memo Persistence (`stream_input.rs:635-684`)
 
-Memoization results persist across suspension:
+Each `StreamPosition` has its own memo table with optional Fjall backing:
 
 ```rust
-// Key: (position, rule_name)
-// Value: ParseResult
-
-#[cfg(feature = "fjall-persistence")]
-impl MemoTable {
-    fn get(&self, pos: usize, rule: &str) -> Option<ParseResult> {
+impl StreamPosition {
+    fn get_memo(&self, rule: &SmolStr) -> Option<MemoEntry> {
         // Check in-memory first
-        if let Some(result) = self.hot.get(&(pos, rule)) {
-            return Some(result);
+        if let Some(entry) = self.memo.borrow().get(rule) {
+            return Some(entry.clone());
         }
-        // Fall back to Fjall
-        self.cold.get(&(pos, rule))
+        // Fall back to Fjall if configured
+        #[cfg(feature = "fjall-persistence")]
+        if let Some(fjall) = &self.memo_fjall {
+            // Key format: "{position_index}:{rule_name}"
+            return self.read_memo_from_fjall(fjall, rule);
+        }
+        None
+    }
+
+    fn set_memo(&self, rule: SmolStr, entry: MemoEntry) {
+        self.memo.borrow_mut().insert(rule.clone(), entry.clone());
+        // Also persist to Fjall if configured
+        #[cfg(feature = "fjall-persistence")]
+        if let Some(fjall) = &self.memo_fjall {
+            self.write_memo_to_fjall(fjall, &rule, &entry);
+        }
     }
 }
 ```
 
 ---
 
-## ParseDriver
+## ParseDriver (`driver.rs:24`)
 
 Async driver connecting streams to grammars:
 
 ```rust
 pub struct ParseDriver {
-    runtime: PegRuntime,
-    state: Option<ParseState>,
-    input_rx: Receiver<Value>,
-    output_tx: Sender<Value>,
+    input_handle: StreamHandle,
+    grammar: Arc<Grammar>,
+    rule: String,
+    registry: GrammarRegistry,
+    output: mpsc::Sender<Value>,
+    timeout: Option<Duration>,
 }
+```
 
+The `run()` method (`driver.rs:71-139`) collects input values then parses each independently:
+
+```rust
 impl ParseDriver {
-    pub async fn run(&mut self) {
+    pub async fn run(mut self) -> Result<()> {
+        // 1. Collect values from async stream
+        let mut values = Vec::new();
         loop {
-            match self.runtime.resume(self.state.take().unwrap()) {
-                ParseNext::Match(value) => {
-                    self.output_tx.send(value).await.ok();
-                }
-                ParseNext::NeedInput(state) => {
-                    self.state = Some(state);
-                    match self.input_rx.recv().await {
-                        Some(chunk) => self.runtime.feed(chunk),
-                        None => break,
-                    }
-                }
-                ParseNext::End => break,
+            match recv_with_timeout(&mut self.input_handle, self.timeout).await {
+                Some(StreamEvent::Data(value)) => values.push(value),
+                Some(StreamEvent::Ok(value)) => { values.push(value); break; }
+                _ => break,
             }
         }
+
+        // 2. Parse each value with a fresh runtime
+        let mut results = Vec::new();
+        for value in values {
+            let input = StreamingInput::from_values(vec![value]);
+            let mut runtime = PegRuntime::new(input, &self.registry, self.grammar.clone());
+            let state = runtime.start(&self.rule);
+            if let ParseNext::Match(matched) = runtime.resume(state)? {
+                results.push(matched);
+            }
+        }
+
+        // 3. Send matched results
+        for result in results {
+            self.output.send(result).await.ok();
+        }
+        Ok(())
     }
 }
 ```
 
 ---
 
-## StreamOp Variants
+## StreamOp Variants (`value.rs:87`)
 
 ```rust
 pub enum StreamOp {
-    // Existing
-    Map { f: Value },
-    Filter { f: Value },
+    Map(Value),
+    Filter(Value),
+    FlatMap(Value),
+    Reduce(Value),
     Parse { grammar: Value, rule: SmolStr },      // Blocking parse
-
-    // Streaming
     AsyncParse { grammar: Value, rule: SmolStr }, // Incremental parse
 }
 ```
