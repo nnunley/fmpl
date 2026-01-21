@@ -5,7 +5,7 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use fmpl_core::{Vm, eval};
+use fmpl_core::{StreamEvent, Value, Vm, eval};
 use ratatui::{
     Frame, Terminal,
     backend::CrosstermBackend,
@@ -17,6 +17,50 @@ use ratatui::{
 use std::io;
 use std::time::Duration;
 
+/// Block and wait for an async stream to complete.
+/// Returns the final result value or an error.
+fn wait_for_async(value: Value) -> Result<Value, String> {
+    match value {
+        Value::AsyncStream(handle) => {
+            let mut handle = handle.lock().map_err(|e| format!("Lock error: {}", e))?;
+
+            // Collect all events from the stream
+            let mut final_value = Value::Null;
+
+            loop {
+                match handle.recv_blocking() {
+                    Some(StreamEvent::Data(v)) => {
+                        // Intermediate data - keep last value
+                        final_value = v;
+                    }
+                    Some(StreamEvent::Ok(v)) => {
+                        // Terminal success - return result
+                        return Ok(v);
+                    }
+                    Some(StreamEvent::Err(e)) => {
+                        // Terminal error - return error
+                        return Err(format!("Async error: {}", e));
+                    }
+                    None => {
+                        // Channel closed without Ok/Err
+                        if final_value != Value::Null {
+                            return Ok(final_value);
+                        }
+                        return Err("Async stream completed without result".to_string());
+                    }
+                }
+            }
+        }
+        _ => Ok(value),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum LlmProvider {
+    Ollama,
+    Anthropic,
+}
+
 struct App {
     research_content: String,
     planning_content: String,
@@ -27,10 +71,18 @@ struct App {
     output: String,
     should_quit: bool,
     execute_mode: bool, // When true, Enter executes code
+    llm_mode: bool,     // When true, sends code to LLM instead of executing
+    llm_provider: LlmProvider,
+    vm: Vm,
 }
 
 impl App {
     fn new() -> Self {
+        let mut vm = Vm::new();
+
+        // Bootstrap LLM libraries
+        let bootstrap_result = Self::bootstrap_llm(&mut vm);
+
         App {
             research_content: String::from("Research view - Problem space analysis"),
             planning_content: String::from("Planning view - Collaborative scope definition"),
@@ -38,11 +90,44 @@ impl App {
             cursor_row: 0,
             cursor_col: 0,
             scroll_offset: 0,
-            output: String::from(
-                "FMPL TUI - Agentic Development Environment\nEsc+Enter to execute, q to quit\nLoad lib/ollama.fmpl or lib/anthropic.fmpl for LLM chat",
+            output: format!(
+                "FMPL TUI - Agentic Development Environment\n\
+                 Esc+Enter to execute, Ctrl+L for LLM chat, q to quit\n\
+                 Provider: Ollama (Ctrl+P to switch)\n\
+                 {}",
+                bootstrap_result
             ),
             should_quit: false,
             execute_mode: false,
+            llm_mode: false,
+            llm_provider: LlmProvider::Ollama,
+            vm,
+        }
+    }
+
+    fn bootstrap_llm(vm: &mut Vm) -> String {
+        // Try to load LLM libraries
+        let libraries = vec![
+            "lib/llm-common.fmpl",
+            "lib/ollama.fmpl",
+            "lib/anthropic.fmpl",
+        ];
+
+        let mut results = Vec::new();
+        for lib in libraries {
+            match std::fs::read_to_string(lib) {
+                Ok(content) => match eval(vm, &content) {
+                    Ok(_) => results.push(format!("✓ Loaded {}", lib)),
+                    Err(e) => results.push(format!("✗ Failed to eval {}: {}", lib, e)),
+                },
+                Err(_) => results.push(format!("✗ Could not read {}", lib)),
+            }
+        }
+
+        if results.is_empty() {
+            String::from("No LLM libraries found")
+        } else {
+            results.join("\n")
         }
     }
 
@@ -50,6 +135,19 @@ impl App {
         match key.code {
             KeyCode::Char('q') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
+            }
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Toggle LLM mode
+                self.llm_mode = !self.llm_mode;
+                self.update_mode_indicator();
+            }
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Switch LLM provider
+                self.llm_provider = match self.llm_provider {
+                    LlmProvider::Ollama => LlmProvider::Anthropic,
+                    LlmProvider::Anthropic => LlmProvider::Ollama,
+                };
+                self.update_mode_indicator();
             }
             KeyCode::Esc => {
                 self.execute_mode = !self.execute_mode;
@@ -175,21 +273,39 @@ impl App {
         }
     }
 
+    fn update_mode_indicator(&mut self) {
+        let provider_name = match self.llm_provider {
+            LlmProvider::Ollama => "Ollama",
+            LlmProvider::Anthropic => "Anthropic",
+        };
+
+        let mode = if self.llm_mode {
+            format!("LLM ({})", provider_name)
+        } else {
+            "Execute".to_string()
+        };
+
+        self.output = format!("Mode: {} (Press Enter to {})", mode, mode.to_lowercase());
+    }
+
     fn execute_code(&mut self) {
         let code = self.get_code();
         if code.trim().is_empty() {
             return;
         }
 
-        // Create VM and execute code
-        let mut vm = Vm::new();
-
-        match eval(&mut vm, &code) {
-            Ok(result) => {
-                self.output = format!(">>> {}\nResult: {:?}", code, result);
-            }
-            Err(e) => {
-                self.output = format!(">>> {}\nError: {}", code, e);
+        if self.llm_mode {
+            // Send to LLM
+            self.send_to_llm(&code);
+        } else {
+            // Execute as FMPL code
+            match eval(&mut self.vm, &code) {
+                Ok(result) => {
+                    self.output = format!(">>> {}\nResult: {:?}", code, result);
+                }
+                Err(e) => {
+                    self.output = format!(">>> {}\nError: {}", code, e);
+                }
             }
         }
 
@@ -198,6 +314,43 @@ impl App {
         self.cursor_row = 0;
         self.cursor_col = 0;
         self.scroll_offset = 0;
+    }
+
+    fn send_to_llm(&mut self, prompt: &str) {
+        let provider_name = match self.llm_provider {
+            LlmProvider::Ollama => "ollama",
+            LlmProvider::Anthropic => "anthropic",
+        };
+
+        // Construct FMPL code to call the appropriate LLM
+        let fmpl_code = format!("{}.chat({:?})", provider_name, prompt);
+
+        match eval(&mut self.vm, &fmpl_code) {
+            Ok(result) => {
+                // Wait for async response if needed
+                match wait_for_async(result) {
+                    Ok(Value::String(response)) => {
+                        self.output = format!(
+                            ">>> LLM ({})\n{}\n\nResponse:\n{}",
+                            provider_name, prompt, response
+                        );
+                    }
+                    Ok(other) => {
+                        self.output = format!(
+                            ">>> LLM ({})\n{}\n\nUnexpected response type: {:?}",
+                            provider_name, prompt, other
+                        );
+                    }
+                    Err(e) => {
+                        self.output =
+                            format!(">>> LLM ({})\n{}\n\nError: {}", provider_name, prompt, e);
+                    }
+                }
+            }
+            Err(e) => {
+                self.output = format!(">>> LLM ({})\n{}\n\nError: {}", provider_name, prompt, e);
+            }
+        }
     }
 
     fn get_code(&self) -> String {
@@ -254,10 +407,17 @@ fn draw_ui(f: &mut Frame, app: &App) {
         .split(chunks[2]);
 
     // Code input panel
-    let mode_indicator = if app.execute_mode {
-        " [EXECUTE MODE - Press Enter to run]"
+    let provider_name = match app.llm_provider {
+        LlmProvider::Ollama => "Ollama",
+        LlmProvider::Anthropic => "Anthropic",
+    };
+
+    let mode_indicator = if app.llm_mode {
+        format!(" [LLM CHAT ({}) - Press Enter to send]", provider_name)
+    } else if app.execute_mode {
+        " [EXECUTE MODE - Press Enter to run]".to_string()
     } else {
-        " [EDIT MODE - Press Esc then Enter to run]"
+        " [EDIT MODE - Press Esc then Enter to run]".to_string()
     };
 
     let visible_lines: Vec<String> = app
