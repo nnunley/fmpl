@@ -17,3 +17,5 @@ data/
 
 # Git worktrees
 .worktrees/
+.worklists/
+.jj/
