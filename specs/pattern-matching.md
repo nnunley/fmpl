@@ -52,9 +52,12 @@ result @ {
 }
 ```
 
+**⚠️ Limitation**: Map and list patterns in `@` match expressions are not yet fully implemented. Only `Var` (name binding) and `Wildcard` (`_`) patterns currently work in `@` expressions. See the [Pattern Types Summary](#pattern-types-summary) below for details and workarounds.
+
 ### List Patterns
 
 ```fmpl
+-- ⚠️ This syntax is planned but not yet implemented in @ expressions
 list @ {
   []              => "empty"
   [x]             => "single: " + x
@@ -63,14 +66,27 @@ list @ {
 }
 ```
 
+**Workaround** - Use `let` destructuring:
+```fmpl
+let [first | rest] = list
+-- ... then use first and rest directly
+```
+
 ### Map Patterns
 
 ```fmpl
+-- ⚠️ This syntax is planned but not yet implemented in @ expressions
 data @ {
   %{type: "user", name: n, age: a} => "User " + n + " is " + a
   %{type: "bot", id: i}            => "Bot #" + i
   %{}                              => "empty map"
 }
+```
+
+**Workaround** - Use `let` destructuring:
+```fmpl
+let %{type: "user", name: n, age: a} = data
+-- ... then use n and a directly
 ```
 
 ### Literal Patterns
@@ -102,9 +118,20 @@ value @ {
 Combined with destructuring:
 
 ```fmpl
+-- ⚠️ Map patterns in @ expressions are planned but not yet implemented
 result @ {
   %{status: s, data: d} when s == 200  => process(d)
   %{status: s, error: e} when s >= 400 => handle_error(e)
+}
+```
+
+**Workaround** - Use `let` destructuring before the match:
+```fmpl
+let %{status: s, data: d, error: e} = result
+value @ {
+  _ when s == 200  => process(d)
+  _ when s >= 400 => handle_error(e)
+  _ => ...
 }
 ```
 
@@ -117,6 +144,7 @@ Note: The `&{ condition }` syntax is for grammar predicates only (`grammar/parse
 Bind matched values to names using `as` (`parser.rs:1199-1204`):
 
 ```fmpl
+-- ⚠️ Map and list patterns in @ expressions are planned but not yet implemented
 -- Bind entire match
 input @ {
   %{nested: inner} as whole => use_both(whole, inner)
@@ -128,6 +156,13 @@ list @ {
 }
 ```
 
+**Workaround** - Use `let` destructuring:
+```fmpl
+let %{nested: inner} = input
+let whole = input  -- Keep reference to original
+-- ... use both whole and inner
+```
+
 ---
 
 ## Nested Patterns
@@ -135,12 +170,19 @@ list @ {
 Patterns can nest arbitrarily:
 
 ```fmpl
+-- ⚠️ Map and list patterns in @ expressions are planned but not yet implemented
 data @ {
   %{
     user: %{name: n, prefs: %{theme: t}},
     items: [first | _]
   } => "User " + n + " with theme " + t + " has " + first
 }
+```
+
+**Workaround** - Use `let` destructuring:
+```fmpl
+let %{user: %{name: n, prefs: %{theme: t}}, items: [first | _]} = data
+-- ... then use n, t, and first directly
 ```
 
 ---
@@ -150,11 +192,19 @@ data @ {
 Pattern match on async results:
 
 ```fmpl
+-- ⚠️ Map patterns in @ expressions are planned but not yet implemented
 <- http.get(url) @ {
   %{status: 200, body: b} => parse_json(b)
   %{status: 404}          => not_found()
   %{error: e}             => handle_error(e)
 }
+```
+
+**Workaround** - Use `let` destructuring:
+```fmpl
+let response = <- http.get(url)
+let %{status: s, body: b, error: e} = response
+-- ... then use s, b, and e with conditional logic
 ```
 
 ---
@@ -168,11 +218,13 @@ grammar ToolAgent <: base::tree {
   turn = message:m => <- llm(m) |> tool_output
 
   tool_output =
-    | %{tool: t, args: a} => execute(t, a)  -- map pattern
-    | [head | tail]       => process(head)   -- list pattern
+    | %{tool: t, args: a} => execute(t, a)  -- map pattern in grammar rule
+    | [head | tail]       => process(head)   -- list pattern in grammar rule
     | :done               => finish()        -- symbol pattern
 }
 ```
+
+**Note**: Patterns in grammar semantic actions (after `=>`) use a different code path than `@` match expressions and may have different capabilities.
 
 ---
 
@@ -181,6 +233,7 @@ grammar ToolAgent <: base::tree {
 Patterns are tried in order. Use `_` for catch-all:
 
 ```fmpl
+-- ⚠️ Map patterns in @ expressions are planned but not yet implemented
 value @ {
   %{type: "a"} => ...
   %{type: "b"} => ...
@@ -189,6 +242,15 @@ value @ {
 ```
 
 Without `_`, unmatched values cause runtime errors.
+
+**Current Working Example** (using only `Var` and `Wildcard` patterns):
+```fmpl
+value @ {
+  x when x > 0 => "positive"
+  x when x < 0 => "negative"
+  _            => "zero"
+}
+```
 
 ---
 

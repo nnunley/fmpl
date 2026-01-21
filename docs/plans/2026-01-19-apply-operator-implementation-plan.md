@@ -1,5 +1,8 @@
 # Implementation Plan: The `@` Apply Operator
 
+**Status: Complete**
+This implementation plan has been marked as complete. The tasks outlined below have been implemented.
+
 ## Goal
 
 Implement the `@` operator for grammar application, enabling:

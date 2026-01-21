@@ -1,4 +1,4 @@
-# [Project Name TBD] — Technical Overview
+# FMPL — Technical Overview
 
 ---
 
@@ -683,17 +683,19 @@ implement_feature(spec) = {
 - [x] Incremental parse API (start/resume)
 - [x] ParseDriver for async pipelines
 - [x] Fjall backing for memo tables
+- [x] ParseState binary serialization
+- [x] Integration tests for streaming pipeline
+- [x] Streaming grammar and async operators documentation
 
 ### In Progress
-- [ ] ParseState binary serialization (Task 7)
-- [ ] Integration tests for streaming pipeline (Task 8)
-- [ ] Documentation (Task 9)
+- [ ] Pattern matching in `@` expressions (map/list patterns)
+- [ ] Tuple space operations (`out`/`in`/`rd`)
 
 ### Planned
-- [ ] Tuple space operations (`out`/`in`/`rd`)
 - [ ] `bcom` for functional state updates
 - [ ] Automatic transactions (error rollback)
-- [ ] Anonymous grammar blocks (`value @ { pattern => action }`)
+- [ ] Anonymous grammar blocks with full pattern support
+- [ ] Multi-VAT coordination
 
 ---
 

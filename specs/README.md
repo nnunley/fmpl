@@ -1,6 +1,6 @@
 # Specifications
 
-Design documentation for [Project Name TBD], a streaming-first DSL for building AI agents with grammars, capabilities, and durable state.
+Design documentation for FMPL, a streaming-first DSL for building AI agents with grammars, capabilities, and durable state.
 
 ## Crate Structure
 
@@ -13,7 +13,6 @@ Design documentation for [Project Name TBD], a streaming-first DSL for building 
 ## Core Systems
 
 | Spec | Code | Purpose |
-|------|------|---------|
 | [grammar-system.md](./grammar-system.md) | [fmpl-core/src/grammar/](../fmpl-core/src/grammar/) | OMeta-style PEG grammars with inheritance |
 | [streaming-grammar.md](./streaming-grammar.md) | [fmpl-core/src/grammar/](../fmpl-core/src/grammar/) | Push-based incremental parsing for async streams |
 | [object-system.md](./object-system.md) | [fmpl-core/src/object.rs](../fmpl-core/src/object.rs) | Goblins-inspired objects with spawn, facets |

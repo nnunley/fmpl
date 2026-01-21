@@ -1,5 +1,8 @@
 # Streaming Grammar Push-Model Implementation Plan
 
+**Status: Complete**
+This implementation plan has been marked as complete. The tasks outlined in the status table below have been implemented.
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Enable incremental parsing of async streams (LLM output, HTTP chunks) with full backtracking, speculative downstream emission, and durable suspension via Fjall persistence.

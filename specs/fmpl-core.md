@@ -1,6 +1,6 @@
 # fmpl-core
 
-Core runtime library for [Project Name TBD].
+Core runtime library for FMPL.
 
 **Crate**: `fmpl-core`
 **Location**: [fmpl-core/](../fmpl-core/)

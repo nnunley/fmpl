@@ -245,7 +245,7 @@ let grammar = parser.parse_anonymous()?;  // Anonymous: { rules }
 
 ```fmpl
 grammar json <: base::parser {
-    value = string / number / object / array / true / false / null
+    value = string | number | object | array | true | false | null
     number = integer ("." integer)?
     string = '"' (!'"' any)* '"'
 }

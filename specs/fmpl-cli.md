@@ -1,6 +1,6 @@
 # fmpl-cli
 
-Command-line REPL for [Project Name TBD].
+Command-line REPL for FMPL.
 
 **Crate**: `fmpl-cli`
 **Binary**: `fmpl`
@@ -71,8 +71,9 @@ Standard readline keybindings via rustyline:
 
 Displayed via `:help`:
 
-```
 FMPL Quick Reference:
+
+```fmpl
   let (x = 42) x + 1       Let binding
   lambda (x, y) x + y      Lambda expression
   \x x + 1                 Short lambda
@@ -82,6 +83,17 @@ FMPL Quick Reference:
   x |> f |> g              Pipe operator
   obj.method(args)         Method call
   obj.property             Property access
+```
+
+```fmpl
+  object foo {
+    prop: 10
+    method(a,b): a + b
+  }
+
+  grammar bar {
+    rule:n => action
+  }
 ```
 
 ---

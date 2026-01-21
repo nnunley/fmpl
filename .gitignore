@@ -19,3 +19,4 @@ data/
 .worktrees/
 .worklists/
 .jj/
+.agents/
