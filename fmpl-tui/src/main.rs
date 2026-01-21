@@ -23,19 +23,21 @@ type NodeId = usize;
 
 /// Metadata about a conversation node
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // compacted field for Phase 4 (context compaction)
 struct NodeMetadata {
     branch_name: Option<String>, // "main", "fix-1", etc.
     edited: bool,                // True if message was edited
-    compacted: bool,             // True if elided by compaction
+    compacted: bool,             // True if elided by compaction (Phase 4)
 }
 
 /// A node in the conversation DAG (Directed Acyclic Graph)
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // id and timestamp fields for future phases (compaction, export)
 struct ConversationNode {
     id: NodeId,                // Unique identifier
     parent_id: Option<NodeId>, // Parent in DAG
     message: ChatMessage,      // The actual message
-    timestamp: String,         // ISO timestamp
+    timestamp: String,         // ISO timestamp (for future compaction/export)
     metadata: NodeMetadata,    // Branch info, edited flag
 }
 

@@ -4,11 +4,12 @@
 
 **Event**: `task.resume` → Previous iteration completed planning. Now implementing Phase 1.
 
-**Status**: 🔄 IN PROGRESS - Phase 1 Tasks 1.1-1.4 complete, moving to Task 1.5
+**Status**: ✅ PHASE 1 COMPLETE - All Tasks 1.1-1.5 done
 
-**Phase 1 Complete**: Conversation DAG foundation with undo/redo/edit
+**Phase 1 Complete**: Conversation DAG foundation with undo/redo/edit/branches
 **Commit**: 0728b818 - feat(tui): implement Layer 2 conversation DAG foundation
 **Commit**: 2487a3d8 - feat(tui): implement message editing for conversation DAG
+**Commit**: 47ebb4fc - feat(tui): implement branch point markers for conversation DAG
 
 ### Current Foundation (✅ Complete)
 - ✅ Conversation history tracking (`Vec<ChatMessage>`)
@@ -142,10 +143,42 @@
 **Commit**: `2487a3d8`
 
 #### Task 1.5: Create branch point markers (S - 1 hour)
-- [ ] Add `create_branch(&mut self, name: String)` at current head
-- [ ] Implement branch listing (`Ctrl+B` to show branches)
-- [ ] Add visual indicators for branch points
-- [ ] Track active branch in UI
+- [x] Add `create_branch(&mut self, name: String)` at current head
+- [x] Implement branch listing (`Ctrl+B` to show branches)
+- [x] Add visual indicators for branch points
+- [x] Track active branch in UI
+**Status**: ✅ COMPLETE - Ctrl+N create branch, Ctrl+B list branches, 🌿 markers in UI
+**Commit**: `47ebb4fc`
+
+### ✅ PHASE 1 COMPLETE
+
+**All Tasks 1.1-1.5 Complete:**
+- ✅ ConversationNode data structure
+- ✅ DAG-based conversation tracking
+- ✅ Undo/redo operations
+- ✅ Message editing capability
+- ✅ Branch point markers
+
+**Recovery (2026-01-21T23:56:00)**:
+- ✅ Fixed compiler warnings (added #[allow(dead_code)] for future-phase fields)
+- ✅ Verified build: clean (0 warnings)
+- ✅ Verified all 222 tests passing
+- ✅ System healthy, ready for next phase
+
+**Keybindings:**
+- Ctrl+Z: Undo (move to parent node)
+- Ctrl+Y: Redo (move to child node)
+- Ctrl+E: Edit last message
+- Ctrl+Enter: Save edited message (in edit mode)
+- Esc: Cancel edit mode
+- Ctrl+N: Create branch at current point
+- Ctrl+B: List all branches
+
+**Visual Indicators:**
+- ✏️ (edited) - Shows for edited messages
+- 🌿 [branch-name] - Shows for branched conversations
+
+**Test Results**: ✅ All 222 tests passing
 
 **Testing Strategy**:
 - Write unit tests for DAG operations (create_node, traverse, undo/redo)
