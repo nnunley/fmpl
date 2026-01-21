@@ -75,6 +75,8 @@ anthropic.parse_response = \json_text
   }
 
 # Multi-turn conversation with message history
+# Alias for consistency with ollama.chat_with_history()
+anthropic.chat_with_history = anthropic.chat_history
 anthropic.chat_history = \messages
   let api_key = anthropic.get_api_key()
 

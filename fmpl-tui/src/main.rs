@@ -337,9 +337,12 @@ impl App {
             content: prompt.to_string(),
         });
 
-        // For now, use simple chat() without history
-        // TODO: Implement chat_with_history in LLM libraries
-        let fmpl_code = format!("{}.chat({:?})", provider_name, prompt);
+        // Convert conversation history to FMPL messages array format
+        // Format: [%{role: "user", content: "..."}, %{role: "assistant", content: "..."}]
+        let messages_array = self.format_history_as_fmpl();
+
+        // Use chat_with_history() for multi-turn context
+        let fmpl_code = format!("{}.chat_with_history({})", provider_name, messages_array);
 
         match eval(&mut self.vm, &fmpl_code) {
             Ok(result) => {
@@ -373,6 +376,23 @@ impl App {
                 self.output = format!(">>> LLM ({})\n{}\n\nError: {}", provider_name, prompt, e);
             }
         }
+    }
+
+    /// Format conversation history as FMPL messages array
+    /// Converts Rust ChatMessage structs to FMPL array literal
+    /// Output format: [%{role: "user", content: "..."}, %{role: "assistant", content: "..."}]
+    fn format_history_as_fmpl(&self) -> String {
+        if self.conversation_history.is_empty() {
+            return "[]".to_string();
+        }
+
+        let messages: Vec<String> = self
+            .conversation_history
+            .iter()
+            .map(|msg| format!("%{{role: \"{}\", content: {:?}}}", msg.role, msg.content))
+            .collect();
+
+        format!("[{}]", messages.join(", "))
     }
 
     /// Format conversation history for display

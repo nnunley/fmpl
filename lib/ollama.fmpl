@@ -85,6 +85,44 @@ ollama.extract_responses = \events
     }
   }
 
+# Multi-turn conversation with message history
+# Accepts a list of messages with role/content structure
+# Example: [%{role: "user", content: "Hello"}, %{role: "assistant", content: "Hi there!"}]
+ollama.chat_with_history = \messages
+  # Ollama uses a simple prompt format for context
+  # We build the conversation context by concatenating messages
+  let context = ollama.build_context(messages)
+
+  let body = json::stringify(%{
+    model: ollama.model,
+    prompt: context,
+    stream: false
+  })
+
+  let response = ::__builtin_curl.post(ollama.endpoint + "/api/generate", body)
+
+  # Wait for the response stream
+  response.source |> stream::collect
+  @ {
+    %{error: msg} => "Error: " + msg
+    text => ollama.parse_response(text)
+  }
+
+# Build conversation context from messages list
+# Formats messages as: "User: ...\nAssistant: ...\nUser: ..."
+ollama.build_context = \messages
+  @ messages {
+    [] => ""
+    [head, ...tail] => {
+      let msg_text = @ head {
+        %{role: "user", content: text} => "User: " + text + "\n"
+        %{role: "assistant", content: text} => "Assistant: " + text + "\n"
+        _ => ""
+      }
+      msg_text + ollama.build_context(tail)
+    }
+  }
+
 # List available models
 ollama.list_models = \
   let response = ::__builtin_curl.get(ollama.endpoint + "/api/tags")

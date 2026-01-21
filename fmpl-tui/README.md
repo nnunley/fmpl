@@ -141,5 +141,5 @@ This will:
 - [ ] Streaming response display (SSE parsing) ✅ Implemented in libraries, pending TUI integration
 - [x] Multi-turn conversation history ✅ Implemented
 - [x] Message buffer and context accumulation ✅ Implemented
-- [ ] Context-aware LLM calls (pass history to chat_with_history)
+- [x] Context-aware LLM calls with chat_with_history() ✅ Implemented
 - [ ] Tool calling workflow (parse LLM JSON → execute tools → feed back)

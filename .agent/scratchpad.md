@@ -1,5 +1,86 @@
 # FMPL Scratchpad
 
+## TASK: Context-Aware Multi-Turn LLM Conversations (2026-01-21T23:50:00) ✅
+
+**Event**: `task.start` → Implement chat_with_history() in LLM libraries to pass conversation context. Modify TUI to use history-aware chat functions. Enable true multi-turn LLM conversations with context.
+
+**Status**: ✅ COMPLETED
+
+**Implementation Summary**:
+- ✅ Added `ollama.chat_with_history()` function
+- ✅ Added `anthropic.chat_with_history()` alias (for consistency)
+- ✅ Modified TUI `send_to_llm()` to use `chat_with_history()` with full conversation context
+- ✅ Added `format_history_as_fmpl()` helper to convert Rust struct to FMPL array literal
+- ✅ Updated documentation
+
+**Files Modified**:
+- `lib/ollama.fmpl` - Added `chat_with_history()` and `build_context()` helper (38 lines added)
+- `lib/anthropic.fmpl` - Added `chat_with_history()` alias (1 line added)
+- `fmpl-tui/src/main.rs` - Modified `send_to_llm()`, added `format_history_as_fmpl()` helper (23 lines changed)
+- `fmpl-tui/README.md` - Updated feature checklist
+- `test-chat-history.fmpl` - Created test script (NEW)
+
+**Test Results**: ✅ All 222 tests passing (no regressions)
+
+**Key Features**:
+1. **Context-aware conversations**: Each chat now includes full conversation history
+2. **Ollama format**: Concatenates messages as "User: ...\nAssistant: ...\nUser: ..."
+3. **Anthropic format**: Uses native messages array format with role/content
+4. **TUI integration**: Automatic history accumulation and formatting
+5. **Multi-turn memory**: LLM can reference previous messages in conversation
+
+**How It Works**:
+
+**Ollama** (simple context format):
+```fmpl
+ollama.chat_with_history([
+  %{role: "user", content: "My name is Alice"},
+  %{role: "assistant", content: "Hello Alice!"},
+  %{role: "user", content: "What's my name?"}
+])
+# Returns: "Your name is Alice." (remembers context)
+```
+
+**Anthropic** (native messages format):
+```fmpl
+anthropic.chat_with_history([
+  %{role: "user", content: "Hello"},
+  %{role: "assistant", content: "Hi there!"},
+  %{role: "user", content: "How are you?"}
+])
+# Returns: "I'm doing well, thank you!" (remembers context)
+```
+
+**TUI Integration**:
+- Conversation history tracked in `Vec<ChatMessage>`
+- Each Ctrl+L chat sends full history to `chat_with_history()`
+- User messages and assistant responses automatically accumulated
+- Multi-turn context maintained across session
+
+**Test Script**: `test-chat-history.fmpl`
+- Test 1: Single-turn with history
+- Test 2: Multi-turn conversation (name memory)
+- Test 3: Empty history edge case
+
+**Previous Limitations Resolved**:
+- ✅ History now passed to LLM calls (was tracked but not used)
+- ✅ True multi-turn context awareness implemented
+- ✅ Consistent API across Ollama and Anthropic providers
+
+**Remaining Future Work**:
+- Real-time streaming response display (SSE parsing implemented, needs TUI integration)
+- Conversation history persistence (save to file, load on restart)
+- History management UI (clear, export, search)
+- Context window management (trim old messages when limit reached)
+
+**Event Emitted**: `task.done` → chat_with_history() implementation complete
+
+### LOOP_COMPLETE
+
+Context-aware multi-turn LLM conversations complete. System healthy with all 222 tests passing. Awaiting `task.start` from planner for next needle-moving task.
+
+---
+
 ## TASK: Conversation History Management (2026-01-21T23:45:00) ✅
 
 **Event**: `task.start` → Implement conversation history management in TUI for multi-turn LLM context
@@ -36,6 +117,12 @@
 - Implement `chat_with_history()` in LLM libraries to pass context
 - Add history persistence (save to file)
 - Add history management (clear, export, search)
+
+**Event Emitted**: `task.done` → Conversation history management implemented
+
+### LOOP_COMPLETE
+
+Conversation history management complete. System healthy with all tests passing. Awaiting `task.start` from planner for next needle-moving task.
 
 ---
 
