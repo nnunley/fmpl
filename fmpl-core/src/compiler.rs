@@ -809,15 +809,15 @@ impl Compiler {
             ));
         }
 
-        // Special handling for builtin qualified calls like json::parse()
+        // Special handling for builtin qualified calls like json::parse() and json::stringify()
         if let Expr::Qualified(qn) = func {
             if qn.parts.len() == 2 {
                 let module = &qn.parts[0];
                 let method = &qn.parts[1];
 
-                // Convert json::parse(args) to __builtin_json.parse(args)
-                if module == "json" && method == "parse" {
-                    // Compile as if it were __builtin_json.parse(args)
+                // Convert json::parse(args) and json::stringify(args) to __builtin_json.method(args)
+                if module == "json" && (method == "parse" || method == "stringify") {
+                    // Compile as if it were __builtin_json.method(args)
                     let builtin_idx = self
                         .code
                         .emit(Instruction::LoadSymbol(SmolStr::new("__builtin_json")));

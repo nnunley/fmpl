@@ -234,3 +234,102 @@ fn test_json_parse_invalid() {
         panic!("Expected error Map, got {:?}", value);
     }
 }
+
+/// Test json::stringify with basic types
+#[test]
+fn test_json_stringify_basic_types() {
+    // Stringify null
+    let code_null = r#"json::stringify(null)"#;
+    let result = run(code_null);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), string("null"));
+
+    // Stringify boolean
+    let code_bool = r#"json::stringify(true)"#;
+    let result = run(code_bool);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), string("true"));
+
+    // Stringify integer
+    let code_int = r#"json::stringify(42)"#;
+    let result = run(code_int);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), string("42"));
+
+    // Stringify float
+    let code_float = r#"json::stringify(3.14)"#;
+    let result = run(code_float);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), string("3.14"));
+
+    // Stringify string
+    let code_str = r#"json::stringify("hello")"#;
+    let result = run(code_str);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), string(r#""hello""#));
+}
+
+/// Test json::stringify with lists
+#[test]
+fn test_json_stringify_list() {
+    let code = r#"json::stringify([1, 2, 3])"#;
+    let result = run(code);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), string("[1,2,3]"));
+}
+
+/// Test json::stringify with maps
+#[test]
+fn test_json_stringify_map() {
+    let code = r#"json::stringify(%{name: "Alice", age: 30})"#;
+    let result = run(code);
+    assert!(result.is_ok());
+
+    // JSON object keys are sorted, so we need to handle that
+    let result_str = match result.unwrap() {
+        Value::String(s) => s.to_string(),
+        other => panic!("Expected String, got {:?}", other),
+    };
+
+    // Check it's a valid JSON object
+    assert!(result_str.starts_with('{'));
+    assert!(result_str.ends_with('}'));
+    assert!(result_str.contains("name"));
+    assert!(result_str.contains("Alice"));
+    assert!(result_str.contains("age"));
+    assert!(result_str.contains("30"));
+}
+
+/// Test json::stringify with nested structures
+#[test]
+fn test_json_stringify_nested() {
+    let code = r#"json::stringify(%{items: [%{name: "item1"}, %{name: "item2"}]})"#;
+    let result = run(code);
+    assert!(result.is_ok());
+
+    let result_str = match result.unwrap() {
+        Value::String(s) => s.to_string(),
+        other => panic!("Expected String, got {:?}", other),
+    };
+
+    // Check it's a valid JSON object with array
+    assert!(result_str.starts_with('{'));
+    assert!(result_str.contains("items"));
+    assert!(result_str.contains("item1"));
+    assert!(result_str.contains("item2"));
+}
+
+/// Test json::stringify with no arguments returns error
+#[test]
+fn test_json_stringify_no_args() {
+    let code = r#"json::stringify()"#;
+    let result = run(code);
+
+    assert!(result.is_ok());
+    let value = result.unwrap();
+    if let Value::Map(m) = value {
+        assert_eq!(m.get("error"), Some(&string("invalid_args")));
+    } else {
+        panic!("Expected error Map, got {:?}", value);
+    }
+}

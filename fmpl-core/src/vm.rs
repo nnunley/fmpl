@@ -108,6 +108,32 @@ fn convert_json_to_fmpl(json: serde_json::Value) -> Result<Value> {
     }
 }
 
+/// Convert FMPL Value to serde_json::Value.
+fn convert_fmpl_to_json(value: &Value) -> serde_json::Value {
+    match value {
+        Value::Null => serde_json::Value::Null,
+        Value::Bool(b) => serde_json::Value::Bool(*b),
+        Value::Int(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        Value::String(s) => serde_json::Value::String(s.to_string()),
+        Value::List(items) => {
+            let arr: Vec<serde_json::Value> = items.iter().map(convert_fmpl_to_json).collect();
+            serde_json::Value::Array(arr)
+        }
+        Value::Map(map) => {
+            let obj: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.to_string(), convert_fmpl_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        // For unsupported types, convert to null
+        _ => serde_json::Value::Null,
+    }
+}
+
 /// The FMPL virtual machine.
 ///
 /// Uses Indexed RPN execution model where values are stored in arrays indexed
@@ -1194,6 +1220,36 @@ impl Vm {
                     Err(e) => Ok(Value::Map(std::sync::Arc::new(
                         vec![
                             ("error".into(), Value::String("invalid_json".into())),
+                            ("message".into(), Value::String(e.to_string().into())),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ))),
+                }
+            }
+            ("__builtin_json", "stringify") => {
+                if args.is_empty() {
+                    return Ok(Value::Map(std::sync::Arc::new(
+                        vec![
+                            ("error".into(), Value::String("invalid_args".into())),
+                            (
+                                "message".into(),
+                                Value::String(
+                                    "json::stringify requires at least one argument".into(),
+                                ),
+                            ),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    )));
+                }
+                let value = &args[0];
+                let json_value = convert_fmpl_to_json(value);
+                match serde_json::to_string(&json_value) {
+                    Ok(s) => Ok(Value::String(s.into())),
+                    Err(e) => Ok(Value::Map(std::sync::Arc::new(
+                        vec![
+                            ("error".into(), Value::String("stringify_failed".into())),
                             ("message".into(), Value::String(e.to_string().into())),
                         ]
                         .into_iter()
