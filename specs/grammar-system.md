@@ -1,8 +1,8 @@
 # Grammar System
 
-OMeta-style extensible PEG grammars for [Project Name TBD].
+OMeta-style extensible PEG grammars for FMPL.
 
-**Location**: [fmpl-core/src/grammar/](../fmpl-core/src/grammar/)
+**Location**: [`fmpl-core/src/grammar/`](../fmpl-core/src/grammar/)
 
 ---
 
@@ -13,6 +13,8 @@ PEG-based parsing with grammar inheritance, packrat memoization, and semantic ac
 - **Text** — Character-by-character parsing
 - **Binary** — Byte streams for protocols/file formats
 - **Objects** — Lists/trees of values for AST transformation
+
+For incremental/streaming parsing, see [streaming-grammar.md](./streaming-grammar.md).
 
 ---
 
@@ -71,22 +73,34 @@ base <: { rule = pattern }           -- extend base (no mutation)
 | `&a` | Positive lookahead | `Lookahead(a)` |
 | `!a` | Negative lookahead | `Not(a)` |
 
+### Rule References
+
+| Pattern | Rust Variant | Description |
+|---------|--------------|-------------|
+| `rulename` | `Rule(SmolStr)` | Apply a named rule |
+| `<rulename>` | `Super(SmolStr)` | Apply parent's rule (super call) |
+
 ### Bindings and Actions
 
-| Pattern | Description | Example |
-|---------|-------------|---------|
-| `p:name` | Bind to variable | `Bind(p, "name")` |
-| `&{ expr }` | Semantic predicate | `Predicate(expr)` |
-| `=> expr` | Semantic action | `Action(p, expr)` |
+| Pattern | Rust Variant | Description |
+|---------|--------------|-------------|
+| `p:name` | `Bind(Box<Pattern>, SmolStr)` | Bind match to variable |
+| `&{ expr }` | `Predicate(Expr)` | Semantic predicate (succeed if truthy) |
+| `p => expr` | `Action(Box<Pattern>, Expr)` | Transform matched value |
 
 ### Binary Patterns
 
-| Pattern | Description |
-|---------|-------------|
-| `uint8`, `int8` | 8-bit integers |
-| `uint16be`, `uint16le` | 16-bit integers (big/little endian) |
-| `uint32be`, `uint32le` | 32-bit integers (big/little endian) |
-| `bytes(n)` | Consume n bytes |
+| Pattern | Rust Variant | Description |
+|---------|--------------|-------------|
+| `byte(0x42)` | `Byte(u8)` | Match specific byte value |
+| `uint8` | `UInt8` | Unsigned 8-bit integer |
+| `uint16be`, `uint16le` | `UInt16BE`, `UInt16LE` | Unsigned 16-bit integers |
+| `uint32be`, `uint32le` | `UInt32BE`, `UInt32LE` | Unsigned 32-bit integers |
+| `int8` | `Int8` | Signed 8-bit integer |
+| `int16be`, `int16le` | `Int16BE`, `Int16LE` | Signed 16-bit integers |
+| `int32be`, `int32le` | `Int32BE`, `Int32LE` | Signed 32-bit integers |
+| `bytes(n)` | `Bytes(usize)` | Consume exactly n bytes |
+| `byte(lo..hi)` | `ByteRange(u8, u8)` | Match byte in range (inclusive) |
 
 ### Object/Tree Patterns
 
@@ -155,18 +169,20 @@ end    = <end>           -- end of input
 
 ## Key Types
 
-### Grammar
+All types defined in [`fmpl-core/src/grammar/mod.rs`](../fmpl-core/src/grammar/mod.rs).
+
+### Grammar (mod.rs:97)
 
 ```rust
 pub struct Grammar {
-    pub name: SmolStr,
-    pub parent: Option<SmolStr>,
-    pub parent_grammar: Option<Arc<Grammar>>,
+    pub name: SmolStr,              // e.g., "mud::commands"
+    pub parent: Option<SmolStr>,    // For registry lookup
+    pub parent_grammar: Option<Arc<Grammar>>,  // Direct parent ref
     pub rules: HashMap<SmolStr, Rule>,
 }
 ```
 
-### Rule
+### Rule (mod.rs:145)
 
 ```rust
 pub struct Rule {
@@ -175,20 +191,33 @@ pub struct Rule {
 }
 ```
 
-### Pattern
+### Pattern (mod.rs:170)
+
+30+ variants covering all pattern types. Key variants:
 
 ```rust
 pub enum Pattern {
-    Empty,
-    Any,
-    Char(char),
-    Literal(SmolStr),
-    CharClass(Vec<CharRange>),
-    // ... 30+ variants for all pattern types
+    Empty, Any, End,
+    // Text
+    Char(char), Literal(SmolStr), CharClass(Vec<CharRange>), NegCharClass(Vec<CharRange>),
+    // Rule calls
+    Rule(SmolStr), Super(SmolStr),
+    // Combinators
+    Seq(Vec<Pattern>), Choice(Vec<Pattern>), Star(Box<Pattern>), Plus(Box<Pattern>), Optional(Box<Pattern>),
+    // Lookahead
+    Lookahead(Box<Pattern>), Not(Box<Pattern>),
+    // Bindings/Actions
+    Bind(Box<Pattern>, SmolStr), Predicate(Expr), Action(Box<Pattern>, Expr),
+    // Binary
+    Byte(u8), ByteRange(u8, u8), Bytes(usize),
+    UInt8, UInt16BE, UInt16LE, UInt32BE, UInt32LE,
+    Int8, Int16BE, Int16LE, Int32BE, Int32LE,
+    // Object/Value
+    MatchValue(Value), MatchType(SmolStr), ListMatch(..), MapMatch(..), SymbolMatch(SmolStr), Apply(Box<Pattern>),
 }
 ```
 
-### GrammarRegistry
+### GrammarRegistry (mod.rs:380)
 
 ```rust
 pub struct GrammarRegistry {
@@ -196,7 +225,17 @@ pub struct GrammarRegistry {
 }
 ```
 
-Provides `register()`, `get()`, and automatically registers built-in grammars.
+Methods: `register()`, `get()`. Automatically registers built-in grammars (`base::parser`, `base::binary`, `base::tree`).
+
+### GrammarParser (parser.rs:18)
+
+Parses grammar definition syntax into `Grammar` structs.
+
+```rust
+let mut parser = GrammarParser::new(source);
+let grammar = parser.parse()?;       // Named grammar
+let grammar = parser.parse_anonymous()?;  // Anonymous: { rules }
+```
 
 ---
 
@@ -233,11 +272,42 @@ grammar ast::optimizer <: base::tree {
 
 ---
 
+## Runtime API
+
+See [`runtime.rs`](../fmpl-core/src/grammar/runtime.rs) for full API.
+
+### Convenience Functions
+
+```rust
+// Parse text with named grammar
+parse("123", &registry, "base::parser", "integer")?;
+
+// Parse ensuring full input consumed
+parse_full("123", &registry, "base::parser", "integer")?;
+
+// Parse any value (polymorphic)
+apply_grammar_to_value(Value::String("hello".into()), &grammar, &registry, "word")?;
+```
+
+### PegRuntime (runtime.rs:32)
+
+Generic runtime over input types:
+
+```rust
+let mut runtime = text_runtime(text, &registry, grammar);
+let result = runtime.parse("rule_name")?;
+
+// With action evaluator
+let mut runtime = runtime.with_action_evaluator(evaluator);
+```
+
+---
+
 ## Related Specs
 
-- [streaming-grammar.md](./streaming-grammar.md) — Incremental parsing for streams
+- [streaming-grammar.md](./streaming-grammar.md) — Incremental parsing and durable suspension
 - [fmpl-core.md](./fmpl-core.md) — Core runtime
-- [language-guide.md](../docs/design/language-guide.md) — DSL syntax
+- [async-streams.md](./async-streams.md) — Stream types for grammar pipelines
 
 ---
 

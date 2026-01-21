@@ -2,7 +2,7 @@
 
 Goblins-inspired prototype-based objects with capabilities.
 
-**Location**: [fmpl-core/src/object.rs](../fmpl-core/src/object.rs)
+**Location**: `fmpl-core/src/object.rs:1`
 
 ---
 
@@ -10,38 +10,30 @@ Goblins-inspired prototype-based objects with capabilities.
 
 Prototype-based object system inspired by [Spritely Goblins](https://spritely.institute/goblins/):
 
-- **Prototype inheritance** — Objects delegate to parent objects
-- **Facets** — Capability-based restricted views
-- **spawn/bcom** — Functional state updates (become pattern)
-- **Sync/async calls** — `$` for same-vat, `<-` for async
+- **Prototype inheritance** — Objects delegate to parent objects (`object.rs:102`)
+- **Facets** — Capability-based restricted views (`object.rs:152`)
+- **spawn** — Create object instances from parent objects (`vm.rs:1018`)
+- **Sync/async calls** — `$` for same-vat, `<-` for async (planned)
 
 ---
 
 ## Object Definition
 
+Objects are defined with methods and optional facets:
+
 ```fmpl
-object ^merchant (bcom, name, inventory) {
-  .#private
-  profit_margin: 0.2
+object web_root {
+  entry(): :crossroads
+}
 
-  .#public
-  name: name
-  inventory: inventory
-
-  greet(): "Welcome to " + self.name + "!"
-
-  buy(item): {
-    bcom(^merchant(bcom, name, inventory - [item]));
-    "Sold!"
-  }
-
-  .#facets
-  customer: [greet, buy, name]
-  customer!: [greet, buy, name]  -- terminal (non-delegatable)
+object crossroads {
+  render_html(): "ok"
 }
 ```
 
-### Visibility Markers
+See `fmpl-core/tests/object_methods.rs:3` for usage examples.
+
+### Visibility Markers (Planned)
 
 | Marker | Meaning |
 |--------|---------|
@@ -49,96 +41,74 @@ object ^merchant (bcom, name, inventory) {
 | `.#public` | Accessible by callers |
 | `.#facets` | Facet definitions |
 
----
-
-## spawn and bcom
-
-### spawn
-
-Creates object instances:
-
-```fmpl
-let obj = spawn ^constructor(args)
-```
-
-### bcom
-
-Functional state update (become pattern):
-
-```fmpl
-object ^cell (bcom, val) {
-  get(): val
-  set(new): bcom(^cell(bcom, new))  -- returns new cell
-}
-
-let c = spawn ^cell(42)
-$ c.get()       -- 42
-let c2 = $ c.set(100)
-$ c2.get()      -- 100
-$ c.get()       -- still 42 (immutable)
-```
+> **Note**: Visibility markers are parsed (`lexer.rs:83`) but not yet enforced at runtime.
 
 ---
 
-## Sync vs Async
+## spawn
+
+Creates object instances from a parent object (`vm.rs:1018`):
+
+```fmpl
+let obj = spawn parent_object(args)
+```
+
+Currently spawns a new object with the given parent. Constructor invocation is not yet implemented (`TODO` at `vm.rs:1024`).
+
+---
+
+## Sync vs Async (Planned)
 
 ```fmpl
 $ obj.method()      -- synchronous, same-vat
 <- obj.method()     -- asynchronous, returns stream
 ```
 
-### Async with Pipes
-
-```fmpl
-<- obj.method() |> handler      -- pipe stream result
-<- obj.method() @ { ... }       -- pattern match result
-```
+These operators are in the language design but not yet implemented.
 
 ---
 
 ## Facets (Capabilities)
 
-Facets provide restricted views of objects:
+Facets define restricted views of objects (`object.rs:21`):
+
+```rust
+pub struct Facet {
+    pub members: Vec<SmolStr>,  // allowed members
+    pub terminal: bool,         // true for `facet!:` definitions
+}
+```
+
+**Parser support**: `parser.rs:175` (parse_facet_def)
+
+**Runtime check**: `object.rs:177` (facet_allows)
+
+### Facet Syntax (Planned)
 
 ```fmpl
 object treasury {
-  .#private
-  balance: 10000
-
-  .#public
-  view_balance(): self.balance
-  withdraw(amt): { ... }
-
   .#facets
   auditor: [view_balance]
-  treasurer: [view_balance, withdraw]
+  auditor!: [view_balance]  -- terminal (non-delegatable)
 }
 
--- Get restricted view
 treasury.as(:auditor).view_balance()   -- works
-treasury.as(:auditor).withdraw(100)    -- denied: not on facet
+treasury.as(:auditor).withdraw(100)    -- denied
 ```
 
-### Terminal Facets
-
-Non-delegatable facets use `!` suffix:
-
-```fmpl
-.#facets
-customer!: [greet, buy]  -- cannot be passed to others
-```
+Facet access via `.as(:facet)` compiles to `GetFacet` instruction (`compiler.rs:579`).
 
 ---
 
 ## Key Types
 
-### ObjectId
+### ObjectId (`object.rs:12`)
 
 ```rust
 pub type ObjectId = u64;
 ```
 
-### Object
+### Object (`object.rs:29`)
 
 ```rust
 pub struct Object {
@@ -150,7 +120,7 @@ pub struct Object {
 }
 ```
 
-### Method
+### Method (`object.rs:15`)
 
 ```rust
 pub struct Method {
@@ -159,22 +129,13 @@ pub struct Method {
 }
 ```
 
-### Facet
-
-```rust
-pub struct Facet {
-    pub members: Vec<SmolStr>,
-    pub terminal: bool,  // true for `facet!:` definitions
-}
-```
-
-### ObjectDb
+### ObjectDb (`object.rs:51`)
 
 ```rust
 pub struct ObjectDb {
     objects: HashMap<ObjectId, Object>,
     next_id: ObjectId,
-    named: HashMap<SmolStr, ObjectId>,
+    named: HashMap<SmolStr, ObjectId>,  // @name registrations
 }
 ```
 
@@ -182,26 +143,27 @@ pub struct ObjectDb {
 
 ## ObjectDb API
 
-| Method | Description |
-|--------|-------------|
-| `create(parent)` | Create new object |
-| `get(id)` | Get object by ID |
-| `get_mut(id)` | Get mutable object |
-| `register_name(name, id)` | Register named object |
-| `lookup_name(name)` | Look up by name |
-| `get_property(id, name)` | Get property (follows prototype chain) |
-| `set_property(id, name, val)` | Set property |
-| `get_method(id, name)` | Get method (follows prototype chain) |
-| `define_method(id, name, method)` | Define method |
-| `get_facet(id, name)` | Get facet definition |
-| `define_facet(id, name, facet)` | Define facet |
-| `facet_allows(id, facet, member)` | Check facet access |
+| Method | Line | Description |
+|--------|------|-------------|
+| `create(parent)` | 69 | Create new object |
+| `get(id)` | 92 | Get object by ID |
+| `get_mut(id)` | 97 | Get mutable object |
+| `register_name(name, id)` | 77 | Register named object |
+| `lookup_name(name)` | 82 | Look up by name |
+| `named_objects()` | 87 | Iterate named objects |
+| `get_property(id, name)` | 102 | Get property (follows prototype chain) |
+| `set_property(id, name, val)` | 117 | Set property |
+| `get_method(id, name)` | 127 | Get method (follows prototype chain) |
+| `define_method(id, name, method)` | 142 | Define method |
+| `get_facet(id, name)` | 152 | Get facet definition |
+| `define_facet(id, name, facet)` | 167 | Define facet |
+| `facet_allows(id, facet, member)` | 177 | Check facet access |
 
 ---
 
 ## Prototype Chain
 
-Properties and methods are looked up through the prototype chain:
+Properties and methods are looked up through the prototype chain (`object.rs:102`):
 
 ```rust
 pub fn get_property(&self, id: ObjectId, name: &str) -> Option<Value> {
@@ -225,38 +187,37 @@ pub fn get_property(&self, id: ObjectId, name: &str) -> Option<Value> {
 
 ## Value Representation
 
-In the runtime, objects are represented as:
+Objects are referenced by ID in the runtime (`value.rs:25`):
 
 ```rust
 pub enum Value {
-    // Object reference
     Object(ObjectId),
-
-    // Faceted view
-    Facet {
-        object: ObjectId,
-        members: Arc<Vec<SmolStr>>,
-        terminal: bool,
-    },
-
-    // Constructor
-    Constructor {
-        name: SmolStr,
-        params: Vec<SmolStr>,
-        body: Arc<CompiledCode>,
-    },
-    // ...
+    // ... other variants
 }
 ```
+
+Object data lives in `ObjectDb`; `Value::Object` is just a handle.
 
 ---
 
 ## Planned Features
 
-- [ ] **bcom implementation** — Full become pattern
-- [ ] **Automatic transactions** — Error = rollback
+- [ ] **Constructor invocation** — `spawn` calls constructor method (`vm.rs:1024` TODO)
+- [ ] **bcom pattern** — Functional state updates (become pattern)
+- [ ] **Visibility enforcement** — `.#private`/`.#public` at runtime
+- [ ] **$ and <- operators** — Sync/async method calls
 - [ ] **Promise pipelining** — `<- (<- a.b()).c()`
-- [ ] **Multi-VAT** — Distributed objects (future)
+- [ ] **Multi-VAT** — Distributed objects
+
+---
+
+## Public Exports
+
+From `fmpl-core/src/lib.rs:30`:
+
+```rust
+pub use object::{Object, ObjectDb, ObjectId};
+```
 
 ---
 

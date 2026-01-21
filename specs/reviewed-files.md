@@ -9,12 +9,12 @@ Prefer reviewing specs first, then proceed to docs/. Once all files have been re
 | File | Status | Last Reviewed |
 |------|--------|---------------|
 | specs/README.md | not started | — |
-| specs/fmpl-core.md | not started | — |
-| specs/fmpl-cli.md | not started | — |
+| specs/fmpl-core.md | reviewed | 2026-01-20 |
+| specs/fmpl-cli.md | reviewed | 2026-01-20 |
 | specs/fmpl-web.md | reviewed | 2026-01-20 |
-| specs/grammar-system.md | not started | — |
-| specs/streaming-grammar.md | not started | — |
-| specs/object-system.md | not started | — |
+| specs/grammar-system.md | reviewed | 2026-01-20 |
+| specs/streaming-grammar.md | reviewed | 2026-01-20 |
+| specs/object-system.md | reviewed | 2026-01-20 |
 | specs/vm.md | not started | — |
 | specs/persistence.md | not started | — |
 | specs/async-streams.md | not started | — |
