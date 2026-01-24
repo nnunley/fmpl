@@ -732,7 +732,9 @@ impl Compiler {
 
     /// Compile short-circuit AND.
     /// Compiles as: if left is falsy, result is false; else evaluate right.
+    /// Uses a temporary variable to properly converge both branches (like if expressions).
     fn compile_short_circuit_and(&mut self, left: &Expr, right: &Expr) -> Result<InstrIndex> {
+        let result_var = self.gen_temp_name("and");
         let left_idx = self.compile_expr(left)?;
 
         // If left is falsy, skip to false result
@@ -741,36 +743,39 @@ impl Compiler {
             target: InstrIndex(0), // placeholder
         });
 
-        // Left was truthy, evaluate right
-        let _right_idx = self.compile_expr(right)?;
+        // Left was truthy, evaluate right and store in temp var
+        let right_idx = self.compile_expr(right)?;
+        self.code.emit(Instruction::StoreVar {
+            name: result_var.clone(),
+            value: right_idx,
+        });
 
         // Jump over the false case
         let jump_to_end = self.code.emit(Instruction::Jump {
             target: InstrIndex(0), // placeholder
         });
 
-        // False case: emit false value and copy to convergence slot
+        // False case: store false in temp var
         let false_target = self.code.next_index();
         self.code.patch_jump_target(jump_to_false, false_target);
-        let _false_idx = self.code.emit(Instruction::LoadBool(false));
-        // Copy false to convergence slot
-        let false_copy_idx = self.code.emit(Instruction::Copy { source: _false_idx });
+        let false_idx = self.code.emit(Instruction::LoadBool(false));
+        self.code.emit(Instruction::StoreVar {
+            name: result_var.clone(),
+            value: false_idx,
+        });
 
-        // End: converge the two branches
-        // Both paths have copied their result to a Copy instruction
+        // End: load result from temp var
         let end_target = self.code.next_index();
         self.code.patch_jump_target(jump_to_end, end_target);
 
-        // Return the last value written - from the truthy path (right)
-        // The false path's Copy writes to false_copy_idx which gets the final slot via fall-through
-        // TODO: This short-circuit implementation is imprecise - may return stale values
-        // A proper fix requires phi-like convergence semantics
-        Ok(false_copy_idx)
+        Ok(self.code.emit(Instruction::LoadVar(result_var)))
     }
 
     /// Compile short-circuit OR.
     /// Compiles as: if left is truthy, result is true; else evaluate right.
+    /// Uses a temporary variable to properly converge both branches (like if expressions).
     fn compile_short_circuit_or(&mut self, left: &Expr, right: &Expr) -> Result<InstrIndex> {
+        let result_var = self.gen_temp_name("or");
         let left_idx = self.compile_expr(left)?;
 
         // If left is truthy, skip to true result
@@ -779,25 +784,32 @@ impl Compiler {
             target: InstrIndex(0), // placeholder
         });
 
-        // Left was falsy, evaluate right
+        // Left was falsy, evaluate right and store in temp var
         let right_idx = self.compile_expr(right)?;
+        self.code.emit(Instruction::StoreVar {
+            name: result_var.clone(),
+            value: right_idx,
+        });
 
         // Jump over the true case
         let jump_to_end = self.code.emit(Instruction::Jump {
             target: InstrIndex(0), // placeholder
         });
 
-        // True case: emit true value
+        // True case: store true in temp var
         let true_target = self.code.next_index();
         self.code.patch_jump_target(jump_to_true, true_target);
-        let _true_idx = self.code.emit(Instruction::LoadBool(true));
+        let true_idx = self.code.emit(Instruction::LoadBool(true));
+        self.code.emit(Instruction::StoreVar {
+            name: result_var.clone(),
+            value: true_idx,
+        });
 
-        // End: converge the two branches
+        // End: load result from temp var
         let end_target = self.code.next_index();
         self.code.patch_jump_target(jump_to_end, end_target);
 
-        // Copy the appropriate result
-        Ok(self.code.emit(Instruction::Copy { source: right_idx }))
+        Ok(self.code.emit(Instruction::LoadVar(result_var)))
     }
 
     /// Compile pipe operator.

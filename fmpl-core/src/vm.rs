@@ -1800,6 +1800,61 @@ mod tests {
     }
 
     #[test]
+    fn test_logical_and() {
+        let mut vm = Vm::new();
+        // true && true -> true
+        assert_eq!(eval(&mut vm, "true && true").unwrap(), Value::Bool(true));
+        // true && false -> false
+        assert_eq!(eval(&mut vm, "true && false").unwrap(), Value::Bool(false));
+        // false && true -> false (short-circuit, second not evaluated)
+        assert_eq!(eval(&mut vm, "false && true").unwrap(), Value::Bool(false));
+        // false && false -> false
+        assert_eq!(eval(&mut vm, "false && false").unwrap(), Value::Bool(false));
+        // With expressions: (1 < 2) && (3 > 1) -> true
+        assert_eq!(eval(&mut vm, "1 < 2 && 3 > 1").unwrap(), Value::Bool(true));
+        // Short-circuit: false && expr that would error
+        assert_eq!(eval(&mut vm, "false && 1/0").unwrap(), Value::Bool(false));
+    }
+
+    #[test]
+    fn test_logical_or() {
+        let mut vm = Vm::new();
+        // true || true -> true (short-circuit, second not evaluated)
+        assert_eq!(eval(&mut vm, "true || true").unwrap(), Value::Bool(true));
+        // true || false -> true (short-circuit)
+        assert_eq!(eval(&mut vm, "true || false").unwrap(), Value::Bool(true));
+        // false || true -> true
+        assert_eq!(eval(&mut vm, "false || true").unwrap(), Value::Bool(true));
+        // false || false -> false
+        assert_eq!(eval(&mut vm, "false || false").unwrap(), Value::Bool(false));
+        // With expressions: (1 > 2) || (3 < 4) -> true
+        assert_eq!(eval(&mut vm, "1 > 2 || 3 < 4").unwrap(), Value::Bool(true));
+        // Short-circuit: true || expr that would error
+        assert_eq!(eval(&mut vm, "true || 1/0").unwrap(), Value::Bool(true));
+    }
+
+    #[test]
+    fn test_mixed_logical_operators() {
+        let mut vm = Vm::new();
+        // AND has higher precedence than OR
+        // true || false && false -> true || (false && false) -> true
+        assert_eq!(
+            eval(&mut vm, "true || false && false").unwrap(),
+            Value::Bool(true)
+        );
+        // (false || false) && true -> false && true -> false
+        assert_eq!(
+            eval(&mut vm, "(false || false) && true").unwrap(),
+            Value::Bool(false)
+        );
+        // Complex: false && true || true && true -> (false && true) || (true && true) -> false || true -> true
+        assert_eq!(
+            eval(&mut vm, "false && true || true && true").unwrap(),
+            Value::Bool(true)
+        );
+    }
+
+    #[test]
     fn test_let_binding() {
         let mut vm = Vm::new();
         assert_eq!(eval(&mut vm, "let (x = 10) x + 5").unwrap(), Value::Int(15));
