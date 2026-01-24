@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::grammar::Grammar;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 /// Index into the instructions/values array.
@@ -204,11 +205,11 @@ pub enum Instruction {
     PushScope,
     PopScope,
 
-    // Lambda (explicit capture indices)
+    // Lambda (explicit capture names)
     MakeLambda {
         params: Vec<SmolStr>,
         body: usize,
-        captures: Vec<InstrIndex>,
+        captures: Vec<SmolStr>,
     },
 
     // Pipe (explicit operand indices)
@@ -457,6 +458,10 @@ pub struct Compiler {
     code: CompiledCode,
     /// Counter for generating unique temporary variable names.
     temp_counter: usize,
+    /// Track variables loaded via LoadVar (for capture analysis)
+    loaded_vars: HashSet<SmolStr>,
+    /// Track variables bound via Bind (for capture analysis)
+    bound_vars: HashSet<SmolStr>,
 }
 
 impl Compiler {
@@ -464,6 +469,8 @@ impl Compiler {
         Self {
             code: CompiledCode::new(),
             temp_counter: 0,
+            loaded_vars: std::collections::HashSet::new(),
+            bound_vars: std::collections::HashSet::new(),
         }
     }
 
@@ -489,7 +496,10 @@ impl Compiler {
             Expr::Symbol(s) => Ok(self.code.emit(Instruction::LoadSymbol(s.clone()))),
             Expr::Bool(b) => Ok(self.code.emit(Instruction::LoadBool(*b))),
             Expr::Null => Ok(self.code.emit(Instruction::LoadNull)),
-            Expr::Ident(name) => Ok(self.code.emit(Instruction::LoadVar(name.clone()))),
+            Expr::Ident(name) => {
+                self.loaded_vars.insert(name.clone());
+                Ok(self.code.emit(Instruction::LoadVar(name.clone())))
+            }
             Expr::Qualified(qn) => {
                 // For now, treat as simple name lookup
                 Ok(self
@@ -996,11 +1006,19 @@ impl Compiler {
         let nested_idx = self.code.nested.len();
         self.code.nested.push(lambda_compiler.code);
 
-        // TODO: track actual captures
+        // Compute captures: variables loaded but not bound (excluding parameters)
+        let mut captures: Vec<SmolStr> = lambda_compiler
+            .loaded_vars
+            .difference(&lambda_compiler.bound_vars)
+            .filter(|name| !params.contains(name))
+            .cloned()
+            .collect();
+        captures.sort(); // For deterministic ordering
+
         Ok(self.code.emit(Instruction::MakeLambda {
             params: params.to_vec(),
             body: nested_idx,
-            captures: Vec::new(),
+            captures,
         }))
     }
 
@@ -1019,6 +1037,7 @@ impl Compiler {
                     } else {
                         self.code.emit(Instruction::LoadNull)
                     };
+                    self.bound_vars.insert(name.clone());
                     self.code.emit(Instruction::Bind {
                         name: name.clone(),
                         value,
@@ -1043,6 +1062,7 @@ impl Compiler {
     /// Emits: Bind(name, expr), Copy(bind_result)
     fn compile_let_stmt(&mut self, name: &SmolStr, expr: &Expr) -> Result<InstrIndex> {
         let value = self.compile_expr(expr)?;
+        self.bound_vars.insert(name.clone());
         self.code.emit(Instruction::Bind {
             name: name.clone(),
             value,
@@ -1078,6 +1098,7 @@ impl Compiler {
             match &case.pattern {
                 Pattern::Var(name) => {
                     self.code.emit(Instruction::PushScope);
+                    self.bound_vars.insert(name.clone());
                     self.code.emit(Instruction::Bind {
                         name: name.clone(),
                         value: scrutinee_idx,
@@ -1161,6 +1182,7 @@ impl Compiler {
         // Bind error (the error value will be pushed by VM during exception handling)
         // For now, we load a placeholder that the VM will replace
         let error_val = self.code.emit(Instruction::LoadNull); // VM replaces this
+        self.bound_vars.insert(error_binding.clone());
         self.code.emit(Instruction::Bind {
             name: error_binding.clone(),
             value: error_val,
@@ -1299,6 +1321,7 @@ impl Compiler {
                 // Discard - nothing to bind
             }
             Pattern::Var(name) => {
+                self.bound_vars.insert(name.clone());
                 self.code.emit(Instruction::Bind {
                     name: name.clone(),
                     value: source,

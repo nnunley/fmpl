@@ -15,6 +15,7 @@ pub struct SpannedToken {
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\n\r]+")]
 #[logos(skip r"--[^\n]*")]
+#[logos(skip r"//[^\n]*")]
 pub enum Token {
     // Keywords
     #[token("object")]

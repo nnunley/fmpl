@@ -720,24 +720,39 @@ impl Vm {
                 Instruction::MakeLambda {
                     params,
                     body,
-                    captures: _,
+                    captures,
                 } => {
                     let frame = self.frames.last().unwrap();
                     let nested_code = frame.code.nested.get(body).cloned();
 
                     if let Some(code) = nested_code {
-                        // Capture current scope
-                        let mut captures = HashMap::new();
-                        for scope in &self.scopes {
-                            for (k, v) in &scope.bindings {
-                                captures.insert(k.clone(), v.clone());
+                        // Capture only the specified variables from current scopes
+                        let mut capture_values = HashMap::new();
+                        for capture_name in &captures {
+                            // Look up the variable from scopes (same as lookup_var)
+                            let mut found = None;
+                            for scope in self.scopes.iter().rev() {
+                                if let Some(val) = scope.bindings.get(capture_name) {
+                                    found = Some(val.clone());
+                                    break;
+                                }
+                            }
+                            // Also check frame locals
+                            if found.is_none() {
+                                if let Some(val) = frame.locals.get(capture_name) {
+                                    found = Some(val.clone());
+                                }
+                            }
+                            // If still not found, that's an error - but we'll handle it at runtime
+                            if let Some(val) = found {
+                                capture_values.insert(capture_name.clone(), val);
                             }
                         }
 
                         let lambda = Lambda {
                             params,
                             code: Arc::new(code),
-                            captures,
+                            captures: capture_values,
                         };
                         let frame = self.frames.last_mut().unwrap();
                         frame.set_current(Value::Lambda(Arc::new(lambda)));
@@ -1092,20 +1107,19 @@ impl Vm {
             return Ok(Value::Symbol(SmolStr::new("__builtin_tuplespace")));
         }
 
-        // Check scopes (innermost first)
-        for scope in self.scopes.iter().rev() {
-            if let Some(val) = scope.bindings.get(name) {
-                return Ok(val.clone());
-            }
-        }
-
-        // Check frame locals
+        // Check frame locals first (includes captures and parameters)
         if let Some(frame) = self.frames.last()
             && let Some(val) = frame.locals.get(name)
         {
             return Ok(val.clone());
         }
 
+        // Check scopes (innermost first) - for let bindings in current execution context
+        for scope in self.scopes.iter().rev() {
+            if let Some(val) = scope.bindings.get(name) {
+                return Ok(val.clone());
+            }
+        }
         // Check named objects
         if let Some(id) = self.objects.lookup_name(name) {
             return Ok(Value::Object(id));
