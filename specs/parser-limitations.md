@@ -58,24 +58,26 @@ module::var = 20
 
 ### Issue 2: Qualified Names Starting with `::` Don't Parse
 
-**Status**: PARTIAL - `name::method` works, but `::name` doesn't
-**Impact**: MEDIUM - Affects accessing global builtins
+**Status**: FIXED (2026-01-24)
+**Impact**: MEDIUM → LOW - Global namespace access now supported
 
-**Description**: When parsing qualified names, the parser expects an identifier first, then `::`. Code like `::__builtin_curl.get` fails with "unexpected token: ColonColon" at the `::` position.
+**Description**: Qualified names starting with `::` (global namespace) are now supported.
 
 **What works**:
 ```fmpl
--- Method call on qualified name (doesn't work either due to issue #1)
-let x = curl::get()  -- This might work if curl is in scope
+-- Global qualified name
+let x = ::__builtin_curl  -- Now parses correctly!
+
+-- Method call on global qualified name
+let result = ::__builtin_curl.get("https://example.com")
+
+-- Multi-part global qualified names
+let y = ::foo::bar::baz
 ```
 
-**What doesn't work**:
-```fmpl
--- Global qualified name starting with ::
-let x = ::__builtin_curl.get()  -- Parser error: unexpected token: ColonColon
-```
+**How it works**: The parser now recognizes `::` as the start of a global qualified name. The qualified name is represented with an empty string as the first part, e.g., `::__builtin_curl` becomes `["", "__builtin_curl"]`.
 
-**Current Workaround**: Use the simple names directly (`curl.get`, `json.parse`) which the VM maps to builtins via `lookup_var()`.
+**Previous Workaround**: No longer needed - you can now use `::` prefix directly for accessing global builtins.
 
 ---
 
@@ -127,9 +129,9 @@ let x = ::__builtin_curl.get()  -- Parser error: unexpected token: ColonColon
 ### For Library Code Authors
 
 1. **Use `--` for comments**, not `#`
-2. **Avoid `=` assignment** - use `let` for bindings or inline pattern matching
+2. **Assignment syntax (`=`)** is now supported for simple variable mutation
 3. **Test basic patterns first** - simple `@ { %{key: val} => ... }` patterns work reliably
-4. **Use simple builtin names** - `curl.get`, not `::__builtin_curl.get`
+4. **Global qualified names** (`::foo::bar`) are now supported - you can use `::__builtin_curl.get` directly
 
 ### For Tool Execution
 

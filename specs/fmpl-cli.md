@@ -46,7 +46,7 @@ Bye!
 | `:quit` | `:q`, `:exit` | Exit the REPL |
 | `:clear` | — | Clear the screen |
 | `:reset` | — | Reset VM state |
-| `:objects` | — | List named objects (TODO) |
+| `:objects` | — | List named objects |
 
 ---
 

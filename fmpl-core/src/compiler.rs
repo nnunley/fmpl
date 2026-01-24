@@ -867,6 +867,25 @@ impl Compiler {
                         args: arg_indices,
                     }));
                 }
+
+                // Convert time::sleep(args) to __builtin_time.sleep(args)
+                if module == "time" && method == "sleep" {
+                    let builtin_idx = self
+                        .code
+                        .emit(Instruction::LoadSymbol(SmolStr::new("__builtin_time")));
+                    let mut arg_indices = Vec::with_capacity(args.len());
+                    for arg in args {
+                        match arg {
+                            Arg::Expr(e) => arg_indices.push(self.compile_expr(e)?),
+                            Arg::Placeholder => unreachable!(),
+                        }
+                    }
+                    return Ok(self.code.emit(Instruction::MethodCall {
+                        receiver: builtin_idx,
+                        method: method.clone(),
+                        args: arg_indices,
+                    }));
+                }
             }
         }
 

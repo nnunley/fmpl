@@ -171,8 +171,14 @@ fn handle_command(vm: &mut Vm, line: &str) -> CommandResult {
 
         ":objects" => {
             println!("Named objects:");
-            // TODO: expose object listing from VM
-            println!("  (none yet)");
+            let mut count = 0;
+            for (name, _id) in vm.objects.named_objects() {
+                println!("  {}", name);
+                count += 1;
+            }
+            if count == 0 {
+                println!("  (none)");
+            }
             CommandResult::Continue
         }
 

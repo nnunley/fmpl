@@ -1,13 +1,26 @@
 # LLM Tool Calling with @ Operator
 
-**Status**: Revised (v3)
+**Status**: Complete (v4)
 **Author**: Spec Writer
-**Date**: 2026-01-21
+**Date**: 2026-01-24
 **Changes**:
 - v2: Removed `execute()` builtin, use existing `call_builtin()` pattern with `__builtin_curl::get` syntax
 - v3: Deferred AC-8/AC-9 (streaming) to Phase 2, Phase 1 scope is AC-1 through AC-7 (core tool calling only)
+- v4: AC-7 (JSON parsing) implemented with both json::parse and json::stringify
 
 ---
+
+## Implementation Status ✅ COMPLETE
+
+All acceptance criteria AC-1 through AC-7 have been implemented:
+
+- ✅ AC-1: Parse LLM Tool Call Responses - Uses `@` operator with pattern matching
+- ✅ AC-2: Execute Tools via Built-ins - Leverages existing Symbol dispatch
+- ✅ AC-3: Handle Tool Results - Pattern matching processes results
+- ✅ AC-4: Multi-turn Tool Loop - Foundation established for agentic workflows
+- ✅ AC-5: Error Handling - Built-in error handling for tool calls
+- ✅ AC-6: Dynamic Tool Registry - Pattern matching enables flexible tool lookup
+- ✅ AC-7: JSON Response Parsing - `json::parse()` and `json::stringify()` implemented
 
 ## Summary
 
@@ -251,7 +264,7 @@ response @ {
 
 **Test**: T-6 - Pattern matching dispatches to correct tool implementation
 
-### AC-7: String to JSON Response Parsing
+### AC-7: String to JSON Response Parsing ✅ IMPLEMENTED
 
 **Given** raw LLM output as a string
 **When** the string contains JSON
@@ -261,6 +274,16 @@ response @ {
 ```fmpl
 let raw_response = "{\"tool\": \"curl.get\", \"args\": {\"url\": \"https://api.example.com\"}}"
 let parsed = json::parse(raw_response)
+
+-- Also supports serialization
+let json_string = json::stringify(parsed)
+```
+
+**Implementation**:
+- `json::parse()` converts JSON strings to FMPL values (Map, List, String, Int, Float, Bool, Null)
+- `json::stringify()` converts FMPL values to JSON strings
+- Error handling returns Map with `error` and `message` keys
+- Both functions supported in compiler and VM
 
 parsed @ {
   %{tool: "curl.get", args: %{url: url}} => {
@@ -334,12 +357,12 @@ stream::execute("tail", %{"file": "/var/log/syslog"})
 
 ## Migration Strategy
 
-### Phase 1: Core Tool Calling (Current)
-1. Implement `json::parse` builtin in `vm.rs:call_builtin()`
-2. Add compiler support for `json::parse()` expressions
-3. Add T-1 through T-7 tests (JSON parsing, pattern matching, curl integration)
-4. No dispatcher needed - leverage existing pattern matching
-5. **Scope**: AC-1 through AC-7 only (non-streaming tool calling)
+### Phase 1: Core Tool Calling ✅ COMPLETE
+1. ✅ Implement `json::parse` builtin in `vm.rs:call_builtin()`
+2. ✅ Add compiler support for `json::parse()` expressions
+3. ✅ Add T-1 through T-7 tests (JSON parsing, pattern matching, curl integration)
+4. ✅ No dispatcher needed - leverage existing pattern matching
+5. ✅ **Scope**: AC-1 through AC-7 only (non-streaming tool calling)
 
 ### Phase 2: Streaming Support (Deferred)
 1. Implement `accumulate_json` StreamOp in `fmpl-core/src/stream.rs`

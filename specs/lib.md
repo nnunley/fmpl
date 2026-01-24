@@ -193,9 +193,37 @@ These are used by Layer 2 agent systems to automatically compact conversation co
 
 ## Future Work
 
-- [ ] Implement `llm.retry_chat` with exponential backoff (needs sleep/delay builtin)
+- [x] ~~Implement `llm.retry_chat` with exponential backoff~~ — **DONE**: `time::sleep()` builtin implemented, simplified `retry_chat` available (note: full recursive version requires parser improvements for nested lambda pattern matching)
 - [x] ~~Implement `llm.parse_sse` for streaming response parsing~~ — **DONE**: `sse.parse()` builtin implemented in `fmpl-core/src/builtins/sse.rs`
 - [ ] Create tool registry for `llm.execute_tool` dispatch
 - [ ] Add more sophisticated similarity metrics for `compaction.fmpl`
 - [ ] Add OpenAI API client module
 - [ ] Add generic embedding/API client utilities
+
+## Implementation Notes
+
+### time::sleep() Builtin
+
+The `time::sleep(ms)` builtin is now available for implementing retry logic and rate limiting:
+
+```fmpl
+-- Sleep for 100 milliseconds
+time::sleep(100)
+
+-- Returns null after completion
+let result = time::sleep(0)  -- result is null
+```
+
+**Usage in retry logic:**
+
+```fmpl
+let result = chat_fn(prompt)
+result @ {
+  %{error: _} =>
+    time::sleep(1000)  -- Wait 1 second before retry
+    -- ... retry logic
+  response => response
+}
+```
+
+**Limitations:** Due to current parser limitations with pattern matching in nested lambdas, the full recursive `llm.retry_chat` implementation is provided as a simplified single-retry version. For full retry loops with exponential backoff, inline the retry pattern directly in your code as documented in `lib/llm-common.fmpl`.

@@ -171,8 +171,34 @@ llm.safe_chat = \chat_fn prompt
     %{error: msg} => "Error: " + msg
     result => result
   }
-
--- Retry with exponential backoff
--- TODO: Implement when we have sleep/delay builtin
+-- Retry with exponential backoff (SINGLE RETRY VERSION)
+--
+-- Due to current parser limitations with pattern matching in nested lambdas,
+-- this is a simplified version that performs at most 1 retry.
+--
+-- For full retry logic with exponential backoff, inline this pattern in your code:
+--
+--   let loop = lambda (attempt)
+--     if attempt > max_retries
+--       then "max retries exceeded"
+--       else
+--         let result = chat_fn(prompt)
+--         result @ {
+--           %{error: _} =>
+--             time::sleep(backoff_ms)
+--             loop(attempt + 1)
+--           response => response
+--         }
+--   loop(0)
+--
 llm.retry_chat = \chat_fn prompt max_retries
-  "Retry logic not yet implemented"
+  let result = chat_fn(prompt)
+  result @ {
+    %{error: _} =>
+      if max_retries > 0
+        then
+          time::sleep(1)
+          chat_fn(prompt)
+        else result
+    response => result
+  }

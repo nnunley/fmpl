@@ -220,11 +220,18 @@ impl<'a> Parser<'a> {
         Ok(params)
     }
 
-    /// Parse a qualified name (foo::bar::baz).
+    /// Parse a qualified name (foo::bar::baz or ::foo::bar).
     fn parse_qualified_name(&mut self) -> Result<QualifiedName> {
-        let first = self.expect_ident()?;
-        let mut parts = vec![first];
+        let mut parts = if self.check(&Token::ColonColon) {
+            // Global qualified name: ::foo::bar
+            self.advance();
+            vec![SmolStr::new("")]
+        } else {
+            // Regular qualified name: foo::bar
+            vec![self.expect_ident()?]
+        };
 
+        // Continue parsing additional ::name parts
         while self.check(&Token::ColonColon) {
             self.advance();
             parts.push(self.expect_ident()?);
@@ -646,6 +653,17 @@ impl<'a> Parser<'a> {
             Token::Throw => self.parse_throw(),
             Token::Stream => self.parse_stream_literal(),
             Token::Grammar => self.parse_grammar_literal(),
+            Token::ColonColon => {
+                // Global qualified name: ::foo::bar
+                self.advance();
+                let mut parts = vec![SmolStr::new("")]; // Empty first part for global namespace
+                parts.push(self.expect_ident()?);
+                while self.check(&Token::ColonColon) {
+                    self.advance();
+                    parts.push(self.expect_ident()?);
+                }
+                Ok(Expr::Qualified(QualifiedName { parts }))
+            }
             _ => Err(self.error(&format!("unexpected token: {:?}", token))),
         }
     }
@@ -1470,6 +1488,25 @@ mod tests {
     fn test_parse_try_catch() {
         let expr = parse("try { 42 } catch e { 0 }").unwrap();
         assert!(matches!(expr, Expr::TryCatch { .. }));
+    }
+
+    #[test]
+    fn test_qualified_name_with_global_prefix() {
+        // Test that ::foo::bar parses correctly
+        let expr = parse("::__builtin_curl").unwrap();
+        assert!(matches!(expr, Expr::Qualified(_)));
+        if let Expr::Qualified(qn) = expr {
+            assert_eq!(qn.parts, ["", "__builtin_curl"]);
+        } else {
+            panic!("expected Qualified name");
+        }
+    }
+
+    #[test]
+    fn test_qualified_name_with_global_prefix_method_call() {
+        // Test that ::foo::bar.method() parses correctly
+        let expr = parse("::__builtin_curl.get()").unwrap();
+        assert!(matches!(expr, Expr::MethodCall(_, _, _)));
     }
 
     #[test]
