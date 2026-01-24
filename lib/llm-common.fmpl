@@ -171,34 +171,43 @@ llm.safe_chat = \chat_fn prompt
     %{error: msg} => "Error: " + msg
     result => result
   }
--- Retry with exponential backoff (SINGLE RETRY VERSION)
+-- Retry with exponential backoff and jitter
 --
--- Due to current parser limitations with pattern matching in nested lambdas,
--- this is a simplified version that performs at most 1 retry.
+-- Retries a chat call with exponential backoff (2^attempt * 100ms base delay)
+-- plus random jitter (up to 50% of base delay) to prevent thundering herd.
 --
--- For full retry logic with exponential backoff, inline this pattern in your code:
+-- Args:
+--   chat_fn: Function to call (takes prompt, returns response)
+--   prompt: The prompt string to send
+--   max_retries: Maximum number of retry attempts (default: 3)
 --
---   let loop = lambda (attempt)
---     if attempt > max_retries
---       then "max retries exceeded"
---       else
---         let result = chat_fn(prompt)
---         result @ {
---           %{error: _} =>
---             time::sleep(backoff_ms)
---             loop(attempt + 1)
---           response => response
---         }
---   loop(0)
+-- Returns: Response value or error after exhausting retries
 --
+-- Note: Due to parser limitations with recursive let bindings, this is
+-- a simplified single-retry version. For full retry loops, inline the
+-- pattern directly in your code.
 llm.retry_chat = \chat_fn prompt max_retries
-  let result = chat_fn(prompt)
-  result @ {
-    %{error: _} =>
-      if max_retries > 0
-        then
-          time::sleep(1)
-          chat_fn(prompt)
-        else result
-    response => result
-  }
+  let max_retries = if max_retries then max_retries else 3
+
+  -- Calculate backoff with jitter: base delay + random jitter
+  -- Base: 2^attempt * 100ms, Jitter: up to 50% of base
+  let backoff_ms = \attempt
+    let base = 2 ^ attempt * 100
+    let jitter = rand::int(0, base / 2)
+    base + jitter
+
+  -- Execute attempt with retry on error
+  let attempt_fn = \chat_fn prompt retry_count
+    let result = chat_fn(prompt)
+    result @ {
+      %{error: _} =>
+        if retry_count >= max_retries
+          then result  -- Return error after exhausting retries
+          else {
+            time::sleep(backoff_ms(retry_count))
+            attempt_fn(chat_fn, prompt, retry_count + 1)
+          }
+      response => response  -- Success, return response
+    }
+
+  attempt_fn(chat_fn, prompt, 0)

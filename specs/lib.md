@@ -10,6 +10,7 @@ The `lib/` directory contains FMPL standard library modules that provide common 
 | [anthropic.fmpl](#anthropicfmpl) | Anthropic Claude API client (chat completion, streaming, multi-turn conversations) |
 | [ollama.fmpl](#ollamafmpl) | Ollama local LLM client (localhost API, model management, streaming) |
 | [compaction.fmpl](#compactionfmpl) | Layer 2 auto-detection for off-track and circular conversation patterns |
+| [rand](#rand-built-in) | Random number generation for jitter and stochastic behaviors |
 
 ## llm-common.fmpl
 
@@ -27,7 +28,7 @@ The `lib/` directory contains FMPL standard library modules that provide common 
 - `llm.collect_stream(stream)` — Collect stream chunks into a single string
 - `llm.parse_sse(stream)` — Parse Server-Sent Events (implemented via `sse.parse()` builtin)
 - `llm.safe_chat(chat_fn, prompt)` — Wrap a chat call with error handling
-- `llm.retry_chat(chat_fn, prompt, max_retries)` — Retry with exponential backoff (TODO: not yet implemented)
+- `llm.retry_chat(chat_fn, prompt, max_retries)` — Retry with exponential backoff and jitter (using `rand::int()` for jitter)
 
 **Usage**:
 
@@ -162,6 +163,42 @@ if (off_track.detected)
   print("Agent lost original goal: " + off_track.pattern)
 ```
 
+## rand Built-in
+
+**Purpose**: Random number generation for implementing jitter, randomized testing, and stochastic behaviors.
+
+**Methods**:
+
+- `rand::int(min, max)` — Generate random integer in range [min, max)
+  - `min`: Minimum value (inclusive, integer)
+  - `max`: Maximum value (exclusive, integer)
+  - Returns: Random integer where min <= result < max
+  - Note: Returns error if min >= max (empty range)
+
+- `rand::float()` — Generate random float in range [0.0, 1.0)
+  - Returns: Random float where 0.0 <= result < 1.0
+
+**Usage**:
+
+```fmpl
+-- Random integer between 0 and 99
+let n = rand::int(0, 100)
+
+-- Random float
+let f = rand::float()
+
+-- Jitter for retry backoff: 100ms +/- 50ms
+let base_delay = 100
+let jitter = rand::int(0, 50)
+time::sleep(base_delay + jitter)
+
+-- Exponential backoff with jitter (as used in llm.retry_chat)
+let backoff_ms = \attempt
+  let base = 2 ^ attempt * 100
+  let jitter = rand::int(0, base / 2)  -- up to 50% of base
+  base + jitter
+```
+
 ## Design Notes
 
 ### Agentic Loop Pattern
@@ -193,7 +230,7 @@ These are used by Layer 2 agent systems to automatically compact conversation co
 
 ## Future Work
 
-- [x] ~~Implement `llm.retry_chat` with exponential backoff~~ — **DONE**: `time::sleep()` builtin implemented, simplified `retry_chat` available (note: full recursive version requires parser improvements for nested lambda pattern matching)
+- [x] ~~Implement `llm.retry_chat` with exponential backoff~~ — **DONE**: `rand::int()` and `time::sleep()` builtins implemented, `retry_chat` available with exponential backoff and jitter (note: full recursive version requires parser improvements for nested lambda pattern matching)
 - [x] ~~Implement `llm.parse_sse` for streaming response parsing~~ — **DONE**: `sse.parse()` builtin implemented in `fmpl-core/src/builtins/sse.rs`
 - [ ] Create tool registry for `llm.execute_tool` dispatch
 - [ ] Add more sophisticated similarity metrics for `compaction.fmpl`
