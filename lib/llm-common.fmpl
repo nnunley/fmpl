@@ -156,9 +156,10 @@ llm.collect_stream = \stream
   stream |> stream::collect
 
 -- Parse SSE (Server-Sent Events) from a stream
--- TODO: Implement when streaming is fully supported
-llm.parse_sse = \stream
-  "SSE parsing not yet implemented"
+-- Note: Use sse.parse() builtin directly, which handles SSE format parsing
+-- Example: let events = sse.parse(stream_text)
+llm.parse_sse = \stream_text
+  sse.parse(stream_text)
 
 -- ============================================================================
 -- Error Handling

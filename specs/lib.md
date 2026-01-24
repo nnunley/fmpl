@@ -194,7 +194,7 @@ These are used by Layer 2 agent systems to automatically compact conversation co
 ## Future Work
 
 - [ ] Implement `llm.retry_chat` with exponential backoff (needs sleep/delay builtin)
-- [ ] Implement `llm.parse_sse` for streaming response parsing
+- [x] ~~Implement `llm.parse_sse` for streaming response parsing~~ — **DONE**: `sse.parse()` builtin implemented in `fmpl-core/src/builtins/sse.rs`
 - [ ] Create tool registry for `llm.execute_tool` dispatch
 - [ ] Add more sophisticated similarity metrics for `compaction.fmpl`
 - [ ] Add OpenAI API client module

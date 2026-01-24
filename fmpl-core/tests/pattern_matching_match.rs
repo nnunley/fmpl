@@ -1,11 +1,11 @@
 //! Tests for pattern matching in @ (match) expressions
 //!
 //! Tests map and list pattern matching in @ expressions (value pattern matching),
-//! as opposed to grammar application. This is the feature that's currently missing.
+//! as opposed to grammar application.
 //!
 //! The @ operator can be used in two ways:
 //! 1. Grammar application: `"hello" @ grammar.rule` (already works)
-//! 2. Value pattern matching: `value @ { %{key: val} => ... }` (needs implementation)
+//! 2. Value pattern matching: `value @ { %{key: val} => ... }` (✅ IMPLEMENTED)
 //!
 //! This test file focuses on case #2 - map and list destructuring in match expressions.
 
