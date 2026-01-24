@@ -1,72 +1,72 @@
-# LLM Common Utilities
-#
-# Shared utilities for working with LLM APIs in FMPL
-#
-# This library provides:
-# - Response parsing patterns
-# - Error handling helpers
-# - Agentic loop patterns
-# - Tool calling workflow support
+-- LLM Common Utilities
+--
+-- Shared utilities for working with LLM APIs in FMPL
+--
+-- This library provides:
+-- - Response parsing patterns
+-- - Error handling helpers
+-- - Agentic loop patterns
+-- - Tool calling workflow support
 
-# ============================================================================
-# Response Parsing
-# ============================================================================
+-- ============================================================================
+-- Response Parsing
+-- ============================================================================
 
-# Extract text content from common LLM response formats
+-- Extract text content from common LLM response formats
 llm.extract_text = \response
   @ response {
-    # OpenAI/Ollama format
+    -- OpenAI/Ollama format
     %{choices: [%{message: %{content: text}}]} => text
     %{response: text} => text
 
-    # Anthropic format (partial - needs full content array parsing)
+    -- Anthropic format (partial - needs full content array parsing)
     %{content: list} =>
       @ list {
         [%{type: "text", text: text}, ...] => text
         _ => "[could not extract text from content array]"
       }
 
-    # Error response
+    -- Error response
     %{error: %{message: msg}} => "[error: " + msg + "]"
 
-    # Fallback
+    -- Fallback
     _ => "[could not extract text from response]"
   }
 
-# Check if response is an error
+-- Check if response is an error
 llm.is_error = \response
   @ response {
     %{error: _} => true
     _ => false
   }
 
-# ============================================================================
-# Agentic Loop Patterns
-# ============================================================================
+-- ============================================================================
+-- Agentic Loop Patterns
+-- ============================================================================
 
-# Research -> Plan -> Execute -> Review loop
-# This is the core 12-layer agentic workflow
+-- Research -> Plan -> Execute -> Review loop
+-- This is the core 12-layer agentic workflow
 llm.agent_loop = \task chat_fn
-  # Phase 1: Research - Understand the problem
+  -- Phase 1: Research - Understand the problem
   let research = chat_fn("Research this task: " + task)
   let research_phase = "Research complete:\n" + research
 
-  # Phase 2: Plan - Create execution plan
+  -- Phase 2: Plan - Create execution plan
   let plan = chat_fn("Create a step-by-step plan to: " + research)
   let plan_phase = research_phase + "\n\nPlan:\n" + plan
 
-  # Phase 3: Execute - Run the plan (placeholder - needs tool execution)
-  # For now, we just ask the LLM what the result would be
+  -- Phase 3: Execute - Run the plan (placeholder - needs tool execution)
+  -- For now, we just ask the LLM what the result would be
   let execution = chat_fn("Execute this plan and describe the result: " + plan)
   let exec_phase = plan_phase + "\n\nExecution:\n" + execution
 
-  # Phase 4: Review - Evaluate the result
+  -- Phase 4: Review - Evaluate the result
   let review = chat_fn("Review this execution and suggest improvements: " + execution)
   let final = exec_phase + "\n\nReview:\n" + review
 
   final
 
-# Multi-turn conversation with context accumulation
+-- Multi-turn conversation with context accumulation
 llm.multi_turn = \initial_prompt turns
   let loop = \context turn
     if turn > turns
@@ -78,12 +78,12 @@ llm.multi_turn = \initial_prompt turns
   let initial = chat_fn(initial_prompt)
   loop(initial, 1)
 
-# ============================================================================
-# Tool Calling Workflow
-# ============================================================================
+-- ============================================================================
+-- Tool Calling Workflow
+-- ============================================================================
 
-# Parse tool call from LLM response
-# Expects JSON with: {"tool": "tool_name", "args": {...}}
+-- Parse tool call from LLM response
+-- Expects JSON with: {"tool": "tool_name", "args": {...}}
 llm.parse_tool_call = \response_text
   let parsed = json::parse(response_text)
 
@@ -93,17 +93,39 @@ llm.parse_tool_call = \response_text
     _ => null
   }
 
-# Execute a tool call (placeholder - needs tool registry)
+-- Execute a tool call using pattern matching dispatch
 llm.execute_tool = \tool_call
   @ tool_call {
     null => "No tool to execute"
     %{tool: name, args: args} =>
-      # This would dispatch to a tool registry
-      # For now, return a placeholder
-      "Executed " + name + " with args: " + json::stringify(args)
+      -- Pattern match dispatch to builtins
+      @ name {
+        "curl.get" => @ args {
+          %{url: url} => curl.get(url)
+          _ => %{error: "missing_args", expected: "url"}
+        }
+        "curl.post" => @ args {
+          %{url: url, body: body} => curl.post(url, body)
+          _ => %{error: "missing_args", expected: "url and body"}
+        }
+        "env.get" => @ args {
+          %{name: name} => env.get(name)
+          _ => %{error: "missing_args", expected: "name"}
+        }
+        "json.parse" => @ args {
+          %{json: json_str} => json::parse(json_str)
+          _ => %{error: "missing_args", expected: "json"}
+        }
+        "json.stringify" => @ args {
+          %{value: value} => json::stringify(value)
+          _ => %{error: "missing_args", expected: "value"}
+        }
+        -- Unknown tool
+        other => %{error: "unknown_tool", tool: other}
+      }
   }
 
-# Tool calling loop: LLM -> Tool -> Result -> LLM
+-- Tool calling loop: LLM -> Tool -> Result -> LLM
 llm.tool_loop = \prompt chat_fn max_iterations
   let iterate = \context iteration
     if iteration > max_iterations
@@ -113,11 +135,11 @@ llm.tool_loop = \prompt chat_fn max_iterations
 
         @ (llm.parse_tool_call(response)) {
           null =>
-            # No tool call, we're done
+            -- No tool call, we're done
             context + "\nFinal: " + response
 
           tool_call =>
-            # Execute tool and continue
+            -- Execute tool and continue
             let result = llm.execute_tool(tool_call)
             let new_context = context + "\nTool: " + json::stringify(tool_call) + "\nResult: " + result
             iterate(new_context, iteration + 1)
@@ -125,31 +147,31 @@ llm.tool_loop = \prompt chat_fn max_iterations
 
   iterate(prompt, 0)
 
-# ============================================================================
-# Stream Processing Utilities
-# ============================================================================
+-- ============================================================================
+-- Stream Processing Utilities
+-- ============================================================================
 
-# Collect stream chunks into a single string
+-- Collect stream chunks into a single string
 llm.collect_stream = \stream
   stream |> stream::collect
 
-# Parse SSE (Server-Sent Events) from a stream
-# TODO: Implement when streaming is fully supported
+-- Parse SSE (Server-Sent Events) from a stream
+-- TODO: Implement when streaming is fully supported
 llm.parse_sse = \stream
   "SSE parsing not yet implemented"
 
-# ============================================================================
-# Error Handling
-# ============================================================================
+-- ============================================================================
+-- Error Handling
+-- ============================================================================
 
-# Wrap a chat call with error handling
+-- Wrap a chat call with error handling
 llm.safe_chat = \chat_fn prompt
   @ (chat_fn(prompt)) {
     %{error: msg} => "Error: " + msg
     result => result
   }
 
-# Retry with exponential backoff
-# TODO: Implement when we have sleep/delay builtin
+-- Retry with exponential backoff
+-- TODO: Implement when we have sleep/delay builtin
 llm.retry_chat = \chat_fn prompt max_retries
   "Retry logic not yet implemented"
