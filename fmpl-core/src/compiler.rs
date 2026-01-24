@@ -264,6 +264,7 @@ pub enum Instruction {
     DefineMethod {
         object: InstrIndex,
         name: SmolStr,
+        params: Vec<SmolStr>,
         body: usize,
     },
     DefineProp {
@@ -1454,6 +1455,7 @@ impl Compiler {
                 self.code.emit(Instruction::DefineMethod {
                     object: obj_idx,
                     name: binding.name.clone(),
+                    params: binding.params.clone(),
                     body: nested_idx,
                 });
             }

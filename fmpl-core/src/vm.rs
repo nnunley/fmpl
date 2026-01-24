@@ -562,7 +562,7 @@ impl Vm {
                     let val = frame.get(value);
                     match obj {
                         Value::Object(id) => {
-                            self.objects.set_property(id, name, val.clone())?;
+                            self.objects.set_property(id, name.clone(), val.clone())?;
                         }
                         _ => {
                             return Err(Error::Type {
@@ -862,14 +862,19 @@ impl Vm {
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(Value::Object(id));
                 }
-                Instruction::DefineMethod { object, name, body } => {
+                Instruction::DefineMethod {
+                    object,
+                    name,
+                    params,
+                    body,
+                } => {
                     // Get the object by its instruction index
                     let obj = frame.get(object);
                     if let Value::Object(id) = obj {
                         let nested_code = frame.code.nested.get(body).cloned();
                         if let Some(code) = nested_code {
                             let method = Method {
-                                params: Vec::new(), // TODO: proper params
+                                params,
                                 code: Arc::new(code),
                             };
                             self.objects.define_method(id, name, method)?;

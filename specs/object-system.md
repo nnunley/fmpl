@@ -219,7 +219,7 @@ Object data lives in `ObjectDb`; `Value::Object` is just a handle.
 
 ## Planned Features
 
-- [ ] **Constructor invocation** — `spawn` calls constructor method (`vm.rs:1024` TODO)
+- [x] **Constructor invocation** — `spawn` calls constructor method (`vm.rs:1602-1629`)
 - [ ] **bcom pattern** — Functional state updates (become pattern)
 - [ ] **Visibility enforcement** — `.#private`/`.#public` at runtime
 - [ ] **$ and <- operators** — Sync/async method calls

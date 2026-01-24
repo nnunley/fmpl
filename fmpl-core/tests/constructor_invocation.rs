@@ -76,6 +76,66 @@ object point {
 // Constructor error handling
 // =============================================================================
 
+mod property_init {
+    use super::*;
+
+    #[test]
+    fn init_can_set_object_properties() {
+        let mut vm = Vm::new();
+        // Test that init can set object properties via self.prop = value
+        let _ = eval(
+            &mut vm,
+            r#"
+object counter {
+  init(start): self.count = start
+
+  get(): self.count
+  count: 0
+}
+"#,
+        )
+        .expect("define object");
+
+        // Spawn with start=42, should set count to 42
+        let result = eval(&mut vm, r#"let c = spawn counter(42); c.get()"#).unwrap();
+        assert!(
+            matches!(result, Value::Int(42)),
+            "expected 42, got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn init_property_assignment_persists_across_method_calls() {
+        let mut vm = Vm::new();
+        let _ = eval(
+            &mut vm,
+            r#"
+object accumulator {
+  init(initial): self.sum = initial
+
+  add(value): self.sum = self.sum + value
+  get_sum(): self.sum
+  sum: 0
+}
+"#,
+        )
+        .expect("define object");
+
+        // Spawn with initial=10, then add 5, should get 15
+        let result = eval(
+            &mut vm,
+            r#"let a = spawn accumulator(10); a.add(5); a.get_sum()"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(result, Value::Int(15)),
+            "expected 15, got {:?}",
+            result
+        );
+    }
+}
+
 mod constructor_errors {
     use super::*;
 
