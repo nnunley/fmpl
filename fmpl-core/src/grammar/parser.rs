@@ -13,6 +13,7 @@ use crate::ast::Expr;
 use crate::error::{Error, Result};
 use crate::lexer::Lexer;
 use crate::parser::Parser as ExprParser;
+use crate::value::Value;
 use smol_str::SmolStr;
 
 /// Parser for grammar definitions.
@@ -90,8 +91,35 @@ impl<'a> GrammarParser<'a> {
                 });
             }
 
-            // Parse pattern => action
+            // Parse pattern => action (or pattern when guard => action)
             let pattern = self.parse_pattern()?;
+            self.skip_whitespace();
+
+            // Check for optional guard: pattern when guard => action
+            let final_pattern = if self.peek_str("when") {
+                self.advance_by(4); // consume "when"
+                self.skip_whitespace();
+
+                // Parse the guard expression - read until we see "=>"
+                let guard_start = self.pos;
+                while !self.is_eof() && !self.peek_str("=>") {
+                    self.advance();
+                }
+                let guard_source = &self.source[guard_start..self.pos];
+
+                // Parse the guard as an FMPL expression
+                let lexer = Lexer::new(guard_source);
+                let tokens = lexer.tokenize()?;
+                let mut expr_parser = ExprParser::new(&tokens);
+                let guard_expr = expr_parser.parse()?;
+
+                // The guard is an FMPL expression that should evaluate to a boolean
+                // We wrap the pattern with a Guard that matches first, then checks the guard
+                Pattern::Guard(Box::new(pattern), guard_expr)
+            } else {
+                pattern
+            };
+
             self.skip_whitespace();
 
             if !self.peek_str("=>") {
@@ -104,7 +132,7 @@ impl<'a> GrammarParser<'a> {
             self.skip_whitespace();
 
             let action = self.parse_match_action()?;
-            cases.push(Pattern::Action(Box::new(pattern), action));
+            cases.push(Pattern::Action(Box::new(final_pattern), action));
 
             // Optional semicolon between cases
             self.skip_whitespace();
@@ -217,13 +245,14 @@ impl<'a> GrammarParser<'a> {
 
         loop {
             self.skip_whitespace();
-            // Stop at choice separator, action arrow, rule end, semicolon, or grammar end
+            // Stop at choice separator, action arrow, rule end, semicolon, guard keyword, or grammar end
             if self.is_eof()
                 || self.peek_char() == Some('|')
                 || self.peek_char() == Some('}')
                 || self.peek_char() == Some(')')
                 || self.peek_char() == Some(';')
                 || self.peek_str("=>")
+                || self.peek_str("when")
                 || self.is_at_rule_start()
             {
                 break;
@@ -296,7 +325,7 @@ impl<'a> GrammarParser<'a> {
         Ok(pattern)
     }
 
-    /// Parse primary patterns: literals, rule refs, groups, char classes.
+    /// Parse primary patterns: literals, rule refs, groups, char classes, map/list patterns.
     fn parse_primary(&mut self) -> Result<Pattern> {
         self.skip_whitespace();
 
@@ -317,7 +346,73 @@ impl<'a> GrammarParser<'a> {
                 let s = self.parse_char_literal()?;
                 Ok(Pattern::Char(s))
             }
-            Some('[') => self.parse_char_class(),
+            Some('[') => {
+                // Check if this is a list pattern (for value matching) or char class
+                // List pattern: [pattern, pattern, ...] - matches list values
+                // Char class: [a-zA-Z] - matches single character
+
+                // Use a simple heuristic: if we see clear list markers immediately after '[', it's a list pattern
+                // Save position for potential rollback
+                let saved_pos = self.pos;
+                self.advance(); // consume the '['
+                self.skip_whitespace();
+
+                // Distinguish between char class [a-z] and list pattern [x, y]
+                // - Char class: has ranges with '-' (e.g., [0-9], [a-z])
+                // - List pattern: has comma-separated values (e.g., [x, y], [1, 2])
+                // - Ambiguous: [123] could be "char class with 3 chars" or "list with 1 element"
+                //   We treat single digits/chars as list patterns for value matching
+                let is_list_pattern = if let Some(next) = self.peek_char() {
+                    match next {
+                        ']' | '[' | '%' | '_' | ':' | '"' | '\'' => true,
+                        c if c.is_alphabetic() => true,
+                        c if c.is_ascii_digit() => {
+                            // Check if this looks like a range (char class) or a list element
+                            // Look ahead: if we see '-' after digit, it's a range (char class)
+                            // If we see ',' or ']' or another digit/identifier, it's a list
+                            let mut lookahead_pos = self.pos;
+                            let mut found_range = false;
+                            let mut found_comma = false;
+                            let mut found_end = false;
+                            // Look ahead up to 10 characters to detect the pattern
+                            for _ in 0..10 {
+                                if let Some(c) = self.source[lookahead_pos..].chars().next() {
+                                    if c == '-' && !found_range {
+                                        found_range = true;
+                                    } else if c == ',' {
+                                        found_comma = true;
+                                        break;
+                                    } else if c == ']' {
+                                        found_end = true;
+                                        break;
+                                    }
+                                    lookahead_pos += c.len_utf8();
+                                } else {
+                                    break;
+                                }
+                            }
+                            // It's a list pattern if: has comma, OR (no range AND single element)
+                            // It's a char class if: has range AND no comma
+                            found_comma || (!found_range && found_end)
+                        }
+                        _ => false,
+                    }
+                } else {
+                    true // EOF, default to list pattern
+                };
+
+                if is_list_pattern {
+                    self.parse_list_pattern()
+                } else {
+                    // Rollback and parse as char class
+                    self.pos = saved_pos;
+                    self.parse_char_class()
+                }
+            }
+            Some('%') => {
+                // Map pattern for value matching: %{key: pattern, key2: pattern2}
+                self.parse_map_pattern()
+            }
             Some('(') => {
                 self.advance();
                 self.skip_whitespace();
@@ -461,6 +556,183 @@ impl<'a> GrammarParser<'a> {
         };
         self.expect_char('\'')?;
         Ok(c)
+    }
+
+    /// Parse a map pattern for value matching: %{key: pattern, key2: pattern2}
+    fn parse_map_pattern(&mut self) -> Result<Pattern> {
+        self.expect_char('%')?;
+        self.expect_char('{')?;
+        self.skip_whitespace();
+
+        let mut entries = Vec::new();
+
+        while self.peek_char() != Some('}') && !self.is_eof() {
+            self.skip_whitespace();
+
+            // Parse the key (identifier or symbol)
+            let key = if self.peek_char() == Some(':') {
+                // Symbol literal as key
+                self.advance();
+                self.parse_ident()?
+            } else {
+                // Regular identifier as key
+                self.parse_ident()?
+            };
+
+            self.skip_whitespace();
+            self.expect_char(':')?;
+            self.skip_whitespace();
+
+            // Parse the value pattern (using value pattern rules)
+            let value_pattern = self.parse_value_pattern()?;
+
+            entries.push((key, value_pattern));
+
+            self.skip_whitespace();
+
+            // Check for comma separator or end
+            if self.peek_char() == Some(',') {
+                self.advance();
+            }
+        }
+
+        self.expect_char('}')?;
+        Ok(Pattern::MapMatch(entries))
+    }
+
+    /// Parse a list pattern for value matching: [pattern, pattern, ...]
+    fn parse_list_pattern(&mut self) -> Result<Pattern> {
+        // The opening '[' has already been consumed
+        self.skip_whitespace();
+
+        let mut patterns = Vec::new();
+        let mut rest_pattern = None;
+
+        while self.peek_char() != Some(']') && !self.is_eof() {
+            self.skip_whitespace();
+
+            // Check for rest pattern (| tail)
+            if self.peek_char() == Some('|') {
+                self.advance();
+                self.skip_whitespace();
+                let rest_ident = self.parse_ident()?;
+                rest_pattern = Some(Box::new(Pattern::Bind(Box::new(Pattern::Any), rest_ident)));
+                break;
+            }
+
+            // Parse element pattern (using value pattern rules)
+            patterns.push(self.parse_value_pattern()?);
+
+            self.skip_whitespace();
+
+            // Check for comma separator or rest pattern
+            if self.peek_char() == Some(',') {
+                self.advance();
+                self.skip_whitespace();
+            } else if self.peek_char() == Some('|') {
+                // Rest pattern after elements
+                self.advance();
+                self.skip_whitespace();
+                let rest_ident = self.parse_ident()?;
+                rest_pattern = Some(Box::new(Pattern::Bind(Box::new(Pattern::Any), rest_ident)));
+                break;
+            }
+        }
+
+        self.expect_char(']')?;
+        Ok(Pattern::ListMatch(patterns, rest_pattern))
+    }
+
+    /// Parse a value pattern (used inside map/list patterns).
+    /// Value patterns treat bare identifiers as bindings (not rule references).
+    fn parse_value_pattern(&mut self) -> Result<Pattern> {
+        self.skip_whitespace();
+
+        let pattern = match self.peek_char() {
+            Some('_') => {
+                self.advance();
+                Ok(Pattern::Any)
+            }
+            Some(':') => {
+                // Symbol literal
+                self.advance();
+                let name = self.parse_ident()?;
+                Ok(Pattern::SymbolMatch(name))
+            }
+            Some('[') => {
+                self.advance();
+                self.parse_list_pattern()
+            }
+            Some('%') => self.parse_map_pattern(),
+            Some(c) if c.is_alphabetic() || c == '_' => {
+                // Bare identifier - treat as binding (not rule reference)
+                let name = self.parse_ident()?;
+                Ok(Pattern::Bind(Box::new(Pattern::Any), name))
+            }
+            Some('"') => {
+                let s = self.parse_string()?;
+                Ok(Pattern::MatchValue(Value::String(s.into())))
+            }
+            Some('\'') => {
+                let s = self.parse_char_literal()?;
+                let mut str_buf = String::new();
+                str_buf.push(s);
+                Ok(Pattern::MatchValue(Value::String(str_buf.into())))
+            }
+            Some(c) if c.is_ascii_digit() || c == '-' => {
+                // Parse a number literal
+                let num_str = self.parse_number_literal()?;
+                if num_str.contains('.') {
+                    let f: f64 = num_str.parse().map_err(|_| Error::Parser {
+                        token: self.pos,
+                        message: format!("invalid float literal: {}", num_str),
+                    })?;
+                    Ok(Pattern::MatchValue(Value::Float(f)))
+                } else {
+                    let i: i64 = num_str.parse().map_err(|_| Error::Parser {
+                        token: self.pos,
+                        message: format!("invalid int literal: {}", num_str),
+                    })?;
+                    Ok(Pattern::MatchValue(Value::Int(i)))
+                }
+            }
+            Some(c) => Err(Error::Parser {
+                token: self.pos,
+                message: format!("unexpected character in value pattern: {:?}", c),
+            }),
+            None => Err(Error::UnexpectedEof),
+        };
+
+        // Don't apply postfix modifiers to value patterns (they don't make sense for bindings)
+        pattern
+    }
+
+    /// Parse a number literal (int or float).
+    fn parse_number_literal(&mut self) -> Result<String> {
+        let start = self.pos;
+
+        // Handle negative sign
+        if self.peek_char() == Some('-') {
+            self.advance();
+        }
+
+        while let Some(c) = self.peek_char() {
+            if c.is_ascii_digit() || c == '.' {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        let end = self.pos;
+        if end == start {
+            return Err(Error::Parser {
+                token: self.pos,
+                message: "expected number".to_string(),
+            });
+        }
+
+        Ok(self.source[start..end].to_string())
     }
 
     /// Parse a semantic action (FMPL expression).

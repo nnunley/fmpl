@@ -220,6 +220,10 @@ pub enum Pattern {
     /// Semantic predicate (evaluate expression, succeed if truthy).
     Predicate(Expr),
 
+    /// Match pattern, then check guard expression (succeeds only if guard is truthy).
+    /// The guard can reference variables bound by the pattern.
+    Guard(Box<Pattern>, Expr),
+
     /// Apply rule and transform with semantic action.
     Action(Box<Pattern>, Expr),
 

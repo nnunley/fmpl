@@ -1,9 +1,7 @@
 @a study specs/README.md
-@b study docs/plans/* - use subagents to study this content
 Remember:
 @c study the jj-workflow skill - it will help you with commiting code and managing tasks.
 Rules:
--1. If there are any plans that are currently not covered in specs/, create new specs to cover them.
 0. Always follow the jj-workflow for managing tasks and commits.
 1. Given the list of things to work on in the specs directory, pick the highest value task, and complete it.
 2. Stop as soon as you've fixed your selected task.

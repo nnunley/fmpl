@@ -849,11 +849,23 @@ impl<'a> Parser<'a> {
     /// Parse a single map entry.
     fn parse_map_entry(&mut self) -> Result<MapEntry> {
         // Check for symbol key (name: value)
-        if let Some(Token::Ident(name)) = self.peek_token()
-            && self.peek_ahead(1).map(|t| &t.token) == Some(&Token::Colon)
-        {
-            let name = name.clone();
-            self.advance(); // ident
+        // Allow both Ident and keyword tokens as map keys
+        let is_symbol_key = match self.peek_token() {
+            Some(Token::Ident(_)) => true,
+            Some(token) => {
+                Self::is_keyword_token(token)
+                    && self.peek_ahead(1).map(|t| &t.token) == Some(&Token::Colon)
+            }
+            None => false,
+        };
+
+        if is_symbol_key {
+            let name = match self.peek_token() {
+                Some(Token::Ident(name)) => name.clone(),
+                Some(token) => Self::token_name(token),
+                None => return Err(self.error("expected identifier")),
+            };
+            self.advance(); // ident or keyword
             self.advance(); // colon
             let value = self.parse_expr()?;
             return Ok(MapEntry::Symbol(name, value));
@@ -864,6 +876,72 @@ impl<'a> Parser<'a> {
         self.expect(&Token::Arrow)?;
         let value = self.parse_expr()?;
         Ok(MapEntry::Computed(key, value))
+    }
+
+    /// Get the string name of a keyword token.
+    fn token_name(token: &Token) -> SmolStr {
+        match token {
+            Token::Object => "object".into(),
+            Token::Let => "let".into(),
+            Token::If => "if".into(),
+            Token::Then => "then".into(),
+            Token::Else => "else".into(),
+            Token::While => "while".into(),
+            Token::Do => "do".into(),
+            Token::Lambda => "lambda".into(),
+            Token::Return => "return".into(),
+            Token::Spawn => "spawn".into(),
+            Token::Try => "try".into(),
+            Token::Catch => "catch".into(),
+            Token::Throw => "throw".into(),
+            Token::Match => "match".into(),
+            Token::When => "when".into(),
+            Token::As => "as".into(),
+            Token::Stream => "stream".into(),
+            Token::Grammar => "grammar".into(),
+            Token::Self_ => "self".into(),
+            Token::Parent => "parent".into(),
+            Token::Caller => "caller".into(),
+            Token::User => "user".into(),
+            Token::Args => "args".into(),
+            Token::Null => "null".into(),
+            Token::True => "true".into(),
+            Token::False => "false".into(),
+            _ => "".into(),
+        }
+    }
+
+    /// Check if a token is a keyword that can be used as a map key.
+    fn is_keyword_token(token: &Token) -> bool {
+        matches!(
+            token,
+            Token::Object
+                | Token::Let
+                | Token::If
+                | Token::Then
+                | Token::Else
+                | Token::While
+                | Token::Do
+                | Token::Lambda
+                | Token::Return
+                | Token::Spawn
+                | Token::Try
+                | Token::Catch
+                | Token::Throw
+                | Token::Match
+                | Token::When
+                | Token::As
+                | Token::Stream
+                | Token::Grammar
+                | Token::Self_
+                | Token::Parent
+                | Token::Caller
+                | Token::User
+                | Token::Args
+                | Token::Null
+                | Token::True
+                | Token::False
+        )
     }
 
     /// Parse if expression.

@@ -436,6 +436,22 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
                 }
             }
 
+            Pattern::Guard(pattern, guard_expr) => {
+                // Match the pattern first, then check the guard
+                match self.match_pattern(pattern, pos)? {
+                    ParseResult::Success(matched, new_index) => {
+                        // The guard can reference variables bound by the pattern
+                        let result = self.evaluate_predicate(guard_expr)?;
+                        if result.is_truthy() {
+                            Ok(ParseResult::Success(matched, new_index))
+                        } else {
+                            Ok(ParseResult::Failure)
+                        }
+                    }
+                    ParseResult::Failure => Ok(ParseResult::Failure),
+                }
+            }
+
             Pattern::Action(inner, action) => match self.match_pattern(inner, pos)? {
                 ParseResult::Success(matched, new_index) => {
                     let result = self.evaluate_action(action, matched)?;
@@ -1141,12 +1157,13 @@ pub fn apply_grammar_to_value_with_evaluator<'e>(
             }
         }
         Value::List(items) => {
-            let values: Vec<Value> = (*items).clone();
-            let len = values.len();
+            // Wrap the list in another list so it becomes a single element in the stream
+            // This allows patterns like [x] to match the entire list
+            let values = vec![Value::List(items.clone())];
             let mut runtime =
                 value_runtime(values, registry, grammar.clone()).with_action_evaluator(evaluator);
             match runtime.parse(rule_name)? {
-                ParseResult::Success(v, pos) if pos == len => Ok(Some(v)),
+                ParseResult::Success(v, pos) if pos == 1 => Ok(Some(v)),
                 ParseResult::Success(_, _) => Ok(None),
                 ParseResult::Failure => Ok(None),
             }

@@ -471,6 +471,7 @@ impl<'a> Display for GrammarPatternRepr<'a> {
             GrammarPattern::Bind(p, name) => write!(f, "{}:{}", GrammarPatternRepr(p), name),
             GrammarPattern::Action(p, expr) => write!(f, "{} => {}", GrammarPatternRepr(p), expr),
             GrammarPattern::Predicate(expr) => write!(f, "&{{ {} }}", expr),
+            GrammarPattern::Guard(p, expr) => write!(f, "{} when {}", GrammarPatternRepr(p), expr),
             GrammarPattern::Apply(p) => write!(f, "~{}", GrammarPatternRepr(p)),
             GrammarPattern::MatchValue(val) => write!(f, "{}", val.source_repr()),
             GrammarPattern::MatchType(ty) => write!(f, "<{}>", ty),
