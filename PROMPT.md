@@ -4,6 +4,8 @@ Remember:
 Rules:
 0. Always follow the jj-workflow for managing tasks and commits.
 1. Given the list of things to work on in the specs directory, pick the highest value task, and complete it.
+1a. Maintaining documentation with your fixes is part of the task.
+1b. Fixing specs is part of the task if they're inaccurate or incomplete.
 2. Stop as soon as you've fixed your selected task.
 3. If you discover something that needs to be fixed in the process of completing your task, make sure that you document it in the specs/ directory
 4. Fixes should not be considered done until they are verified and committed to the repository.
