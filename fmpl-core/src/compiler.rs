@@ -1092,27 +1092,39 @@ impl Compiler {
     }
 
     /// Compile assignment: target = value
-    /// The target must be a simple variable name (Ident).
-    /// Emits: StoreVar(name, value), returns the assigned value
+    /// Supports:
+    /// - Simple variable assignment: x = value
+    /// - Property assignment: obj.prop = value
+    /// Emits: StoreVar/SetProp, returns the assigned value
     fn compile_assignment(&mut self, target: &Expr, value: &Expr) -> Result<InstrIndex> {
-        // Only simple identifiers are supported as assignment targets
-        let name = match target {
-            Expr::Ident(n) => n.clone(),
-            _ => {
-                return Err(Error::Compiler(format!(
-                    "assignment target must be a simple variable name, got {:?}",
-                    target
-                )));
-            }
-        };
-
         let value_idx = self.compile_expr(value)?;
-        self.code.emit(Instruction::StoreVar {
-            name,
-            value: value_idx,
-        });
-        // Return the assigned value
-        Ok(self.code.emit(Instruction::Copy { source: value_idx }))
+
+        match target {
+            // Simple variable assignment: x = value
+            Expr::Ident(n) => {
+                self.code.emit(Instruction::StoreVar {
+                    name: n.clone(),
+                    value: value_idx,
+                });
+                // Return the assigned value
+                Ok(self.code.emit(Instruction::Copy { source: value_idx }))
+            }
+            // Property assignment: obj.prop = value
+            Expr::PropAccess(obj, prop) => {
+                let obj_idx = self.compile_expr(obj)?;
+                self.code.emit(Instruction::SetProp {
+                    object: obj_idx,
+                    name: prop.clone(),
+                    value: value_idx,
+                });
+                // SetProp returns the assigned value
+                Ok(value_idx)
+            }
+            _ => Err(Error::Compiler(format!(
+                "assignment target must be a simple variable or property access, got {:?}",
+                target
+            ))),
+        }
     }
 
     /// Compile sequence of expressions.

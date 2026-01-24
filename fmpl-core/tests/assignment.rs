@@ -159,17 +159,64 @@ fn test_assignment_with_map() {
     assert_eq!(result, Value::Int(10));
 }
 
-/// Test assignment cannot be used as let target (should parse error)
+/// Test property assignment on maps
 #[test]
-fn test_assignment_not_let_target() {
-    // This should parse correctly but the assignment target must be a simple ident
-    // The compiler should reject non-identifier targets
+fn test_property_assignment_on_map() {
+    // Test property assignment on map
     let code = r#"
-        let m = %{a: 1}
+        let m = %{a: 1, b: 2}
         m.a = 10
+        m.a
     "#;
 
     let result = run(code);
-    // This should fail because m.a is not a simple identifier
+    // This should fail because map property assignment is not yet implemented
+    // (maps are Arc<HashMap> and are immutable)
     assert!(result.is_err());
+}
+
+/// Test property assignment on objects
+#[test]
+fn test_property_assignment_on_object() {
+    // Test property assignment on object instances
+    // Note: accessing properties from methods requires explicit self.count
+    // This test focuses on external property mutation which we're implementing
+    let code = r#"
+object counter {
+  init(start):
+    self.count = start
+
+  get_count(): self.count
+
+  count: 0
+}
+
+let c = spawn counter(10)
+let original = c.get_count()
+c.count = 42
+let updated = c.get_count()
+updated
+"#;
+
+    let result = run(code).expect("runtime error");
+    assert_eq!(result, Value::Int(42));
+}
+
+/// Test property assignment returns assigned value for objects
+#[test]
+fn test_property_assignment_returns_value() {
+    let code = r#"
+object container {
+  value: 0
+
+  get_value(): value
+}
+
+let c = spawn container()
+let x = c.value = 100
+x
+"#;
+
+    let result = run(code).expect("runtime error");
+    assert_eq!(result, Value::Int(100));
 }

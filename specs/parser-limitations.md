@@ -14,12 +14,12 @@ This document tracks known limitations in the FMPL parser that affect language u
 
 ## Known Issues
 
-### Issue 1: Assignment Syntax (`=`) - PARTIALLY IMPLEMENTED ✅
+### Issue 1: Assignment Syntax (`=`) - MOSTLY IMPLEMENTED ✅
 
 **Status**: IMPLEMENTED (2026-01-24)
-**Impact**: HIGH - Variable mutation now supported
+**Impact**: HIGH - Variable and property mutation now supported
 
-**Description**: The assignment operator `=` is now implemented for simple variable mutation.
+**Description**: The assignment operator `=` supports simple variable mutation and property assignment on objects.
 
 **What works**:
 ```fmpl
@@ -35,20 +35,32 @@ a = b = c  -- All become 3
 
 -- Assignment returns the assigned value
 let result = b = c  -- result is 3, b is now 3
+
+-- Property assignment on objects
+object counter {
+  init(start):
+    self.count = start
+
+  get_count(): self.count
+
+  count: 0
+}
+let c = spawn counter(10)
+c.count = 42  -- Object properties can be mutated
 ```
 
 **Limitations**:
-- Only simple identifiers are supported as assignment targets
-- Property assignment (e.g., `obj.prop = value`) is NOT yet supported
 - Qualified name assignment (e.g., `module::var = value`) is NOT yet supported
+- Map property assignment is NOT supported (maps are immutable Arc<HashMap>)
 
 **What doesn't work yet**:
 ```fmpl
--- Property assignment (not supported)
-obj.prop = 10
-
 -- Qualified name assignment (not supported)
 module::var = 20
+
+-- Map property assignment (maps are immutable)
+let m = %{a: 1}
+m.a = 10  -- ERROR: cannot mutate immutable map
 
 -- Complex patterns as targets (not supported)
 %{key: val} = some_map
