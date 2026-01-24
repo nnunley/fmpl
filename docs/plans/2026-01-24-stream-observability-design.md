@@ -66,7 +66,7 @@ let cursor2 = observe(stream)  -- Independent cursor at same position
 
 ### Forking and Experiments
 
-A key debugging power is forking streams at any cursor position to try alternative transformations:
+A key debugging power is forking streams at any cursor position to try alternative transformations. Since `observe()` works on both streams and cursors, forking is simply observing a cursor:
 
 ```fmpl
 let cursor = observe(agent_stream)
@@ -74,19 +74,20 @@ let cursor = observe(agent_stream)
 -- Get to a specific point
 cursor |> foreach(\x *cursor)  -- Consume until interesting state
 
--- Fork into parallel experiments
-let branch1 = cursor.fork() |> map(|x| x * 2)
-let branch2 = cursor.fork() |> map(|x| x + 10)
+-- Fork into parallel experiments by observing the cursor
+let branch1 = observe(cursor) |> map(|x| x * 2)
+let branch2 = observe(cursor) |> map(|x| x + 10)
 
 -- Both branches start from the same cursor position
 -- Original stream continues unaffected
 -- Try alternative debugging approaches in parallel
 ```
 
-`fork()` creates a new stream that:
-- Shares all upstream history with the cursor
-- Maintains its own position and downstream operations
-- Can be observed and forked independently
+**Forking with `observe()`:**
+- `observe(cursor)` creates a new cursor at the same position
+- Each cursor maintains its own position and downstream operations
+- All cursors share the same underlying immutable stream
+- Can fork recursively: `observe(observe(cursor))`
 
 ### Time-Travel via Rewinding
 
@@ -120,16 +121,26 @@ cursor.rewind(position_id)  -- Jump back
 ### observe()
 
 ```fmpl
-observe(stream) -> Cursor (which is a Stream)
+observe(stream_or_cursor) -> Cursor (which is a Stream)
 ```
 
-Creates a cursor stream starting at the current position of `stream`.
+Creates a cursor stream starting at the current position.
 
 **Behavior:**
-- Returns a new stream (cursor) that begins at the current stream position
-- Does not consume values from the original stream
+- **On streams**: Returns a cursor at the stream's current position
+- **On cursors**: Returns a new cursor at the same position (forking)
+- Does not consume values from the original stream/cursor
 - Original stream continues to its consumer
-- Multiple observers can attach to the same stream
+- Multiple observers can attach to the same stream or cursor
+
+**Examples:**
+
+```fmpl
+let stream = source |> map(|x| x + 1)
+let cursor1 = observe(stream)     -- Cursor at stream position
+let cursor2 = observe(cursor1)    -- Fork cursor1
+let cursor3 = observe(cursor1)    -- Another independent fork
+```
 
 ### Cursor Operations
 
@@ -147,7 +158,7 @@ cursor |> map(|x| x * 2)     -- Transform values
 *cursor                    -- Dereference: get current head value
 cursor.next()              -- Advance to next value, return it
 cursor.peek()              -- Look at next value without consuming
-cursor.fork()              -- Create independent copy at current position
+observe(cursor)            -- Fork: create independent copy at current position
 cursor.rewind(pos)        -- Rewind to specific position
 cursor.position()          -- Get current position ID
 ```
@@ -169,26 +180,6 @@ cursor @ {
   %{ok: result} => print("Done: " + result)
 }
 ```
-
-### fork()
-
-Create an independent copy of the cursor at its current position:
-
-```fmpl
-let cursor = observe(stream)
-let fork1 = cursor.fork()
-let fork2 = cursor.fork()
-
--- Both forks share upstream history
--- Each has independent position and operations
--- Original stream continues unaffected
-```
-
-**Fork semantics:**
-- Shares all upstream values (immutable cons chain)
-- Maintains separate position tracking
-- Downstream operations don't affect each other
-- Can be observed and forked recursively
 
 ### rewind(position_id)
 
@@ -306,13 +297,39 @@ pub struct Cursor {
 
 ### observe() Instruction
 
-Add `Instruction::Observe { stream: InstrIndex }` to compiler.rs:
+Add `Instruction::Observe { target: InstrIndex }` to compiler.rs:
 
 ```rust
-Instruction::Observe { stream: InstrIndex }
+Instruction::Observe { target: InstrIndex }
 ```
 
-Emits a `Value::Cursor` wrapping the stream at its current position.
+**Behavior:**
+- If target is a `Value::AsyncStream`: creates cursor at stream's current position
+- If target is a `Value::Cursor`: creates new cursor at same position (fork)
+- Returns `Value::Cursor(Arc<Cursor>)`
+
+**Implementation sketch:**
+
+```rust
+pub fn observe(value: &Value) -> Result<Value> {
+    match value {
+        Value::AsyncStream(stream) => {
+            Ok(Value::Cursor(Arc::new(Cursor {
+                stream: stream.clone(),
+                position: stream.current_position()?,
+            })))
+        }
+        Value::Cursor(cursor) => {
+            // Fork: create new cursor at same position
+            Ok(Value::Cursor(Arc::new(Cursor {
+                stream: cursor.stream.clone(),
+                position: cursor.position.clone(),
+            })))
+        }
+        _ => Err(Error::TypeError("observe requires stream or cursor"))
+    }
+}
+```
 
 ### Cursor Methods
 
@@ -321,9 +338,10 @@ Implement cursor methods as built-in functions or VM instructions:
 - `*cursor` → Load current head value
 - `cursor.next()` → Consume next value, update position
 - `cursor.peek()` → Look at next value without consuming
-- `cursor.fork()` → Create independent cursor at current position
 - `cursor.rewind(pos)` → Jump to earlier position
 - `cursor.position()` → Get current position ID
+
+**Note**: Forking is done via `observe(cursor)`, not a separate method.
 
 ### Position Tracking
 
@@ -341,8 +359,8 @@ Leverage existing `StreamPosition` with Fjall backing:
 ### Unit Tests
 
 - `cursor_observe_returns_stream` - Verify observe() returns cursor
+- `cursor_observe_cursor_forks` - Verify observe(cursor) creates independent cursor
 - `cursor_dereference_gets_current_value` - Test `*cursor` behavior
-- `cursor_fork_creates_independent_copy` - Fork isolation
 - `cursor_rewind_jumps_to_position` - Time-travel correctness
 - `multiple_observers_dont_interfere` - Concurrent observation
 
@@ -356,7 +374,7 @@ Leverage existing `StreamPosition` with Fjall backing:
 ### Manual Tests
 
 - Start agent, observe output stream at mid-execution
-- Fork cursor, try different debug transformations
+- Fork cursor with `observe(cursor)`, try different debug transformations
 - Rewind cursor to earlier position, replay with different logic
 - Verify original agent unaffected by observations
 
@@ -369,7 +387,7 @@ Leverage existing `StreamPosition` with Fjall backing:
 Full time-travel with position history:
 - `cursor.history()` - List all position IDs reachable from cursor
 - `cursor.rewind_to(pos_id)` - Jump to any position in history
-- `cursor.branch_at(pos_id)` - Fork from historical position
+- `observe(cursor_at_history)` - Fork from historical position
 
 ### Phase 3: TUI Integration
 
