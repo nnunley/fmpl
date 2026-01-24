@@ -899,6 +899,25 @@ impl Compiler {
                         args: arg_indices,
                     }));
                 }
+
+                // Convert rand::int(args) and rand::float(args) to __builtin_rand.method(args)
+                if module == "rand" && (method == "int" || method == "float") {
+                    let builtin_idx = self
+                        .code
+                        .emit(Instruction::LoadSymbol(SmolStr::new("__builtin_rand")));
+                    let mut arg_indices = Vec::with_capacity(args.len());
+                    for arg in args {
+                        match arg {
+                            Arg::Expr(e) => arg_indices.push(self.compile_expr(e)?),
+                            Arg::Placeholder => unreachable!(),
+                        }
+                    }
+                    return Ok(self.code.emit(Instruction::MethodCall {
+                        receiver: builtin_idx,
+                        method: method.clone(),
+                        args: arg_indices,
+                    }));
+                }
             }
         }
 

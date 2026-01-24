@@ -153,7 +153,7 @@ All integration tests use `run(code).expect("runtime error")` or `map_err(|e| e.
 
 ## Current Limitations (Jan 2026)
 
-- **Assignment syntax**: `=` for variable mutation not yet implemented (parser lacks assignment expression support)
+- **Assignment syntax**: `=` for variable mutation is implemented (supports simple variable and object property assignment)
 - **Recursive let bindings**: Lambda self-reference requires special handling (e.g., `let rec` in ML or Y combinator pattern)
 - Some operators partially implemented (`&&`, `||`, `!=`)
 - Object system persistence not fully integrated with Fjall backend

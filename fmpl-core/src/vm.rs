@@ -1111,6 +1111,9 @@ impl Vm {
         if name == "time" {
             return Ok(Value::Symbol(SmolStr::new("__builtin_time")));
         }
+        if name == "rand" {
+            return Ok(Value::Symbol(SmolStr::new("__builtin_rand")));
+        }
         if name == "tuplespace" {
             return Ok(Value::Symbol(SmolStr::new("__builtin_tuplespace")));
         }
@@ -1330,6 +1333,26 @@ impl Vm {
                 };
                 crate::builtins::TimeBuiltin::sleep(ms)
             }
+            ("__builtin_rand", "int") => {
+                let min = match args.first() {
+                    Some(Value::Int(n)) => *n,
+                    _ => {
+                        return Err(Error::Runtime(
+                            "rand.int requires integer arguments (min, max)".to_string(),
+                        ));
+                    }
+                };
+                let max = match args.get(1) {
+                    Some(Value::Int(n)) => *n,
+                    _ => {
+                        return Err(Error::Runtime(
+                            "rand.int requires integer arguments (min, max)".to_string(),
+                        ));
+                    }
+                };
+                crate::builtins::RandBuiltin::int(min, max)
+            }
+            ("__builtin_rand", "float") => crate::builtins::RandBuiltin::float(),
             _ => Err(Error::Runtime(format!(
                 "unknown builtin: {}.{}",
                 object, method
