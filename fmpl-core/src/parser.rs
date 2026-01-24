@@ -1063,7 +1063,9 @@ impl<'a> Parser<'a> {
     /// Parse spawn expression.
     fn parse_spawn(&mut self) -> Result<Expr> {
         self.expect(&Token::Spawn)?;
-        let constructor = self.parse_unary()?;
+        // Use parse_primary instead of parse_unary to avoid consuming
+        // the parentheses as part of a function call on the constructor
+        let constructor = self.parse_primary()?;
         let args = if self.check(&Token::LParen) {
             self.parse_args()?
         } else {

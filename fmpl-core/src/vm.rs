@@ -1351,7 +1351,29 @@ impl Vm {
         match constructor {
             Value::Object(parent_id) => {
                 let id = self.objects.create(Some(parent_id));
-                let _ = args; // TODO: call constructor method
+
+                // Call init method if it exists on the new object
+                if let Some(method) = self.objects.get_method(id, "init").cloned() {
+                    // Check if argument count matches (or allow empty init)
+                    if args.len() == method.params.len() {
+                        let mut frame = Frame::new(method.code);
+                        frame.this = Some(id);
+
+                        // Bind arguments to parameters
+                        for (i, val) in args.into_iter().enumerate() {
+                            if i < method.params.len() {
+                                frame.locals.insert(method.params[i].clone(), val);
+                            }
+                        }
+
+                        // Execute the init method
+                        let base_depth = self.frames.len();
+                        self.frames.push(frame);
+                        self.execute_with_depth(base_depth)?;
+                    }
+                    // If args don't match params, silently skip (graceful degradation)
+                }
+
                 Ok(id)
             }
             _ => Err(Error::Type {

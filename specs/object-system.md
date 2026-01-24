@@ -47,13 +47,30 @@ See `fmpl-core/tests/object_methods.rs:3` for usage examples.
 
 ## spawn
 
-Creates object instances from a parent object (`vm.rs:1018`):
+Creates object instances from a parent object (`vm.rs:1267`):
 
 ```fmpl
 let obj = spawn parent_object(args)
 ```
 
-Currently spawns a new object with the given parent. Constructor invocation is not yet implemented (`TODO` at `vm.rs:1024`).
+Spawns a new object with the given parent. If the parent (or its prototype chain) has an `init` method, it will be called with the provided arguments to initialize the new object.
+
+**Constructor invocation**:
+- The `init` method is looked up on the new object (following prototype chain)
+- If found, and the argument count matches, `init` is called with `this` bound to the new object
+- If `init` doesn't exist or arg count doesn't match, spawn still succeeds (graceful degradation)
+
+```fmpl
+object counter {
+  init(start): 42  -- Constructor body
+
+  get_value(): 100
+}
+
+let c = spawn counter(10)  -- Creates counter, calls init(10)
+```
+
+**Implementation**: `vm.rs:1267-1301`
 
 ---
 
