@@ -365,6 +365,83 @@ impl Value {
             }),
         }
     }
+
+    /// Slice a value with optional start and end indices.
+    /// For lists: returns a new list with elements from start..end
+    /// For strings: returns a new string with characters from start..end
+    /// Null start means 0, null end means len
+    pub fn slice(&self, start: Option<&Value>, end: Option<&Value>) -> Result<Value> {
+        fn normalize_idx(idx: i64, len: usize) -> usize {
+            if idx < 0 {
+                (len as i64 + idx).max(0) as usize
+            } else {
+                (idx as usize).min(len)
+            }
+        }
+
+        match self {
+            Value::List(list) => {
+                let len = list.len();
+                let start_idx = match start {
+                    None => 0,
+                    Some(Value::Int(i)) => normalize_idx(*i, len),
+                    Some(v) => {
+                        return Err(Error::Type {
+                            expected: "int or null".to_string(),
+                            got: format!("{}", v.type_name()),
+                        });
+                    }
+                };
+                let end_idx = match end {
+                    None => len,
+                    Some(Value::Int(i)) => normalize_idx(*i, len),
+                    Some(v) => {
+                        return Err(Error::Type {
+                            expected: "int or null".to_string(),
+                            got: format!("{}", v.type_name()),
+                        });
+                    }
+                };
+                if start_idx > end_idx {
+                    return Ok(Value::List(Arc::new(vec![])));
+                }
+                Ok(Value::List(Arc::new(list[start_idx..end_idx].to_vec())))
+            }
+            Value::String(s) => {
+                let chars: Vec<char> = s.chars().collect();
+                let len = chars.len();
+                let start_idx = match start {
+                    None => 0,
+                    Some(Value::Int(i)) => normalize_idx(*i, len),
+                    Some(v) => {
+                        return Err(Error::Type {
+                            expected: "int or null".to_string(),
+                            got: format!("{}", v.type_name()),
+                        });
+                    }
+                };
+                let end_idx = match end {
+                    None => len,
+                    Some(Value::Int(i)) => normalize_idx(*i, len),
+                    Some(v) => {
+                        return Err(Error::Type {
+                            expected: "int or null".to_string(),
+                            got: format!("{}", v.type_name()),
+                        });
+                    }
+                };
+                if start_idx > end_idx {
+                    return Ok(Value::String(SmolStr::new("")));
+                }
+                let sliced: String = chars[start_idx..end_idx].iter().collect();
+                Ok(Value::String(SmolStr::new(sliced)))
+            }
+            _ => Err(Error::Type {
+                expected: "sliceable (list or string)".to_string(),
+                got: format!("{}", self.type_name()),
+            }),
+        }
+    }
 }
 
 impl fmt::Display for Value {

@@ -667,11 +667,16 @@ impl Vm {
                     end,
                 } => {
                     let col = frame.get(collection);
-                    let _start = start.map(|idx| frame.get(idx));
-                    let _end = end.map(|idx| frame.get(idx));
-                    // TODO: proper slice implementation
+                    // Clone start and end values to avoid lifetime issues
+                    // TODO: optimize to avoid clones
+                    let start_cloned = start.as_ref().map(|idx| frame.get(*idx).clone());
+                    let end_cloned = end.as_ref().map(|idx| frame.get(*idx).clone());
+                    let result = col.slice(
+                        start_cloned.as_ref().map(|v| v),
+                        end_cloned.as_ref().map(|v| v),
+                    )?;
                     let frame = self.frames.last_mut().unwrap();
-                    frame.set_current(col);
+                    frame.set_current(result);
                 }
 
                 // === Scoping ===
