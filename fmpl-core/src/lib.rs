@@ -14,6 +14,7 @@ pub mod bytecode;
 pub mod compiler;
 pub mod error;
 pub mod grammar;
+pub mod json;
 pub mod lexer;
 pub mod object;
 pub mod parser;

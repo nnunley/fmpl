@@ -12,6 +12,7 @@ use crate::compiler::{CompiledCode, InstrIndex, Instruction};
 use crate::error::{Error, Result};
 use crate::grammar::input::MemoEntry;
 use crate::grammar::{Grammar, GrammarRegistry};
+use crate::json;
 use crate::object::{Facet, Method, ObjectDb, ObjectId};
 use crate::value::{Cursor, CursorPosition, Lambda, Stream, StreamOp, Value};
 use smol_str::SmolStr;
@@ -25,61 +26,6 @@ pub use vm_internal::{Frame, ParseCheckpoint, ParseState};
 #[derive(Debug, Default)]
 struct Scope {
     bindings: HashMap<SmolStr, Value>,
-}
-
-/// Convert serde_json::Value to FMPL Value.
-fn convert_json_to_fmpl(json: serde_json::Value) -> Result<Value> {
-    match json {
-        serde_json::Value::Null => Ok(Value::Null),
-        serde_json::Value::Bool(b) => Ok(Value::Bool(b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(Value::Int(i))
-            } else if let Some(f) = n.as_f64() {
-                Ok(Value::Float(f))
-            } else {
-                Err(Error::Runtime("Number out of range".to_string()))
-            }
-        }
-        serde_json::Value::String(s) => Ok(Value::String(s.into())),
-        serde_json::Value::Array(arr) => {
-            let items: Result<Vec<Value>> = arr.into_iter().map(convert_json_to_fmpl).collect();
-            Ok(Value::List(std::sync::Arc::new(items?)))
-        }
-        serde_json::Value::Object(obj) => {
-            let mut map = std::collections::HashMap::new();
-            for (k, v) in obj {
-                map.insert(k.into(), convert_json_to_fmpl(v)?);
-            }
-            Ok(Value::Map(std::sync::Arc::new(map)))
-        }
-    }
-}
-
-/// Convert FMPL Value to serde_json::Value.
-fn convert_fmpl_to_json(value: &Value) -> serde_json::Value {
-    match value {
-        Value::Null => serde_json::Value::Null,
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::Int(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
-        Value::Float(f) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Value::String(s) => serde_json::Value::String(s.to_string()),
-        Value::List(items) => {
-            let arr: Vec<serde_json::Value> = items.iter().map(convert_fmpl_to_json).collect();
-            serde_json::Value::Array(arr)
-        }
-        Value::Map(map) => {
-            let obj: serde_json::Map<String, serde_json::Value> = map
-                .iter()
-                .map(|(k, v)| (k.to_string(), convert_fmpl_to_json(v)))
-                .collect();
-            serde_json::Value::Object(obj)
-        }
-        // For unsupported types, convert to null
-        _ => serde_json::Value::Null,
-    }
 }
 
 /// The FMPL virtual machine.
@@ -3181,7 +3127,7 @@ impl Vm {
                     }
                 };
                 match serde_json::from_str::<serde_json::Value>(json_str) {
-                    Ok(v) => convert_json_to_fmpl(v),
+                    Ok(v) => json::from_json(v),
                     Err(e) => Ok(Value::Map(std::sync::Arc::new(
                         vec![
                             ("error".into(), Value::String("invalid_json".into())),
@@ -3209,7 +3155,7 @@ impl Vm {
                     )));
                 }
                 let value = &args[0];
-                let json_value = convert_fmpl_to_json(value);
+                let json_value = json::to_json(value);
                 match serde_json::to_string(&json_value) {
                     Ok(s) => Ok(Value::String(s.into())),
                     Err(e) => Ok(Value::Map(std::sync::Arc::new(

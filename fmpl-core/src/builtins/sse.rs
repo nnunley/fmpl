@@ -1,9 +1,9 @@
 //! SSE (Server-Sent Events) parsing built-in for FMPL.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
+use crate::json;
 use crate::value::Value;
 use smol_str::SmolStr;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The SSE built-in object
@@ -47,7 +47,7 @@ impl SseBuiltin {
             } else if line.is_empty() && !current_data.is_empty() {
                 // Empty line terminates the current event
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&current_data) {
-                    events.push(convert_json_to_fmpl(json)?);
+                    events.push(json::from_json(json)?);
                 } else {
                     // If not valid JSON, store as raw string
                     events.push(Value::String(SmolStr::new(current_data.trim().to_string())));
@@ -59,42 +59,13 @@ impl SseBuiltin {
         // Handle last event (if not terminated by empty line)
         if !current_data.is_empty() {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&current_data) {
-                events.push(convert_json_to_fmpl(json)?);
+                events.push(json::from_json(json)?);
             } else {
                 events.push(Value::String(SmolStr::new(current_data.trim().to_string())));
             }
         }
 
         Ok(Value::List(Arc::new(events)))
-    }
-}
-
-/// Convert serde_json::Value to FMPL Value
-fn convert_json_to_fmpl(json: serde_json::Value) -> Result<Value> {
-    match json {
-        serde_json::Value::Null => Ok(Value::Null),
-        serde_json::Value::Bool(b) => Ok(Value::Bool(b)),
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                Ok(Value::Int(i))
-            } else if let Some(f) = n.as_f64() {
-                Ok(Value::Float(f))
-            } else {
-                Err(Error::Runtime("Number out of range".to_string()))
-            }
-        }
-        serde_json::Value::String(s) => Ok(Value::String(s.into())),
-        serde_json::Value::Array(arr) => {
-            let items: Result<Vec<Value>> = arr.into_iter().map(convert_json_to_fmpl).collect();
-            Ok(Value::List(Arc::new(items?)))
-        }
-        serde_json::Value::Object(obj) => {
-            let mut map = HashMap::new();
-            for (k, v) in obj {
-                map.insert(k.into(), convert_json_to_fmpl(v)?);
-            }
-            Ok(Value::Map(Arc::new(map)))
-        }
     }
 }
 
