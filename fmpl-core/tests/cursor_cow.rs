@@ -35,7 +35,8 @@ fn test_cursor_advance_creates_new_reference() {
 fn test_cursor_rewind() {
     let mut vm = fmpl_core::Vm::new();
 
-    let code = "let source = [1, 2, 3]; let data = source; let cursor = stream::observe(data); let advanced = cursor::advance(cursor, 2); let rewound = cursor::rewind(advanced, 1); [cursor::position(advanced), cursor::position(rewound)]";
+    // Note: Don't use 'cursor' as variable name since it shadows the builtin
+    let code = "let source = [1, 2, 3]; let data = source; let c = stream::observe(data); let advanced = cursor::advance(c, 2); let rewound = cursor::rewind(advanced, 1); [cursor::position(advanced), cursor::position(rewound)]";
 
     let result = eval(&mut vm, code);
     assert!(result.is_ok(), "cursor.rewind() should succeed");
