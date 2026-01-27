@@ -74,6 +74,24 @@ impl Vm {
         self.runtime = Some(handle);
     }
 
+    // ========== Helper methods for instruction handlers ==========
+
+    /// Get the current (top) frame for reading.
+    pub fn current_frame(&self) -> &Frame {
+        self.frames.last().expect("No frame on stack")
+    }
+
+    /// Get the current (top) frame for mutation.
+    pub fn current_frame_mut(&mut self) -> &mut Frame {
+        self.frames.last_mut().expect("No frame on stack")
+    }
+
+    /// Set the result value for the current instruction.
+    pub fn set_current(&mut self, value: Value) {
+        let frame = self.frames.last_mut().expect("No frame on stack");
+        frame.set_current(value);
+    }
+
     /// Get the runtime handle, if set.
     pub fn runtime(&self) -> Option<&tokio::runtime::Handle> {
         self.runtime.as_ref()
@@ -2816,7 +2834,12 @@ impl Vm {
         }
     }
 
-    fn try_op<F>(&mut self, op: F) -> Result<Value>
+    /// Execute an operation with exception handling.
+    ///
+    /// If the operation fails and there's an exception handler on the stack,
+    /// the error is caught and converted to an exception value. Otherwise,
+    /// the error is propagated.
+    pub fn try_op<F>(&mut self, op: F) -> Result<Value>
     where
         F: FnOnce() -> Result<Value>,
     {
