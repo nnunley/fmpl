@@ -4,27 +4,239 @@
 //! in `values[ip]`, and consuming instructions reference operands by their
 //! instruction indices.
 
-// Import VM internal modules
-#[path = "vm_internal/mod.rs"]
-mod vm_internal;
-
-use crate::compiler::{CompiledCode, InstrIndex, Instruction};
+use crate::compiler::{CompiledCode, Instruction, InstrIndex};
 use crate::error::{Error, Result};
-use crate::grammar::input::MemoEntry;
 use crate::grammar::{Grammar, GrammarRegistry};
+use crate::grammar::input::MemoEntry;
 use crate::object::{Facet, Method, ObjectDb, ObjectId};
 use crate::value::{Cursor, CursorPosition, Lambda, Stream, StreamOp, Value};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// Re-export from vm_internal module
-pub use vm_internal::{Frame, ParseCheckpoint, ParseState};
+/// A call frame for Indexed RPN execution.
+///
+/// In this model, each frame has a `values` array where instruction results
+/// are stored at their instruction index, and operands are read from the array
+/// by index rather than from an operand stack.
+#[derive(Debug)]
+struct Frame {
+    code: Arc<CompiledCode>,
+    /// Instruction pointer (next instruction to execute).
+    ip: usize,
+    /// Values array: values[i] holds the result of instruction i.
+    values: Vec<Value>,
+    /// Local variable bindings (for parameters and let bindings).
+    locals: HashMap<SmolStr, Value>,
+    /// The `self` reference for method calls.
+    this: Option<ObjectId>,
+    /// The `caller` reference for method calls.
+    caller: Option<ObjectId>,
+    /// Parse state for grammar pattern matching.
+    parse_state: ParseState,
+}
+
+impl Frame {
+    fn new(code: Arc<CompiledCode>) -> Self {
+        // Pre-allocate values array for all instructions
+        let num_instructions = code.instructions.len();
+        Self {
+            code,
+            ip: 0,
+            values: vec![Value::Null; num_instructions],
+            locals: HashMap::new(),
+            this: None,
+            caller: None,
+            parse_state: ParseState::new(),
+        }
+    }
+
+    /// Get the value at the given instruction index.
+    #[inline]
+    fn get(&self, idx: InstrIndex) -> Value {
+        self.values[idx.0].clone()
+    }
+
+    /// Set the value at the current IP (before incrementing).
+    #[inline]
+    fn set_current(&mut self, value: Value) {
+        if self.ip > 0 {
+            self.values[self.ip - 1] = value;
+        }
+    }
+
+    /// Get the result of the last executed instruction.
+    fn result(&self) -> Value {
+        if self.ip > 0 && self.ip <= self.values.len() {
+            self.values[self.ip - 1].clone()
+        } else if !self.values.is_empty() {
+            self.values.last().cloned().unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        }
+    }
+}
 
 /// Scope for let bindings.
 #[derive(Debug, Default)]
 struct Scope {
     bindings: HashMap<SmolStr, Value>,
+}
+
+/// Parse state for grammar pattern matching within a Frame.
+///
+/// This tracks the current position in the input and provides backtracking
+/// support for choice and lookahead operations.
+#[derive(Debug, Clone)]
+struct ParseState {
+    /// Input value being matched (if pattern matching is active).
+    input_value: Option<Value>,
+    /// Current position in the input (for simple index-based inputs).
+    input_pos: Option<usize>,
+    /// Grammar registry for rule lookup.
+    grammar: Option<Arc<Grammar>>,
+    /// Per-position memoization table for packrat parsing.
+    /// Key: (position_index, rule_name), Value: memo entry
+    memo: HashMap<(usize, SmolStr), MemoEntry>,
+}
+
+impl ParseState {
+    fn new() -> Self {
+        Self {
+            input_value: None,
+            input_pos: Some(0),
+            grammar: None,
+            memo: HashMap::new(),
+        }
+    }
+
+    /// Set the input value for pattern matching.
+    fn set_input(&mut self, value: Value) {
+        self.input_value = Some(value);
+        self.input_pos = Some(0);
+    }
+
+    /// Set the grammar for rule lookup.
+    fn set_grammar(&mut self, grammar: Arc<Grammar>) {
+        self.grammar = Some(grammar);
+    }
+
+    /// Get the current input value.
+    fn input(&self) -> Option<&Value> {
+        self.input_value.as_ref()
+    }
+
+    /// Get the current input position.
+    fn position(&self) -> usize {
+        self.input_pos.unwrap_or(0)
+    }
+
+    /// Advance the input position by n.
+    fn advance(&mut self, n: usize) {
+        if let Some(pos) = self.input_pos.as_mut() {
+            *pos += n;
+        }
+    }
+
+    /// Check if at end of input.
+    fn is_at_end(&self) -> bool {
+        if let Some(ref value) = self.input_value {
+            match value {
+                Value::String(s) => self.input_pos.unwrap_or(0) >= s.len(),
+                Value::List(items) => self.input_pos.unwrap_or(0) >= items.len(),
+                _ => self.input_pos.unwrap_or(0) >= 1,
+            }
+        } else {
+            true
+        }
+    }
+
+    /// Get the current input item as a character (for text input).
+    fn head_char(&self) -> Option<char> {
+        if let Some(Value::String(s)) = &self.input_value {
+            let pos = self.input_pos.unwrap_or(0);
+            if pos < s.len() {
+                s[pos..].chars().next()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Get the current input item as a value (for value input).
+    fn head_value(&self) -> Option<Value> {
+        if let Some(Value::List(items)) = &self.input_value {
+            let pos = self.input_pos.unwrap_or(0);
+            if pos < items.len() {
+                Some(items[pos].clone())
+            } else {
+                None
+            }
+        } else if self.input_value.is_some() && self.input_pos.unwrap_or(0) == 0 {
+            // Single value input - return it once
+            self.input_value.clone()
+        } else {
+            None
+        }
+    }
+
+    /// Get the text slice starting at current position (for literal matching).
+    fn text_from(&self) -> Option<&str> {
+        if let Some(Value::String(s)) = &self.input_value {
+            let pos = self.input_pos.unwrap_or(0);
+            if pos <= s.len() {
+                Some(s.get(pos..).unwrap_or(""))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
+
+    /// Check if text at position starts with the given literal.
+    fn starts_with(&self, literal: &str) -> bool {
+        self.text_from()
+            .is_some_and(|text| text.starts_with(literal))
+    }
+
+    /// Get memoization entry for a rule at current position.
+    fn get_memo(&self, rule_name: &SmolStr) -> Option<MemoEntry> {
+        let pos = self.input_pos.unwrap_or(0);
+        self.memo.get(&(pos, rule_name.clone())).cloned()
+    }
+
+    /// Set memoization entry for a rule at current position.
+    fn set_memo(&mut self, rule_name: SmolStr, entry: MemoEntry) {
+        let pos = self.input_pos.unwrap_or(0);
+        self.memo.insert((pos, rule_name), entry);
+    }
+
+    /// Create a checkpoint for backtracking.
+    fn checkpoint(&self, _frame: &Frame) -> ParseCheckpoint {
+        ParseCheckpoint {
+            input_pos: self.input_pos,
+        }
+    }
+
+    /// Restore state from a checkpoint.
+    fn restore(&mut self, checkpoint: ParseCheckpoint) {
+        self.input_pos = checkpoint.input_pos;
+        // Note: The actual restoration of values and locals happens in the Frame
+        // when it calls restore_from_checkpoint
+    }
+}
+
+/// A checkpoint for backtracking during pattern matching.
+///
+/// Captures the state needed to restore to a previous position during
+/// choice and lookahead operations.
+#[derive(Debug, Clone)]
+struct ParseCheckpoint {
+    /// Saved input position.
+    input_pos: Option<usize>,
 }
 
 /// Convert serde_json::Value to FMPL Value.
@@ -143,11 +355,7 @@ impl Vm {
         self.execute_with_depth(base_depth)?;
 
         // Get the result from the last frame's last instruction
-        let result = self
-            .frames
-            .last()
-            .map(|f| f.result())
-            .unwrap_or(Value::Null);
+        let result = self.frames.last().map(|f| f.result()).unwrap_or(Value::Null);
         self.frames.pop();
         Ok(result)
     }
@@ -213,36 +421,26 @@ impl Vm {
         grammar: Arc<Grammar>,
         rule_name: &str,
     ) -> Result<Option<Value>> {
-        use crate::grammar::runtime::{
-            apply_grammar_to_stream_with_evaluator, apply_grammar_to_value_with_evaluator,
-        };
+        use crate::grammar::runtime::{apply_grammar_to_value_with_evaluator, apply_grammar_to_stream_with_evaluator};
 
         let registry = self.grammars.clone();
 
-        let evaluator = Box::new(
-            |expr: &crate::ast::Expr, bindings: &HashMap<SmolStr, Value>| {
-                self.eval_with_bindings(expr, bindings)
-            },
-        );
+        let evaluator = Box::new(|expr: &crate::ast::Expr, bindings: &HashMap<SmolStr, Value>| {
+            self.eval_with_bindings(expr, bindings)
+        });
 
         // If input is an AsyncStream, use streaming grammar application
         if let Value::AsyncStream(stream_arc) = input {
-            let mut guard = stream_arc
-                .lock()
-                .map_err(|_| Error::Runtime("failed to lock async stream".to_string()))?;
+            let mut guard = stream_arc.lock().map_err(|_| {
+                Error::Runtime("failed to lock async stream".to_string())
+            })?;
 
             let (_, dummy_rx) = tokio::sync::mpsc::channel(1);
             let original_receiver = std::mem::replace(&mut guard.receiver, dummy_rx);
             let stream_handle = crate::stream::StreamHandle::new(original_receiver, guard.id());
             drop(guard);
 
-            return apply_grammar_to_stream_with_evaluator(
-                stream_handle,
-                &grammar,
-                &registry,
-                rule_name,
-                evaluator,
-            );
+            return apply_grammar_to_stream_with_evaluator(stream_handle, &grammar, &registry, rule_name, evaluator);
         }
 
         apply_grammar_to_value_with_evaluator(input, &grammar, &registry, rule_name, evaluator)
@@ -252,14 +450,14 @@ impl Vm {
 
     /// Check if a return value represents a grammar rule failure.
     fn is_grammar_rule_failure(ret_val: &Value, parse_state: &ParseState) -> bool {
-        let is_grammar_rule = parse_state.input().is_some() || parse_state.grammar().is_some();
+        let is_grammar_rule = parse_state.input().is_some() || parse_state.grammar.is_some();
         is_grammar_rule && matches!(ret_val, Value::Null)
     }
 
     /// Determine if a grammar rule should require full input consumption.
     fn should_require_full_consumption(parse_state: &ParseState, caller_frame: &Frame) -> bool {
-        let is_grammar_rule = parse_state.input().is_some() || parse_state.grammar().is_some();
-        let is_top_level = caller_frame.parse_state.grammar().is_none();
+        let is_grammar_rule = parse_state.input().is_some() || parse_state.grammar.is_some();
+        let is_top_level = caller_frame.parse_state.grammar.is_none();
         let position_advanced = parse_state.position() > 0;
 
         let is_streaming = match parse_state.input() {
@@ -310,9 +508,7 @@ impl Vm {
                     if let Some(caller) = self.frames.last_mut() {
                         caller.set_current(result.clone());
                         // Propagate parse state position for grammar rules
-                        caller
-                            .parse_state
-                            .advance(new_position - caller.parse_state.position());
+                        caller.parse_state.advance(new_position - caller.parse_state.position());
                     }
                     continue;
                 } else {
@@ -553,11 +749,7 @@ impl Vm {
                     self.frames.pop();
                     self.call_value(func_val, arg_vals)?;
                 }
-                Instruction::MethodCall {
-                    receiver,
-                    method,
-                    args,
-                } => {
+                Instruction::MethodCall { receiver, method, args } => {
                     let receiver_val = frame.get(receiver);
                     let arg_vals: Vec<Value> = args.iter().map(|&idx| frame.get(idx)).collect();
                     self.call_method(receiver_val, &method, arg_vals)?;
@@ -583,10 +775,8 @@ impl Vm {
                             });
                         }
 
-                        if Self::should_require_full_consumption(
-                            &returned_parse_state,
-                            caller_frame,
-                        ) && !returned_parse_state.is_at_end()
+                        if Self::should_require_full_consumption(&returned_parse_state, caller_frame)
+                            && !returned_parse_state.is_at_end()
                         {
                             return Err(Error::ParseFailed {
                                 position: returned_parse_state.position(),
@@ -614,20 +804,12 @@ impl Vm {
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(result);
                 }
-                Instruction::SetProp {
-                    object,
-                    name,
-                    value,
-                } => {
+                Instruction::SetProp { object, name, value } => {
                     let obj = frame.get(object);
                     let val = frame.get(value);
                     match obj {
                         Value::Object(id) => {
-                            self.objects.lock().unwrap().set_property(
-                                id,
-                                name.clone(),
-                                val.clone(),
-                            )?;
+                            self.objects.lock().unwrap().set_property(id, name.clone(), val.clone())?;
                         }
                         _ => {
                             return Err(Error::Type {
@@ -654,7 +836,10 @@ impl Vm {
                                 let frame = self.frames.last_mut().unwrap();
                                 frame.set_current(Value::Object(id));
                             } else {
-                                return Err(Error::Runtime(format!("undefined facet: {}", name)));
+                                return Err(Error::Runtime(format!(
+                                    "undefined facet: {}",
+                                    name
+                                )));
                             }
                         }
                         _ => {
@@ -677,8 +862,7 @@ impl Vm {
 
                     if self.runtime.is_none() {
                         return Err(Error::Runtime(
-                            "async call requires runtime handle - use Vm::with_runtime()"
-                                .to_string(),
+                            "async call requires runtime handle - use Vm::with_runtime()".to_string()
                         ));
                     }
 
@@ -719,10 +903,7 @@ impl Vm {
                                         results.push(value);
                                     }
                                     Some(StreamEvent::Err(err)) => {
-                                        return Err(Error::Runtime(format!(
-                                            "await_all: stream error: {:?}",
-                                            err
-                                        )));
+                                        return Err(Error::Runtime(format!("await_all: stream error: {:?}", err)));
                                     }
                                     Some(StreamEvent::Data(value)) => {
                                         // Data events are also collected
@@ -733,9 +914,7 @@ impl Vm {
                                         results.push(Value::Null);
                                     }
                                     None => {
-                                        return Err(Error::Runtime(
-                                            "await_all: stream closed without result".to_string(),
-                                        ));
+                                        return Err(Error::Runtime("await_all: stream closed without result".to_string()));
                                     }
                                 }
                             }
@@ -798,11 +977,7 @@ impl Vm {
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(result);
                 }
-                Instruction::Slice {
-                    collection,
-                    start,
-                    end,
-                } => {
+                Instruction::Slice { collection, start, end } => {
                     let col = frame.get(collection);
                     // Clone start and end values to avoid lifetime issues
                     // TODO: optimize to avoid clones
@@ -854,11 +1029,7 @@ impl Vm {
                 }
 
                 // === Lambda ===
-                Instruction::MakeLambda {
-                    params,
-                    body,
-                    captures,
-                } => {
+                Instruction::MakeLambda { params, body, captures } => {
                     let frame = self.frames.last().unwrap();
                     let nested_code = frame.code.nested.get(body).cloned();
 
@@ -938,11 +1109,7 @@ impl Vm {
                     let _ = init_val;
                     self.push_stream_op(source_val, StreamOp::Reduce(func_val))?;
                 }
-                Instruction::StreamParse {
-                    source,
-                    grammar,
-                    rule,
-                } => {
+                Instruction::StreamParse { source, grammar, rule } => {
                     let source_val = frame.get(source);
                     let grammar_val = frame.get(grammar);
                     self.push_stream_parse(source_val, grammar_val, rule)?;
@@ -963,10 +1130,7 @@ impl Vm {
                 }
 
                 // === Pattern Matching ===
-                Instruction::MatchPattern {
-                    value: _,
-                    fail_target: _,
-                } => {
+                Instruction::MatchPattern { value: _, fail_target: _ } => {
                     // Pattern matching placeholder
                 }
                 Instruction::ExtractMapKey { source, key } => {
@@ -979,12 +1143,10 @@ impl Vm {
                             let frame = self.frames.last_mut().unwrap();
                             frame.set_current(value);
                         }
-                        _ => {
-                            return Err(Error::Type {
-                                expected: "map".to_string(),
-                                got: map_val.type_name().to_string(),
-                            });
-                        }
+                        _ => return Err(Error::Type {
+                            expected: "map".to_string(),
+                            got: map_val.type_name().to_string(),
+                        }),
                     }
                 }
                 Instruction::ExtractListIndex { source, index } => {
@@ -997,12 +1159,10 @@ impl Vm {
                             let frame = self.frames.last_mut().unwrap();
                             frame.set_current(value);
                         }
-                        _ => {
-                            return Err(Error::Type {
-                                expected: "list".to_string(),
-                                got: list_val.type_name().to_string(),
-                            });
-                        }
+                        _ => return Err(Error::Type {
+                            expected: "list".to_string(),
+                            got: list_val.type_name().to_string(),
+                        }),
                     }
                 }
 
@@ -1013,12 +1173,7 @@ impl Vm {
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(Value::Object(id));
                 }
-                Instruction::DefineMethod {
-                    object,
-                    name,
-                    params,
-                    body,
-                } => {
+                Instruction::DefineMethod { object, name, params, body } => {
                     // Get the object by its instruction index
                     let obj = frame.get(object);
                     if let Value::Object(id) = obj {
@@ -1028,43 +1183,27 @@ impl Vm {
                                 params,
                                 code: Arc::new(code),
                             };
-                            self.objects
-                                .lock()
-                                .unwrap()
-                                .define_method(id, name, method)?;
+                            self.objects.lock().unwrap().define_method(id, name, method)?;
                         }
                     }
                 }
-                Instruction::DefineProp {
-                    object,
-                    name,
-                    value,
-                } => {
+                Instruction::DefineProp { object, name, value } => {
                     let obj = frame.get(object);
                     let val = frame.get(value);
                     if let Value::Object(id) = obj {
                         self.objects.lock().unwrap().set_property(id, name, val)?;
                     }
                 }
-                Instruction::DefineFacet {
-                    object,
-                    name,
-                    members,
-                    terminal,
-                } => {
-                    let member_vals: Vec<SmolStr> = members
-                        .iter()
-                        .filter_map(|&idx| match frame.get(idx) {
+                Instruction::DefineFacet { object, name, members, terminal } => {
+                    let member_vals: Vec<SmolStr> = members.iter().filter_map(|&idx| {
+                        match frame.get(idx) {
                             Value::Symbol(s) => Some(s),
                             _ => None,
-                        })
-                        .collect();
+                        }
+                    }).collect();
                     let obj = frame.get(object);
                     if let Value::Object(id) = obj {
-                        let facet = Facet {
-                            members: member_vals,
-                            terminal,
-                        };
+                        let facet = Facet { members: member_vals, terminal };
                         self.objects.lock().unwrap().define_facet(id, name, facet)?;
                     }
                 }
@@ -1073,11 +1212,7 @@ impl Vm {
                 // Note: GrammarApply currently uses the separate PegRuntime.
                 // Future migration: Use ApplyRule instruction with compiled patterns
                 // for direct VM execution without runtime switch overhead.
-                Instruction::GrammarApply {
-                    input,
-                    grammar,
-                    rule,
-                } => {
+                Instruction::GrammarApply { input, grammar, rule } => {
                     // NEW: Use compiled grammar bytecode path instead of PegRuntime
                     eprintln!("DEBUG GrammarApply: rule='{}'", rule);
                     let input_val = frame.get(input);
@@ -1126,20 +1261,14 @@ impl Vm {
                         None => {
                             return Err(Error::ParseFailed {
                                 position: 0,
-                                message: format!(
-                                    "GrammarApply: rule '{}' not found in compiled grammar",
-                                    rule
-                                ),
+                                message: format!("GrammarApply: rule '{}' not found in compiled grammar", rule),
                             });
                         }
                     };
 
                     // 3. Set up a new frame with the compiled grammar code
                     eprintln!("DEBUG GrammarApply: entry_point={:?}", entry_point);
-                    eprintln!(
-                        "DEBUG GrammarApply: instructions={:?}",
-                        compiled_code.instructions
-                    );
+                    eprintln!("DEBUG GrammarApply: instructions={:?}", compiled_code.instructions);
                     let mut new_frame = Frame::new(compiled_code.clone());
                     new_frame.ip = entry_point.0;
 
@@ -1240,6 +1369,7 @@ impl Vm {
                 // - Current: GrammarApply delegates to PegRuntime
                 // - Future: ApplyRule executes compiled patterns directly in VM
                 // - Benefit: No context switch, direct values[] access
+
                 Instruction::MatchAny => {
                     let frame = self.frames.last_mut().unwrap();
                     if let Some(ch) = frame.parse_state.head_char() {
@@ -1264,11 +1394,7 @@ impl Vm {
                     } else {
                         return Err(Error::ParseFailed {
                             position: frame.parse_state.position(),
-                            message: format!(
-                                "MatchChar: expected '{}', got {:?}",
-                                c,
-                                frame.parse_state.head_char()
-                            ),
+                            message: format!("MatchChar: expected '{}', got {:?}", c, frame.parse_state.head_char()),
                         });
                     }
                 }
@@ -1297,20 +1423,12 @@ impl Vm {
                 Instruction::MatchLiteral { const_idx } => {
                     let frame = self.frames.last_mut().unwrap();
                     let literal = frame.code.get_constant(const_idx);
-                    eprintln!(
-                        "DEBUG MatchLiteral: ip={}, literal='{}', position={}, text='{:?}'",
-                        frame.ip,
-                        literal,
-                        frame.parse_state.position(),
-                        frame.parse_state.text_from()
-                    );
+                    eprintln!("DEBUG MatchLiteral: ip={}, literal='{}', position={}, text='{:?}'",
+                        frame.ip, literal, frame.parse_state.position(), frame.parse_state.text_from());
                     if frame.parse_state.starts_with(&literal) {
                         frame.parse_state.advance(literal.len());
                         frame.set_current(Value::String(literal));
-                        eprintln!(
-                            "DEBUG MatchLiteral: matched, new position={}",
-                            frame.parse_state.position()
-                        );
+                        eprintln!("DEBUG MatchLiteral: matched, new position={}", frame.parse_state.position());
                     } else {
                         eprintln!("DEBUG MatchLiteral: failed to match");
                         return Err(Error::ParseFailed {
@@ -1406,10 +1524,7 @@ impl Vm {
                                     } else {
                                         Err(Error::ParseFailed {
                                             position: frame.parse_state.position(),
-                                            message: format!(
-                                                "MatchStar: expected '{}', got '{}'",
-                                                expected, ch
-                                            ),
+                                            message: format!("MatchStar: expected '{}', got '{}'", expected, ch),
                                         })
                                     }
                                 } else {
@@ -1446,8 +1561,7 @@ impl Vm {
                                 if matches!(result, Value::Null) {
                                     Err(Error::ParseFailed {
                                         position: frame.parse_state.position(),
-                                        message: "MatchStar: pattern not supported for repetition"
-                                            .to_string(),
+                                        message: "MatchStar: pattern not supported for repetition".to_string(),
                                     })
                                 } else {
                                     Ok(result)
@@ -1537,10 +1651,7 @@ impl Vm {
                                     } else {
                                         Err(Error::ParseFailed {
                                             position: frame.parse_state.position(),
-                                            message: format!(
-                                                "MatchPlus: expected '{}', got '{}'",
-                                                expected, ch
-                                            ),
+                                            message: format!("MatchPlus: expected '{}', got '{}'", expected, ch),
                                         })
                                     }
                                 } else {
@@ -1575,8 +1686,7 @@ impl Vm {
                                 if matches!(result, Value::Null) {
                                     Err(Error::ParseFailed {
                                         position: frame.parse_state.position(),
-                                        message: "MatchPlus: pattern not supported for repetition"
-                                            .to_string(),
+                                        message: "MatchPlus: pattern not supported for repetition".to_string(),
                                     })
                                 } else {
                                     Ok(result)
@@ -1650,11 +1760,7 @@ impl Vm {
                 Instruction::MatchChoice { cases } => {
                     // Try each case in order, using backtracking on failure.
                     // Each case is an instruction index that should be executed.
-                    eprintln!(
-                        "DEBUG MatchChoice: {} cases, pos={}",
-                        cases.len(),
-                        frame.parse_state.position()
-                    );
+                    eprintln!("DEBUG MatchChoice: {} cases, pos={}", cases.len(), frame.parse_state.position());
                     let mut last_result = Err(Error::ParseFailed {
                         position: frame.parse_state.position(),
                         message: "MatchChoice: no cases matched".to_string(),
@@ -1664,10 +1770,7 @@ impl Vm {
                         // Create checkpoint before trying this case
                         let checkpoint = frame.parse_state.checkpoint(frame);
 
-                        eprintln!(
-                            "DEBUG MatchChoice: case {} executing instruction at {:?}",
-                            i, case_idx
-                        );
+                        eprintln!("DEBUG MatchChoice: case {} executing instruction at {:?}", i, case_idx);
 
                         // Execute the instruction at case_idx
                         // We need to temporarily change the IP to execute this instruction
@@ -1676,10 +1779,7 @@ impl Vm {
 
                         // Get the instruction and execute it
                         let instruction = frame.code.instructions[case_idx.0].clone();
-                        eprintln!(
-                            "DEBUG MatchChoice: case {} instruction={:?}",
-                            i, instruction
-                        );
+                        eprintln!("DEBUG MatchChoice: case {} instruction={:?}", i, instruction);
 
                         // Manually execute this instruction by recursing
                         // We need to be careful not to cause infinite recursion
@@ -1769,13 +1869,8 @@ impl Vm {
                 Instruction::MatchPlusCharClass { ranges } => {
                     // Match one or more characters from the given ranges
                     let frame = self.frames.last_mut().unwrap();
-                    eprintln!(
-                        "DEBUG MatchPlusCharClass: ip={}, ranges={:?}, position={}, text='{:?}'",
-                        frame.ip,
-                        ranges,
-                        frame.parse_state.position(),
-                        frame.parse_state.text_from()
-                    );
+                    eprintln!("DEBUG MatchPlusCharClass: ip={}, ranges={:?}, position={}, text='{:?}'",
+                        frame.ip, ranges, frame.parse_state.position(), frame.parse_state.text_from());
                     let mut results = Vec::new();
 
                     loop {
@@ -1974,7 +2069,7 @@ impl Vm {
                     // Zero or more repetitions of a named rule (like OMeta's _many).
                     // Extract data first, then call helper which sets the result.
                     let rule_name_smol = frame.code.get_constant(rule).clone();
-                    let grammar_opt = frame.parse_state.grammar().cloned();
+                    let grammar_opt = frame.parse_state.grammar.clone();
                     let initial_position = frame.parse_state.position();
 
                     // Prepare helper input
@@ -1982,8 +2077,7 @@ impl Vm {
                         let grammar_name = grammar.name.clone();
                         let cache = self.compiled_grammars.lock().unwrap();
                         if let Some(compiled_code) = cache.get(&grammar_name).cloned() {
-                            if let Some(entry_point) = compiled_code.get_rule_entry(&rule_name_smol)
-                            {
+                            if let Some(entry_point) = compiled_code.get_rule_entry(&rule_name_smol) {
                                 Some((compiled_code, entry_point))
                             } else {
                                 None
@@ -2016,46 +2110,27 @@ impl Vm {
 
                 Instruction::MatchPlusRule { rule } => {
                     // One or more repetitions of a named rule (like OMeta's _many1).
-                    println!(
-                        "DEBUG MatchPlusRule: rule='{}'",
-                        frame.code.get_constant(rule)
-                    );
+                    println!("DEBUG MatchPlusRule: rule='{}'", frame.code.get_constant(rule));
                     // Extract data first, then call helper which sets the result.
                     let rule_name_smol = frame.code.get_constant(rule).clone();
-                    let grammar_opt = frame.parse_state.grammar().cloned();
+                    let grammar_opt = frame.parse_state.grammar.clone();
                     let initial_position = frame.parse_state.position();
 
-                    println!(
-                        "DEBUG MatchPlusRule: grammar_opt={:?}",
-                        grammar_opt.as_ref().map(|g| &g.name)
-                    );
+                    println!("DEBUG MatchPlusRule: grammar_opt={:?}", grammar_opt.as_ref().map(|g| &g.name));
 
                     // Prepare helper input
                     let helper_input = if let Some(grammar) = grammar_opt {
                         let grammar_name = grammar.name.clone();
-                        println!(
-                            "DEBUG MatchPlusRule: looking for grammar '{}'",
-                            grammar_name
-                        );
+                        println!("DEBUG MatchPlusRule: looking for grammar '{}'", grammar_name);
                         let cache = self.compiled_grammars.lock().unwrap();
                         println!("DEBUG MatchPlusRule: cache has {} grammars", cache.len());
                         if let Some(compiled_code) = cache.get(&grammar_name).cloned() {
-                            println!(
-                                "DEBUG MatchPlusRule: found compiled code, entry points: {:?}",
-                                compiled_code.rule_entry_points.keys().collect::<Vec<_>>()
-                            );
-                            if let Some(entry_point) = compiled_code.get_rule_entry(&rule_name_smol)
-                            {
-                                println!(
-                                    "DEBUG MatchPlusRule: found entry point for '{}' at {:?}",
-                                    rule_name_smol, entry_point
-                                );
+                            println!("DEBUG MatchPlusRule: found compiled code, entry points: {:?}", compiled_code.rule_entry_points.keys().collect::<Vec<_>>());
+                            if let Some(entry_point) = compiled_code.get_rule_entry(&rule_name_smol) {
+                                println!("DEBUG MatchPlusRule: found entry point for '{}' at {:?}", rule_name_smol, entry_point);
                                 Some((compiled_code, entry_point))
                             } else {
-                                println!(
-                                    "DEBUG MatchPlusRule: NO entry point for '{}'",
-                                    rule_name_smol
-                                );
+                                println!("DEBUG MatchPlusRule: NO entry point for '{}'", rule_name_smol);
                                 None
                             }
                         } else {
@@ -2067,10 +2142,7 @@ impl Vm {
                         None
                     };
 
-                    println!(
-                        "DEBUG MatchPlusRule: helper_input={}",
-                        helper_input.is_some()
-                    );
+                    println!("DEBUG MatchPlusRule: helper_input={}", helper_input.is_some());
 
                     // Call helper (sets result in frame)
                     match helper_input {
@@ -2081,7 +2153,7 @@ impl Vm {
                                 compiled_code,
                                 entry_point,
                                 initial_position,
-                                false, // Changed from true to false
+                                false,  // Changed from true to false
                             );
                             match result {
                                 Ok(()) => {}
@@ -2171,10 +2243,7 @@ impl Vm {
                 }
 
                 Instruction::MatchAction { pattern, action } => {
-                    eprintln!(
-                        "DEBUG MatchAction: ip={}, pattern={:?}, action={:?}",
-                        frame.ip, pattern, action
-                    );
+                    eprintln!("DEBUG MatchAction: ip={}, pattern={:?}, action={:?}", frame.ip, pattern, action);
                     // Execute pattern, then execute action expression.
                     // The action expression produces the final result.
                     // If pattern failed (returned Null), the MatchAction should also fail (return Null).
@@ -2205,11 +2274,7 @@ impl Vm {
                 Instruction::MatchList { patterns, rest } => {
                     // Match a list against element patterns.
                     // Execute each pattern instruction against the corresponding element.
-                    let input_val = frame
-                        .parse_state
-                        .input()
-                        .cloned()
-                        .unwrap_or_else(|| Value::Null);
+                    let input_val = frame.parse_state.input().cloned().unwrap_or_else(|| Value::Null);
 
                     // Check if input is a list
                     let (is_list, input_list) = match &input_val {
@@ -2235,14 +2300,14 @@ impl Vm {
                         else {
                             // Save the current input
                             let saved_input = frame.parse_state.input().cloned();
-                            let saved_pos = frame.parse_state.input_pos();
+                            let saved_pos = frame.parse_state.input_pos;
 
                             // Execute each pattern against the corresponding element
                             let mut all_matched = true;
                             for (i, pattern_idx) in patterns.iter().enumerate() {
                                 // Set the current element as the input for this pattern
                                 frame.parse_state.set_input(input_list[i].clone());
-                                frame.parse_state.set_input_pos(Some(0));
+                                frame.parse_state.input_pos = Some(0);
 
                                 // Get the pattern instruction and execute it
                                 let instruction = frame.code.instructions[pattern_idx.0].clone();
@@ -2270,11 +2335,8 @@ impl Vm {
 
                                             // If there's a variable name, bind the value to it
                                             if let Some(var_name_idx) = var_name_idx {
-                                                let var_name =
-                                                    frame.code.get_constant(*var_name_idx);
-                                                frame
-                                                    .locals
-                                                    .insert(var_name.clone(), value.clone());
+                                                let var_name = frame.code.get_constant(*var_name_idx);
+                                                frame.locals.insert(var_name.clone(), value.clone());
                                             }
                                         }
 
@@ -2289,10 +2351,7 @@ impl Vm {
                                     Instruction::MatchAny => {
                                         // Always matches, no binding
                                     }
-                                    Instruction::MatchListWithBindings {
-                                        patterns: inner_patterns,
-                                        rest: inner_rest,
-                                    } => {
+                                    Instruction::MatchListWithBindings { patterns: inner_patterns, rest: inner_rest } => {
                                         // Inline MatchListWithBindings for nested list patterns
                                         let element = &input_list[i];
                                         let Value::List(inner_list) = element else {
@@ -2307,9 +2366,7 @@ impl Vm {
                                         if inner_rest.is_none() && inner_len != inner_patterns_len {
                                             all_matched = false;
                                             break;
-                                        } else if inner_rest.is_some()
-                                            && inner_len < inner_patterns_len
-                                        {
+                                        } else if inner_rest.is_some() && inner_len < inner_patterns_len {
                                             all_matched = false;
                                             break;
                                         }
@@ -2317,24 +2374,15 @@ impl Vm {
                                         // Bind variables
                                         for (j, var_name_opt) in inner_patterns.iter().enumerate() {
                                             if let Some(var_name_idx) = var_name_opt {
-                                                let var_name =
-                                                    frame.code.get_constant(*var_name_idx);
-                                                frame.locals.insert(
-                                                    var_name.clone(),
-                                                    inner_list[j].clone(),
-                                                );
+                                                let var_name = frame.code.get_constant(*var_name_idx);
+                                                frame.locals.insert(var_name.clone(), inner_list[j].clone());
                                             }
                                         }
 
                                         if let Some(inner_rest_idx) = inner_rest {
-                                            let rest_name =
-                                                frame.code.get_constant(*inner_rest_idx);
-                                            let rest_elements: Vec<Value> =
-                                                inner_list[inner_patterns_len..].to_vec();
-                                            frame.locals.insert(
-                                                rest_name.clone(),
-                                                Value::List(Arc::new(rest_elements)),
-                                            );
+                                            let rest_name = frame.code.get_constant(*inner_rest_idx);
+                                            let rest_elements: Vec<Value> = inner_list[inner_patterns_len..].to_vec();
+                                            frame.locals.insert(rest_name.clone(), Value::List(Arc::new(rest_elements)));
                                         }
                                     }
                                     _ => {
@@ -2345,10 +2393,8 @@ impl Vm {
                             }
 
                             // Restore the original input
-                            frame
-                                .parse_state
-                                .set_input(saved_input.unwrap_or(Value::Null));
-                            frame.parse_state.set_input_pos(saved_pos);
+                            frame.parse_state.input_value = saved_input;
+                            frame.parse_state.input_pos = saved_pos;
 
                             if all_matched {
                                 frame.set_current(input_val);
@@ -2362,11 +2408,7 @@ impl Vm {
                 Instruction::MatchListWithBindings { patterns, rest } => {
                     // Match a list against element patterns and bind variables.
                     // This instruction doesn't execute pattern instructions - it just binds variables.
-                    let input_val = frame
-                        .parse_state
-                        .input()
-                        .cloned()
-                        .unwrap_or_else(|| Value::Null);
+                    let input_val = frame.parse_state.input().cloned().unwrap_or_else(|| Value::Null);
 
                     // Check if input is a list
                     let (is_list, input_list) = match &input_val {
@@ -2402,10 +2444,7 @@ impl Vm {
                             if let Some(rest_idx) = rest {
                                 let rest_name = frame.code.get_constant(rest_idx);
                                 let rest_elements: Vec<Value> = input_list[patterns_len..].to_vec();
-                                frame.locals.insert(
-                                    rest_name.clone(),
-                                    Value::List(Arc::new(rest_elements)),
-                                );
+                                frame.locals.insert(rest_name.clone(), Value::List(Arc::new(rest_elements)));
                             }
 
                             frame.set_current(input_val);
@@ -2416,11 +2455,7 @@ impl Vm {
                 Instruction::MatchMap { entries } => {
                     // Match a map against key-value patterns.
                     // Get the input value from parse_state
-                    let input_val = frame
-                        .parse_state
-                        .input()
-                        .cloned()
-                        .unwrap_or_else(|| Value::Null);
+                    let input_val = frame.parse_state.input().cloned().unwrap_or_else(|| Value::Null);
 
                     // Check if input is a map
                     let Value::Map(ref input_map) = input_val else {
@@ -2457,11 +2492,7 @@ impl Vm {
                 Instruction::MatchMapNested { entries } => {
                     // Match a map with nested bindings (e.g., `%{outer: %{inner: x}}`)
                     // Get the input value from parse_state
-                    let input_val = frame
-                        .parse_state
-                        .input()
-                        .cloned()
-                        .unwrap_or_else(|| Value::Null);
+                    let input_val = frame.parse_state.input().cloned().unwrap_or_else(|| Value::Null);
 
                     // Check if input is a map
                     let Value::Map(ref _input_map) = input_val else {
@@ -2480,15 +2511,17 @@ impl Vm {
 
                         for key in path {
                             match current {
-                                Value::Map(map) => match map.get(key.as_str()) {
-                                    Some(v) => {
-                                        current = v;
+                                Value::Map(map) => {
+                                    match map.get(key.as_str()) {
+                                        Some(v) => {
+                                            current = v;
+                                        }
+                                        None => {
+                                            all_keys_found = false;
+                                            break;
+                                        }
                                     }
-                                    None => {
-                                        all_keys_found = false;
-                                        break;
-                                    }
-                                },
+                                }
                                 _ => {
                                     all_keys_found = false;
                                     break;
@@ -2515,17 +2548,13 @@ impl Vm {
                     let rule_name = frame.code.get_constant(rule_idx);
 
                     // Check memoization first (using position + rule name as key)
-                    let memo_key =
-                        SmolStr::from(format!("{}@{}", rule_name, frame.parse_state.position()));
+                    let memo_key = SmolStr::from(format!("{}@{}", rule_name, frame.parse_state.position()));
                     if let Some(entry) = frame.parse_state.get_memo(&memo_key) {
                         match entry {
                             MemoEntry::InProgress => {
                                 return Err(Error::ParseFailed {
                                     position: frame.parse_state.position(),
-                                    message: format!(
-                                        "ApplyRule: left recursion detected in rule '{}'",
-                                        rule_name
-                                    ),
+                                    message: format!("ApplyRule: left recursion detected in rule '{}'", rule_name),
                                 });
                             }
                             MemoEntry::Done(Some(value), _end_pos) => {
@@ -2534,14 +2563,11 @@ impl Vm {
                             MemoEntry::Done(None, _end_pos) => {
                                 return Err(Error::ParseFailed {
                                     position: frame.parse_state.position(),
-                                    message: format!(
-                                        "ApplyRule: rule '{}' failed (cached)",
-                                        rule_name
-                                    ),
+                                    message: format!("ApplyRule: rule '{}' failed (cached)", rule_name),
                                 });
                             }
                         }
-                    } else if let Some(grammar) = frame.parse_state.grammar() {
+                    } else if let Some(grammar) = &frame.parse_state.grammar {
                         // Check if the grammar has this rule
                         if !grammar.rules.contains_key(&rule_name) {
                             let pos = frame.parse_state.position();
@@ -2557,9 +2583,7 @@ impl Vm {
                         let parse_state_clone = frame.parse_state.clone();
 
                         // Mark in-progress for memoization
-                        frame
-                            .parse_state
-                            .set_memo(memo_key.clone(), MemoEntry::InProgress);
+                        frame.parse_state.set_memo(memo_key.clone(), MemoEntry::InProgress);
 
                         // Get compiled code from cache (via Arc<Mutex<>>)
                         let compiled_code = {
@@ -2572,10 +2596,7 @@ impl Vm {
                             None => {
                                 return Err(Error::ParseFailed {
                                     position: current_pos,
-                                    message: format!(
-                                        "ApplyRule: grammar '{}' not compiled (should have been loaded)",
-                                        grammar_name
-                                    ),
+                                    message: format!("ApplyRule: grammar '{}' not compiled (should have been loaded)", grammar_name),
                                 });
                             }
                         };
@@ -2586,10 +2607,7 @@ impl Vm {
                             None => {
                                 return Err(Error::ParseFailed {
                                     position: current_pos,
-                                    message: format!(
-                                        "ApplyRule: rule '{}' not found in compiled grammar",
-                                        rule_name
-                                    ),
+                                    message: format!("ApplyRule: rule '{}' not found in compiled grammar", rule_name),
                                 });
                             }
                         };
@@ -2653,10 +2671,7 @@ impl Vm {
         initial_position: usize,
         require_at_least_one: bool,
     ) -> Result<()> {
-        println!(
-            "DEBUG match_rule_repeatedly: START rule='{}', entry_point={:?}",
-            rule_name, entry_point
-        );
+        println!("DEBUG match_rule_repeatedly: START rule='{}', entry_point={:?}", rule_name, entry_point);
         let mut results = Vec::new();
 
         loop {
@@ -2679,39 +2694,26 @@ impl Vm {
                             // Cached result found - use it and continue loop from new position
                             // GUARD: Break on zero-length match to prevent infinite loop
                             if end_pos == pos {
-                                println!(
-                                    "DEBUG match_rule_repeatedly: ZERO-LENGTH match at pos={}, breaking to prevent infinite loop",
-                                    pos
-                                );
+                                println!("DEBUG match_rule_repeatedly: ZERO-LENGTH match at pos={}, breaking to prevent infinite loop", pos);
                                 break;
                             }
                             // Update parse state to cached end position
-                            println!(
-                                "DEBUG match_rule_repeatedly: cache HIT for '{}' at pos={}, value={:?}",
-                                rule_name, pos, value
-                            );
+                            println!("DEBUG match_rule_repeatedly: cache HIT for '{}' at pos={}, value={:?}", rule_name, pos, value);
                             f.parse_state.advance(end_pos - f.parse_state.position());
                             results.push(value);
-                            (key, f.parse_state.clone(), Some(true)) // true = success
+                            (key, f.parse_state.clone(), Some(true))  // true = success
                         }
                         MemoEntry::Done(None, _) => {
                             // Cached failure - stop loop
-                            println!(
-                                "DEBUG match_rule_repeatedly: cache FAIL for '{}' at pos={}",
-                                rule_name, pos
-                            );
-                            (key, f.parse_state.clone(), Some(false)) // false = failure
+                            println!("DEBUG match_rule_repeatedly: cache FAIL for '{}' at pos={}", rule_name, pos);
+                            (key, f.parse_state.clone(), Some(false))  // false = failure
                         }
                     }
                 } else {
                     // No cache entry - need to execute
-                    println!(
-                        "DEBUG match_rule_repeatedly: NO cache for '{}' at pos={}, marking in-progress",
-                        rule_name,
-                        f.parse_state.position()
-                    );
+                    println!("DEBUG match_rule_repeatedly: NO cache for '{}' at pos={}, marking in-progress", rule_name, f.parse_state.position());
                     f.parse_state.set_memo(key.clone(), MemoEntry::InProgress);
-                    (key, f.parse_state.clone(), None) // None = need to execute
+                    (key, f.parse_state.clone(), None)  // None = need to execute
                 }
             };
 
@@ -2738,10 +2740,7 @@ impl Vm {
                     rule_frame.ip = entry_point.0;
                     self.frames.push(rule_frame);
 
-                    println!(
-                        "DEBUG match_rule_repeatedly: calling rule '{}' at position {}",
-                        rule_name_debug, restore_position
-                    );
+                    println!("DEBUG match_rule_repeatedly: calling rule '{}' at position {}", rule_name_debug, restore_position);
 
                     // Execute until frame returns
                     let base_depth = self.frames.len() - 1;
@@ -2755,39 +2754,28 @@ impl Vm {
                         (val, pos)
                     };
 
-                    println!(
-                        "DEBUG match_rule_repeatedly: rule '{}' returned {:?} at position {}",
-                        rule_name_debug, value, end_pos
-                    );
+                    println!("DEBUG match_rule_repeatedly: rule '{}' returned {:?} at position {}", rule_name_debug, value, end_pos);
 
                     match execute_result {
                         Ok(()) => {
                             // Success - store in memo and continue
                             // GUARD: Break on zero-length match to prevent infinite loop
                             if end_pos == restore_position {
-                                println!(
-                                    "DEBUG match_rule_repeatedly: ZERO-LENGTH match at pos={}, breaking to prevent infinite loop",
-                                    restore_position
-                                );
+                                println!("DEBUG match_rule_repeatedly: ZERO-LENGTH match at pos={}, breaking to prevent infinite loop", restore_position);
                                 let f = self.frames.last_mut().unwrap();
-                                f.parse_state.set_memo(
-                                    memo_key,
-                                    MemoEntry::Done(Some(value.clone()), end_pos),
-                                );
+                                f.parse_state.set_memo(memo_key, MemoEntry::Done(Some(value.clone()), end_pos));
                                 results.push(value);
                                 break;
                             }
                             let f = self.frames.last_mut().unwrap();
-                            f.parse_state
-                                .set_memo(memo_key, MemoEntry::Done(Some(value.clone()), end_pos));
+                            f.parse_state.set_memo(memo_key, MemoEntry::Done(Some(value.clone()), end_pos));
                             results.push(value);
                             // Continue loop to check for more matches
                         }
                         Err(Error::ParseFailed { .. }) => {
                             // Failure - store memo and stop loop
                             let f = self.frames.last_mut().unwrap();
-                            f.parse_state
-                                .set_memo(memo_key, MemoEntry::Done(None, restore_position));
+                            f.parse_state.set_memo(memo_key, MemoEntry::Done(None, restore_position));
                             break;
                         }
                         Err(e) => return Err(e),
@@ -2799,10 +2787,7 @@ impl Vm {
         if require_at_least_one && results.is_empty() {
             return Err(Error::ParseFailed {
                 position: initial_position,
-                message: format!(
-                    "rule '{}' failed to match (required at least one)",
-                    rule_name
-                ),
+                message: format!("rule '{}' failed to match (required at least one)", rule_name),
             });
         }
 
@@ -2920,8 +2905,7 @@ impl Vm {
 
         // Check frame locals first (includes captures and parameters)
         if let Some(frame) = self.frames.last()
-            && let Some(val) = frame.locals.get(name)
-        {
+            && let Some(val) = frame.locals.get(name) {
             return Ok(val.clone());
         }
 
@@ -2938,10 +2922,9 @@ impl Vm {
 
         // Check for constructor syntax (^name or @name)
         if name.starts_with('^')
-            && let Some(id) = self.objects.lock().unwrap().lookup_name(&name[1..])
-        {
-            return Ok(Value::Object(id));
-        }
+            && let Some(id) = self.objects.lock().unwrap().lookup_name(&name[1..]) {
+                return Ok(Value::Object(id));
+            }
 
         Err(Error::UndefinedVariable(name.to_string()))
     }
@@ -2972,13 +2955,7 @@ impl Vm {
                 self.frames.push(frame);
             }
             Value::Object(id) => {
-                if self
-                    .objects
-                    .lock()
-                    .unwrap()
-                    .get_method(id, "call")
-                    .is_some()
-                {
+                if self.objects.lock().unwrap().get_method(id, "call").is_some() {
                     self.call_method(Value::Object(id), "call", args)?;
                 } else {
                     return Err(Error::Runtime("object is not callable".to_string()));
@@ -3065,9 +3042,7 @@ impl Vm {
                     exec_result.map(|_| Value::Null).map_err(|e| e)
                 }
             }
-            _ => Err(Error::Runtime(
-                "execute_lambda_with_state requires lambda argument".to_string(),
-            )),
+            _ => Err(Error::Runtime("execute_lambda_with_state requires lambda argument".to_string())),
         }
     }
 
@@ -3116,10 +3091,9 @@ impl Vm {
                     Some(Value::String(s)) => s.as_str(),
                     _ => return Err(Error::Runtime("curl.get requires string URL".to_string())),
                 };
-                let handle = self
-                    .runtime
-                    .as_ref()
-                    .ok_or_else(|| Error::Runtime("curl requires runtime handle".to_string()))?;
+                let handle = self.runtime.as_ref().ok_or_else(|| {
+                    Error::Runtime("curl requires runtime handle".to_string())
+                })?;
                 // Optional third argument: options map with headers
                 let options = args.get(2);
                 crate::builtins::CurlBuiltin::get(url, handle, options)
@@ -3133,10 +3107,9 @@ impl Vm {
                     Some(Value::String(s)) => s.as_str(),
                     _ => return Err(Error::Runtime("curl.post requires string body".to_string())),
                 };
-                let handle = self
-                    .runtime
-                    .as_ref()
-                    .ok_or_else(|| Error::Runtime("curl requires runtime handle".to_string()))?;
+                let handle = self.runtime.as_ref().ok_or_else(|| {
+                    Error::Runtime("curl requires runtime handle".to_string())
+                })?;
                 // Optional fourth argument: options map with headers
                 let options = args.get(3);
                 crate::builtins::CurlBuiltin::post(url, body, handle, options)
@@ -3170,14 +3143,9 @@ impl Vm {
                         return Ok(Value::Map(std::sync::Arc::new(
                             vec![
                                 ("error".into(), Value::String("invalid_args".into())),
-                                (
-                                    "message".into(),
-                                    Value::String("json::parse requires string argument".into()),
-                                ),
-                            ]
-                            .into_iter()
-                            .collect(),
-                        )));
+                                ("message".into(), Value::String("json::parse requires string argument".into()))
+                            ].into_iter().collect()
+                        )))
                     }
                 };
                 match serde_json::from_str::<serde_json::Value>(json_str) {
@@ -3185,10 +3153,8 @@ impl Vm {
                     Err(e) => Ok(Value::Map(std::sync::Arc::new(
                         vec![
                             ("error".into(), Value::String("invalid_json".into())),
-                            ("message".into(), Value::String(e.to_string().into())),
-                        ]
-                        .into_iter()
-                        .collect(),
+                            ("message".into(), Value::String(e.to_string().into()))
+                        ].into_iter().collect()
                     ))),
                 }
             }
@@ -3197,15 +3163,8 @@ impl Vm {
                     return Ok(Value::Map(std::sync::Arc::new(
                         vec![
                             ("error".into(), Value::String("invalid_args".into())),
-                            (
-                                "message".into(),
-                                Value::String(
-                                    "json::stringify requires at least one argument".into(),
-                                ),
-                            ),
-                        ]
-                        .into_iter()
-                        .collect(),
+                            ("message".into(), Value::String("json::stringify requires at least one argument".into()))
+                        ].into_iter().collect()
                     )));
                 }
                 let value = &args[0];
@@ -3215,979 +3174,12 @@ impl Vm {
                     Err(e) => Ok(Value::Map(std::sync::Arc::new(
                         vec![
                             ("error".into(), Value::String("stringify_failed".into())),
-                            ("message".into(), Value::String(e.to_string().into())),
-                        ]
-                        .into_iter()
-                        .collect(),
+                            ("message".into(), Value::String(e.to_string().into()))
+                        ].into_iter().collect()
                     ))),
                 }
             }
             ("__builtin_sse", "parse") => {
                 let text = match args.first() {
                     Some(Value::String(s)) => s.as_str(),
-                    _ => {
-                        return Err(Error::Runtime(
-                            "sse.parse requires string argument".to_string(),
-                        ));
-                    }
-                };
-                crate::builtins::SseBuiltin::parse(text)
-            }
-            ("__builtin_tuplespace", "new") => {
-                if !args.is_empty() {
-                    return Err(Error::Runtime(
-                        "tuplespace.new() takes no arguments".to_string(),
-                    ));
-                }
-                use crate::tuplespace::store::TupleSpace;
-                let space = TupleSpace::new();
-                Ok(Value::TupleSpace(Arc::new(std::sync::Mutex::new(space))))
-            }
-            ("__builtin_time", "sleep") => {
-                let ms = match args.first() {
-                    Some(Value::Int(n)) => *n,
-                    _ => {
-                        return Err(Error::Runtime(
-                            "time.sleep requires integer argument (milliseconds)".to_string(),
-                        ));
-                    }
-                };
-                crate::builtins::TimeBuiltin::sleep(ms)
-            }
-            ("__builtin_rand", "int") => {
-                let min = match args.first() {
-                    Some(Value::Int(n)) => *n,
-                    _ => {
-                        return Err(Error::Runtime(
-                            "rand.int requires integer arguments (min, max)".to_string(),
-                        ));
-                    }
-                };
-                let max = match args.get(1) {
-                    Some(Value::Int(n)) => *n,
-                    _ => {
-                        return Err(Error::Runtime(
-                            "rand.int requires integer arguments (min, max)".to_string(),
-                        ));
-                    }
-                };
-                crate::builtins::RandBuiltin::int(min, max)
-            }
-            ("__builtin_rand", "float") => crate::builtins::RandBuiltin::float(),
-            ("__builtin_stream", "observe") => {
-                // observe(collection_or_stream_or_cursor, branch_id?) -> Cursor
-                // Creates a cursor reference to any collection, stream, or existing cursor
-                // Lists and other collections are automatically wrapped in a stream
-                let (stream_value, branch_id) = match args.as_slice() {
-                    [Value::Stream(s)] => (Value::Stream(Arc::clone(s)), SmolStr::new("main")),
-                    [Value::Stream(s), Value::String(branch)] => {
-                        (Value::Stream(Arc::clone(s)), branch.clone())
-                    }
-                    [Value::Cursor(c)] => {
-                        (Value::Stream(Arc::clone(&c.stream)), c.branch_id.clone())
-                    }
-                    [Value::Cursor(c), Value::String(branch)] => {
-                        (Value::Stream(Arc::clone(&c.stream)), branch.clone())
-                    }
-                    [Value::List(_), Value::String(branch)] => (args[0].clone(), branch.clone()),
-                    [Value::List(_)] => (args[0].clone(), SmolStr::new("main")),
-                    [Value::String(_), Value::String(branch)] => (args[0].clone(), branch.clone()),
-                    [Value::String(_)] => (args[0].clone(), SmolStr::new("main")),
-                    [val] => (val.clone(), SmolStr::new("main")),
-                    [val, Value::String(branch)] => (val.clone(), branch.clone()),
-                    _ => {
-                        return Err(Error::Runtime(
-                            "observe() requires a value (list, string, stream, or cursor)"
-                                .to_string(),
-                        ));
-                    }
-                };
-
-                // Convert non-stream values to streams
-                let stream_arg = match stream_value {
-                    Value::Stream(s) => s,
-                    Value::List(items) => Arc::new(Stream {
-                        source: Value::List(items),
-                        ops: Vec::new(),
-                    }),
-                    Value::String(s) => Arc::new(Stream {
-                        source: Value::String(s),
-                        ops: Vec::new(),
-                    }),
-                    other => Arc::new(Stream {
-                        source: other,
-                        ops: Vec::new(),
-                    }),
-                };
-
-                // Create cursor at start position
-                let cursor = Cursor {
-                    stream: stream_arg,
-                    position: CursorPosition::start(),
-                    branch_id,
-                };
-
-                Ok(Value::Cursor(Arc::new(cursor)))
-            }
-            ("__builtin_cursor", "advance") => {
-                // cursor.advance(n) -> Cursor
-                // Advance cursor by n positions in the stream
-                let (cursor, n) = match args.as_slice() {
-                    [Value::Cursor(c), Value::Int(n)] => (c, *n as usize),
-                    _ => {
-                        return Err(Error::Runtime(
-                            "cursor.advance(cursor, n) requires cursor and integer".to_string(),
-                        ));
-                    }
-                };
-
-                let advanced = cursor.advance(n);
-                Ok(Value::Cursor(Arc::new(advanced)))
-            }
-            ("__builtin_cursor", "rewind") => {
-                // cursor.rewind(n) -> Cursor
-                // Rewind cursor by n positions
-                let (cursor, n) = match args.as_slice() {
-                    [Value::Cursor(c), Value::Int(n)] => (c, *n as usize),
-                    _ => {
-                        return Err(Error::Runtime(
-                            "cursor.rewind(cursor, n) requires cursor and integer".to_string(),
-                        ));
-                    }
-                };
-
-                let rewound = cursor.rewind(n);
-                Ok(Value::Cursor(Arc::new(rewound)))
-            }
-            ("__builtin_cursor", "position") => {
-                // cursor.position() -> Int
-                // Get current position index
-                let cursor = match args.first() {
-                    Some(Value::Cursor(c)) => c,
-                    _ => {
-                        return Err(Error::Runtime(
-                            "cursor.position() requires cursor argument".to_string(),
-                        ));
-                    }
-                };
-
-                Ok(cursor.get_position())
-            }
-            ("__builtin_cursor", "current") => {
-                // cursor.current() -> Value
-                // Get the current element at the cursor's position
-                let cursor = match args.first() {
-                    Some(Value::Cursor(c)) => c,
-                    _ => {
-                        return Err(Error::Runtime(
-                            "cursor.current() requires cursor argument".to_string(),
-                        ));
-                    }
-                };
-
-                // Get the current element from the stream's source at the cursor's position
-                let pos = cursor.position.index;
-                match &cursor.stream.source {
-                    Value::List(items) => {
-                        if pos < items.len() {
-                            Ok(items[pos].clone())
-                        } else {
-                            Ok(Value::Null) // Past end of stream
-                        }
-                    }
-                    Value::String(s) => {
-                        if pos < s.len() {
-                            Ok(Value::String(s[pos..pos + 1].into()))
-                        } else {
-                            Ok(Value::Null)
-                        }
-                    }
-                    _ => Ok(Value::Null), // Non-indexable stream, return null
-                }
-            }
-            ("__builtin_stream", "create") => {
-                // stream.create(lambda) -> AsyncStream
-                // Creates an async stream from a generator lambda.
-                //
-                // The lambda is executed asynchronously and its return value
-                // becomes the stream's result. For multi-value streams, use
-                // await_all on a list of streams.
-                //
-                // Usage:
-                //   let stream = stream.create(\{
-                //     -- async computation
-                //     42
-                //   })
-
-                let handle = self.runtime.as_ref().ok_or_else(|| {
-                    Error::Runtime("stream.create requires runtime handle - use Vm::with_runtime() or run in async context".to_string())
-                })?;
-
-                let lambda = match args.first() {
-                    Some(Value::Lambda(lambda)) => lambda.clone(),
-                    Some(other) => {
-                        return Err(Error::Runtime(format!(
-                            "stream.create requires lambda argument, got {}",
-                            other.type_name()
-                        )));
-                    }
-                    None => {
-                        return Err(Error::Runtime(
-                            "stream.create requires lambda argument".to_string(),
-                        ));
-                    }
-                };
-
-                use crate::stream::{StreamHandle, StreamSource, next_id};
-                use tokio::sync::mpsc;
-
-                let (tx, rx) = mpsc::channel(1); // Bounded channel for backpressure
-
-                // Clone shared state for the async task
-                let objects = self.objects.clone();
-                let grammars = self.grammars.clone();
-
-                // Spawn a task to execute the lambda
-                handle.spawn(async move {
-                    // Execute the lambda asynchronously with shared VM state
-                    Self::execute_lambda_async(Value::Lambda(lambda), objects, grammars, tx).await;
-                });
-
-                let stream = StreamHandle::with_source(rx, next_id(), StreamSource::Ephemeral);
-
-                Ok(Value::AsyncStream(Arc::new(std::sync::Mutex::new(stream))))
-            }
-            ("__builtin_stream", "sink") => {
-                // stream.sink() -> Sink
-                // Creates a sink handle for sending values asynchronously.
-                //
-                // Usage:
-                //   let sink = stream.sink()
-                //   sink.send(42)  -- TODO: need send method
-                //
-                // Returns a Value::Sink that can be used to send values
-
-                use crate::stream::{SinkHandle, next_id};
-                use tokio::sync::mpsc;
-
-                let (tx, _rx) = mpsc::channel(100); // Buffer size 100 for backpressure
-                let sink = SinkHandle::new(tx, next_id());
-
-                Ok(Value::Sink(Arc::new(sink)))
-            }
-            _ => Err(Error::Runtime(format!(
-                "unknown builtin: {}.{}",
-                object, method
-            ))),
-        }
-    }
-
-    /// Convert a Value to a TuplePattern for tuple matching.
-    fn value_to_tuple_pattern(value: &Value) -> Result<crate::tuplespace::TuplePattern> {
-        use crate::tuplespace::{Pattern, TuplePattern};
-        use std::collections::HashMap;
-
-        Ok(match value {
-            // Symbol type-only match: :log becomes Symbol("log") in AST
-            // Treat any Symbol as a keyword type pattern
-            Value::Symbol(type_name) => TuplePattern::TypeAndData {
-                type_name: type_name.clone(),
-                data: Pattern::Wildcard,
-            },
-            // String type-only match
-            Value::String(type_name) => TuplePattern::TypeAndData {
-                type_name: type_name.clone(),
-                data: Pattern::Wildcard,
-            },
-            // Map pattern: %{type: "log", data: %{...}}
-            Value::Map(map) => {
-                let type_name = match map.get("type") {
-                    Some(Value::String(s)) => s.clone(),
-                    Some(Value::Symbol(s)) => s.clone(),
-                    other => {
-                        return Err(Error::Runtime(format!(
-                            "pattern type must be a string or keyword, got {:?}",
-                            other
-                        )));
-                    }
-                };
-
-                // Check for namespace in pattern
-                if let Some(namespace_value) = map.get("namespace") {
-                    let namespace = match namespace_value {
-                        Value::String(s) => s.clone(),
-                        Value::Symbol(s) => s.clone(),
-                        other => {
-                            return Err(Error::Runtime(format!(
-                                "pattern namespace must be a string or keyword, got {:?}",
-                                other
-                            )));
-                        }
-                    };
-
-                    // Extract data pattern if provided
-                    let data_pattern = match map.get("data") {
-                        None => Pattern::Wildcard,
-                        Some(Value::Map(data_map)) => {
-                            let mut required = HashMap::new();
-                            for (k, v) in data_map.iter() {
-                                required.insert(k.clone(), v.clone());
-                            }
-                            Pattern::Map { required }
-                        }
-                        Some(other) => Pattern::Exact(other.clone()),
-                    };
-
-                    TuplePattern::Full {
-                        namespace,
-                        type_name,
-                        data: data_pattern,
-                    }
-                } else {
-                    // No namespace, use TypeAndData
-                    let data_pattern = match map.get("data") {
-                        None => Pattern::Wildcard,
-                        Some(Value::Map(data_map)) => {
-                            let mut required = HashMap::new();
-                            for (k, v) in data_map.iter() {
-                                required.insert(k.clone(), v.clone());
-                            }
-                            Pattern::Map { required }
-                        }
-                        Some(other) => Pattern::Exact(other.clone()),
-                    };
-
-                    TuplePattern::TypeAndData {
-                        type_name,
-                        data: data_pattern,
-                    }
-                }
-            }
-            other => {
-                return Err(Error::Runtime(format!(
-                    "invalid pattern: expected symbol or map, got {}",
-                    other.type_name()
-                )));
-            }
-        })
-    }
-
-    /// Convert a Tuple to a Value map representation.
-    fn tuple_to_value(tuple: crate::tuplespace::Tuple) -> Value {
-        use std::collections::HashMap;
-        use std::sync::Arc;
-
-        let mut map = HashMap::new();
-        map.insert(SmolStr::new("type"), Value::String(tuple.type_name));
-        if let Some(ns) = tuple.namespace {
-            map.insert(SmolStr::new("namespace"), Value::String(ns));
-        }
-        map.insert(
-            SmolStr::new("timestamp"),
-            Value::Int(tuple.timestamp as i64),
-        );
-        map.insert(SmolStr::new("seq"), Value::Int(tuple.seq as i64));
-        map.insert(SmolStr::new("data"), tuple.data);
-        Value::Map(Arc::new(map))
-    }
-
-    fn call_method(&mut self, receiver: Value, name: &str, args: Vec<Value>) -> Result<()> {
-        match receiver {
-            Value::Symbol(ref s) if s.starts_with("__builtin_") => {
-                let result = self.call_builtin(s.as_str(), name, args)?;
-                let frame = self.frames.last_mut().unwrap();
-                frame.set_current(result);
-                return Ok(());
-            }
-            Value::Object(id) => {
-                if let Some(method) = self.objects.lock().unwrap().get_method(id, name).cloned() {
-                    let mut frame = Frame::new(method.code);
-                    frame.this = Some(id);
-
-                    // Bind arguments
-                    for (i, val) in args.into_iter().enumerate() {
-                        if i < method.params.len() {
-                            frame.locals.insert(method.params[i].clone(), val);
-                        }
-                    }
-
-                    self.frames.push(frame);
-                } else {
-                    return Err(Error::UndefinedMethod(name.to_string()));
-                }
-            }
-            Value::List(list) => {
-                // Built-in list methods
-                let result = match name {
-                    "len" => Value::Int(list.len() as i64),
-                    "first" => list.first().cloned().unwrap_or(Value::Null),
-                    "last" => list.last().cloned().unwrap_or(Value::Null),
-                    "push" => {
-                        let mut new_list = (*list).clone();
-                        for arg in args {
-                            new_list.push(arg);
-                        }
-                        Value::List(Arc::new(new_list))
-                    }
-                    // TODO: Implement fold, foldr, map, filter as VM-level constructs
-                    // that compile to loops in Indexed RPN bytecode, similar to for..in
-                    "fold" | "foldl" | "foldr" | "map" | "filter" => {
-                        return Err(Error::Runtime(format!(
-                            "{}() is not yet implemented - should compile to VM-level loop",
-                            name
-                        )));
-                    }
-                    _ => return Err(Error::UndefinedMethod(name.to_string())),
-                };
-                let frame = self.frames.last_mut().unwrap();
-                frame.set_current(result);
-            }
-            Value::String(s) => {
-                // Built-in string methods
-                let result = match name {
-                    "len" => Value::Int(s.len() as i64),
-                    "upper" => Value::String(SmolStr::new(s.to_uppercase())),
-                    "lower" => Value::String(SmolStr::new(s.to_lowercase())),
-                    _ => return Err(Error::UndefinedMethod(name.to_string())),
-                };
-                let frame = self.frames.last_mut().unwrap();
-                frame.set_current(result);
-            }
-            Value::TupleSpace(space) => {
-                // Tuple space methods: out, in, rd, inp, rdp, subscribe
-                use crate::tuplespace::Tuple;
-
-                let result = match name {
-                    "out" => {
-                        // out(type_name, data) -> null
-                        if args.len() != 2 {
-                            return Err(Error::Runtime(format!(
-                                "out() expects 2 arguments (type_name, data), got {}",
-                                args.len()
-                            )));
-                        }
-                        let type_name = match &args[0] {
-                            Value::String(s) => s.clone(),
-                            Value::Symbol(s) if s.starts_with(':') => SmolStr::new(&s[1..]),
-                            Value::Symbol(s) => s.clone(),
-                            other => {
-                                return Err(Error::Runtime(format!(
-                                    "out() type_name must be a string or symbol, got {}",
-                                    other.type_name()
-                                )));
-                            }
-                        };
-                        let tuple = Tuple::new(type_name, args[1].clone());
-                        let mut space = space.lock().unwrap();
-                        space.out(tuple)?;
-                        Value::Null
-                    }
-                    "in" | "inp" => {
-                        // in(pattern) -> map | null
-                        // inp(pattern) -> map | null (non-blocking)
-                        if args.len() != 1 {
-                            return Err(Error::Runtime(format!(
-                                "{}() expects 1 argument (pattern), got {}",
-                                name,
-                                args.len()
-                            )));
-                        }
-                        let pattern = Self::value_to_tuple_pattern(&args[0])?;
-                        let mut space = space.lock().unwrap();
-                        let result = if name == "in" {
-                            space.r#in(&pattern)?
-                        } else {
-                            space.inp(&pattern)?.ok_or_else(|| {
-                                Error::Runtime("no matching tuple found".to_string())
-                            })?
-                        };
-                        Self::tuple_to_value(result)
-                    }
-                    "rd" | "rdp" => {
-                        // rd(pattern) -> map | null
-                        // rdp(pattern) -> map | null (non-blocking)
-                        if args.len() != 1 {
-                            return Err(Error::Runtime(format!(
-                                "{}() expects 1 argument (pattern), got {}",
-                                name,
-                                args.len()
-                            )));
-                        }
-                        let pattern = Self::value_to_tuple_pattern(&args[0])?;
-                        let mut space = space.lock().unwrap();
-                        let result = if name == "rd" {
-                            space.rd(&pattern)?
-                        } else {
-                            space.rdp(&pattern)?.ok_or_else(|| {
-                                Error::Runtime("no matching tuple found".to_string())
-                            })?
-                        };
-                        Self::tuple_to_value(result)
-                    }
-                    "namespace" => {
-                        // namespace(name) -> TupleSpaceFacet restricted to namespace
-                        if args.len() != 1 {
-                            return Err(Error::Runtime(format!(
-                                "namespace() expects 1 argument (namespace_name), got {}",
-                                args.len()
-                            )));
-                        }
-                        let namespace = match &args[0] {
-                            Value::String(s) => s.clone(),
-                            Value::Symbol(s) if s.starts_with(':') => SmolStr::new(&s[1..]),
-                            Value::Symbol(s) => s.clone(),
-                            other => {
-                                return Err(Error::Runtime(format!(
-                                    "namespace() argument must be a string or symbol, got {}",
-                                    other.type_name()
-                                )));
-                            }
-                        };
-                        use crate::tuplespace::facet::TupleSpaceFacet;
-                        let facet = TupleSpaceFacet::new(space.clone()).with_namespace(namespace);
-                        Value::TupleSpaceFacet(Arc::new(std::sync::Mutex::new(facet)))
-                    }
-                    "readonly" => {
-                        // readonly() -> TupleSpaceFacet with read-only permissions
-                        if !args.is_empty() {
-                            return Err(Error::Runtime(format!(
-                                "readonly() expects 0 arguments, got {}",
-                                args.len()
-                            )));
-                        }
-                        use crate::tuplespace::facet::TupleSpaceFacet;
-                        let facet = TupleSpaceFacet::new(space.clone()).readonly();
-                        Value::TupleSpaceFacet(Arc::new(std::sync::Mutex::new(facet)))
-                    }
-                    "writeonly" => {
-                        // writeonly() -> TupleSpaceFacet with write-only permissions
-                        if !args.is_empty() {
-                            return Err(Error::Runtime(format!(
-                                "writeonly() expects 0 arguments, got {}",
-                                args.len()
-                            )));
-                        }
-                        use crate::tuplespace::facet::TupleSpaceFacet;
-                        let facet = TupleSpaceFacet::new(space.clone()).writeonly();
-                        Value::TupleSpaceFacet(Arc::new(std::sync::Mutex::new(facet)))
-                    }
-                    _ => return Err(Error::UndefinedMethod(name.to_string())),
-                };
-                let frame = self.frames.last_mut().unwrap();
-                frame.set_current(result);
-            }
-            Value::TupleSpaceFacet(facet) => {
-                // Facet methods: out, in, rd, inp, rdp, namespace, readonly, writeonly
-                let result = match name {
-                    "out" => {
-                        // out(type_name, data) -> null
-                        if args.len() != 2 {
-                            return Err(Error::Runtime(format!(
-                                "out() expects 2 arguments (type_name, data), got {}",
-                                args.len()
-                            )));
-                        }
-                        let type_name = match &args[0] {
-                            Value::String(s) => s.clone(),
-                            Value::Symbol(s) if s.starts_with(':') => SmolStr::new(&s[1..]),
-                            Value::Symbol(s) => s.clone(),
-                            other => {
-                                return Err(Error::Runtime(format!(
-                                    "out() type_name must be a string or symbol, got {}",
-                                    other.type_name()
-                                )));
-                            }
-                        };
-                        let mut facet = facet.lock().unwrap();
-                        facet.out(type_name, args[1].clone())?;
-                        Value::Null
-                    }
-                    "in" | "inp" => {
-                        // in(pattern) -> map | null
-                        // inp(pattern) -> map | null (non-blocking)
-                        if args.len() != 1 {
-                            return Err(Error::Runtime(format!(
-                                "{}() expects 1 argument (pattern), got {}",
-                                name,
-                                args.len()
-                            )));
-                        }
-                        let pattern = Self::value_to_tuple_pattern(&args[0])?;
-                        let mut facet = facet.lock().unwrap();
-                        let result = if name == "in" {
-                            facet.r#in(&pattern)?
-                        } else {
-                            facet.inp(&pattern)?.ok_or_else(|| {
-                                Error::Runtime("no matching tuple found".to_string())
-                            })?
-                        };
-                        Self::tuple_to_value(result)
-                    }
-                    "rd" | "rdp" => {
-                        // rd(pattern) -> map | null
-                        // rdp(pattern) -> map | null (non-blocking)
-                        if args.len() != 1 {
-                            return Err(Error::Runtime(format!(
-                                "{}() expects 1 argument (pattern), got {}",
-                                name,
-                                args.len()
-                            )));
-                        }
-                        let pattern = Self::value_to_tuple_pattern(&args[0])?;
-                        let mut facet = facet.lock().unwrap();
-                        let result = if name == "rd" {
-                            facet.rd(&pattern)?
-                        } else {
-                            facet.rdp(&pattern)?.ok_or_else(|| {
-                                Error::Runtime("no matching tuple found".to_string())
-                            })?
-                        };
-                        Self::tuple_to_value(result)
-                    }
-                    _ => return Err(Error::UndefinedMethod(name.to_string())),
-                };
-                let frame = self.frames.last_mut().unwrap();
-                frame.set_current(result);
-            }
-            _ => {
-                return Err(Error::Type {
-                    expected: "object".to_string(),
-                    got: receiver.type_name().to_string(),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    fn spawn_object(&mut self, constructor: Value, args: Vec<Value>) -> Result<ObjectId> {
-        match constructor {
-            Value::Object(parent_id) => {
-                let id = self.objects.lock().unwrap().create(Some(parent_id));
-
-                // Call init method if it exists on the new object
-                // Clone the method to drop the lock before execute_with_depth
-                let init_method = self.objects.lock().unwrap().get_method(id, "init").cloned();
-                if let Some(method) = init_method {
-                    // Check if argument count matches (or allow empty init)
-                    if args.len() == method.params.len() {
-                        let mut frame = Frame::new(method.code);
-                        frame.this = Some(id);
-
-                        // Bind arguments to parameters
-                        for (i, val) in args.into_iter().enumerate() {
-                            if i < method.params.len() {
-                                frame.locals.insert(method.params[i].clone(), val);
-                            }
-                        }
-
-                        // Execute the init method
-                        let base_depth = self.frames.len();
-                        self.frames.push(frame);
-                        self.execute_with_depth(base_depth)?;
-                    }
-                    // If args don't match params, silently skip (graceful degradation)
-                }
-
-                Ok(id)
-            }
-            _ => Err(Error::Type {
-                expected: "object constructor".to_string(),
-                got: constructor.type_name().to_string(),
-            }),
-        }
-    }
-}
-
-impl Default for Vm {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::eval;
-
-    #[test]
-    fn test_debug_if() {
-        use crate::{Compiler, Lexer, Parser};
-        let source = "if true then 1 else 2";
-        let tokens = Lexer::new(source).tokenize().unwrap();
-        let ast = Parser::with_source(&tokens, source).parse().unwrap();
-        let code = Compiler::new().compile(&ast).unwrap();
-
-        println!("Instructions for '{}':", source);
-        for (i, instr) in code.instructions.iter().enumerate() {
-            println!("  {}: {:?}", i, instr);
-        }
-
-        let mut vm = Vm::new();
-        let result = vm.run(&code).unwrap();
-        println!("Result: {:?}", result);
-        assert_eq!(result, Value::Int(1));
-    }
-
-    #[test]
-    fn test_arithmetic() {
-        let mut vm = Vm::new();
-        assert_eq!(eval(&mut vm, "1 + 2").unwrap(), Value::Int(3));
-        assert_eq!(eval(&mut vm, "10 - 3").unwrap(), Value::Int(7));
-        assert_eq!(eval(&mut vm, "4 * 5").unwrap(), Value::Int(20));
-        assert_eq!(eval(&mut vm, "20 / 4").unwrap(), Value::Int(5));
-    }
-
-    #[test]
-    fn test_comparison() {
-        let mut vm = Vm::new();
-        assert_eq!(eval(&mut vm, "1 < 2").unwrap(), Value::Bool(true));
-        assert_eq!(eval(&mut vm, "1 > 2").unwrap(), Value::Bool(false));
-        assert_eq!(eval(&mut vm, "1 == 1").unwrap(), Value::Bool(true));
-        assert_eq!(eval(&mut vm, "1 != 2").unwrap(), Value::Bool(true));
-    }
-
-    #[test]
-    fn test_if_expr() {
-        let mut vm = Vm::new();
-        assert_eq!(
-            eval(&mut vm, "if true then 1 else 2").unwrap(),
-            Value::Int(1)
-        );
-        assert_eq!(
-            eval(&mut vm, "if false then 1 else 2").unwrap(),
-            Value::Int(2)
-        );
-    }
-
-    #[test]
-    fn test_logical_and() {
-        let mut vm = Vm::new();
-        // true && true -> true
-        assert_eq!(eval(&mut vm, "true && true").unwrap(), Value::Bool(true));
-        // true && false -> false
-        assert_eq!(eval(&mut vm, "true && false").unwrap(), Value::Bool(false));
-        // false && true -> false (short-circuit, second not evaluated)
-        assert_eq!(eval(&mut vm, "false && true").unwrap(), Value::Bool(false));
-        // false && false -> false
-        assert_eq!(eval(&mut vm, "false && false").unwrap(), Value::Bool(false));
-        // With expressions: (1 < 2) && (3 > 1) -> true
-        assert_eq!(eval(&mut vm, "1 < 2 && 3 > 1").unwrap(), Value::Bool(true));
-        // Short-circuit: false && expr that would error
-        assert_eq!(eval(&mut vm, "false && 1/0").unwrap(), Value::Bool(false));
-    }
-
-    #[test]
-    fn test_logical_or() {
-        let mut vm = Vm::new();
-        // true || true -> true (short-circuit, second not evaluated)
-        assert_eq!(eval(&mut vm, "true || true").unwrap(), Value::Bool(true));
-        // true || false -> true (short-circuit)
-        assert_eq!(eval(&mut vm, "true || false").unwrap(), Value::Bool(true));
-        // false || true -> true
-        assert_eq!(eval(&mut vm, "false || true").unwrap(), Value::Bool(true));
-        // false || false -> false
-        assert_eq!(eval(&mut vm, "false || false").unwrap(), Value::Bool(false));
-        // With expressions: (1 > 2) || (3 < 4) -> true
-        assert_eq!(eval(&mut vm, "1 > 2 || 3 < 4").unwrap(), Value::Bool(true));
-        // Short-circuit: true || expr that would error
-        assert_eq!(eval(&mut vm, "true || 1/0").unwrap(), Value::Bool(true));
-    }
-
-    #[test]
-    fn test_mixed_logical_operators() {
-        let mut vm = Vm::new();
-        // AND has higher precedence than OR
-        // true || false && false -> true || (false && false) -> true
-        assert_eq!(
-            eval(&mut vm, "true || false && false").unwrap(),
-            Value::Bool(true)
-        );
-        // (false || false) && true -> false && true -> false
-        assert_eq!(
-            eval(&mut vm, "(false || false) && true").unwrap(),
-            Value::Bool(false)
-        );
-        // Complex: false && true || true && true -> (false && true) || (true && true) -> false || true -> true
-        assert_eq!(
-            eval(&mut vm, "false && true || true && true").unwrap(),
-            Value::Bool(true)
-        );
-    }
-
-    #[test]
-    fn test_let_binding() {
-        let mut vm = Vm::new();
-        assert_eq!(eval(&mut vm, "let (x = 10) x + 5").unwrap(), Value::Int(15));
-        assert_eq!(
-            eval(&mut vm, "let (x = 2, y = 3) x * y").unwrap(),
-            Value::Int(6)
-        );
-    }
-
-    #[test]
-    fn test_list() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "[1, 2, 3]").unwrap();
-        assert!(matches!(result, Value::List(_)));
-    }
-
-    #[test]
-    fn test_map() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "%{foo: 1, bar: 2}").unwrap();
-        assert!(matches!(result, Value::Map(_)));
-    }
-
-    #[test]
-    fn test_string_concat() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, r#""hello" + " " + "world""#).unwrap();
-        assert!(matches!(result, Value::String(s) if s == "hello world"));
-    }
-
-    #[test]
-    fn test_lambda() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "let (f = lambda (x) x + 1) f(5)").unwrap();
-        assert_eq!(result, Value::Int(6));
-    }
-
-    // === Indexed RPN Spec Tests (T-1 through T-13) ===
-
-    /// T-1: Simple Arithmetic - (3 + 4) * 5 = 35
-    #[test]
-    fn test_t1_simple_arithmetic() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "(3 + 4) * 5").unwrap();
-        assert_eq!(result, Value::Int(35));
-    }
-
-    /// T-2: Variable Binding
-    #[test]
-    fn test_t2_variable_binding() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "let (x = 10) let (y = x + 5) y").unwrap();
-        assert_eq!(result, Value::Int(15));
-    }
-
-    /// T-3: Nested Scopes - inner shadows outer
-    #[test]
-    fn test_t3_nested_scopes() {
-        let mut vm = Vm::new();
-        // Note: Current parser doesn't support block syntax with {}
-        // Testing with nested let instead
-        let result = eval(&mut vm, "let (x = 1) let (x = 2) x").unwrap();
-        assert_eq!(result, Value::Int(2));
-    }
-
-    /// T-4: Conditional
-    #[test]
-    fn test_t4_conditional() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "if true then 1 else 2").unwrap();
-        assert_eq!(result, Value::Int(1));
-    }
-
-    /// T-5: Function Call
-    #[test]
-    fn test_t5_function_call() {
-        let mut vm = Vm::new();
-        // Test simple lambda call (spec shows curried, but FMPL uses multi-param)
-        let result = eval(&mut vm, "let (add = lambda (a, b) a + b) add(3, 4)").unwrap();
-        assert_eq!(result, Value::Int(7));
-    }
-
-    /// T-6: Short-Circuit Evaluation
-    #[test]
-    fn test_t6_short_circuit() {
-        let mut vm = Vm::new();
-        // false && (1 / 0) should not error
-        let result = eval(&mut vm, "false && false").unwrap();
-        assert_eq!(result, Value::Bool(false));
-    }
-
-    /// T-7: List Construction
-    #[test]
-    fn test_t7_list_construction() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "[1, 2, 3]").unwrap();
-        match result {
-            Value::List(lst) => {
-                assert_eq!(lst.len(), 3);
-            }
-            _ => panic!("Expected list"),
-        }
-    }
-
-    /// T-8: Method Call
-    #[test]
-    fn test_t8_method_call() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "[1, 2, 3].len()").unwrap();
-        assert_eq!(result, Value::Int(3));
-    }
-
-    /// T-9: Deep Nesting
-    #[test]
-    fn test_t9_deep_nesting() {
-        let mut vm = Vm::new();
-        let result = eval(&mut vm, "let (x = 1) let (y = 2, z = 3) x + y + z").unwrap();
-        assert_eq!(result, Value::Int(6));
-    }
-
-    /// T-10: Shadowing Across Blocks
-    #[test]
-    fn test_t10_shadowing() {
-        let mut vm = Vm::new();
-        let result = eval(
-            &mut vm,
-            "let (x = 10) let (result = let (x = 20) x) result + x",
-        )
-        .unwrap();
-        assert_eq!(result, Value::Int(30));
-    }
-
-    /// T-11: Backpatching Integrity
-    #[test]
-    fn test_t11_backpatching() {
-        let mut vm = Vm::new();
-        let result = eval(
-            &mut vm,
-            "let (x = if true then 1 else 2) let (y = if false then 3 else 4) x + y",
-        )
-        .unwrap();
-        assert_eq!(result, Value::Int(5));
-    }
-
-    /// T-12: While Loop
-    #[test]
-    fn test_t12_while_loop() {
-        // Note: While loops are not yet implemented in the parser
-        // This test is a placeholder for when while is added
-        // let result = eval(&mut vm, "let (sum = 0, i = 0) while i < 3 { let _ = sum = sum + i let _ = i = i + 1 } sum").unwrap();
-        // assert_eq!(result, Value::Int(3));
-    }
-
-    /// T-13: resolve_names Wiring
-    #[test]
-    fn test_t13_resolve_names_wiring() {
-        use crate::{Compiler, Lexer, Parser};
-        let source = "let (x = 1) let (x = 2) x";
-        let tokens = Lexer::new(source).tokenize().unwrap();
-        let ast = Parser::with_source(&tokens, source).parse().unwrap();
-        let mut code = Compiler::new().compile(&ast).unwrap();
-
-        // Run resolve_names pass
-        crate::compiler::resolve_names(&mut code);
-
-        // Verify that NameRef instructions contain bind indices, not string names
-        let has_nameref_with_bind_index = code
-            .instructions
-            .iter()
-            .any(|instr| matches!(instr, Instruction::NameRef { bind: _ }));
-        assert!(
-            has_nameref_with_bind_index,
-            "Expected NameRef with bind index"
-        );
-    }
-}
+                    _ 
