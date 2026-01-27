@@ -3667,6 +3667,24 @@ impl Vm {
 
                 Ok(Value::AsyncStream(Arc::new(std::sync::Mutex::new(stream))))
             }
+            ("__builtin_stream", "sink") => {
+                // stream.sink() -> Sink
+                // Creates a sink handle for sending values asynchronously.
+                //
+                // Usage:
+                //   let sink = stream.sink()
+                //   sink.send(42)  -- TODO: need send method
+                //
+                // Returns a Value::Sink that can be used to send values
+
+                use crate::stream::{SinkHandle, next_id};
+                use tokio::sync::mpsc;
+
+                let (tx, _rx) = mpsc::channel(100); // Buffer size 100 for backpressure
+                let sink = SinkHandle::new(tx, next_id());
+
+                Ok(Value::Sink(Arc::new(sink)))
+            }
             _ => Err(Error::Runtime(format!(
                 "unknown builtin: {}.{}",
                 object, method
