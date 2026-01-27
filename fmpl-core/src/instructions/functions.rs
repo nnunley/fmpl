@@ -5,10 +5,13 @@
 use super::ExecuteResult;
 use crate::compiler::InstrIndex;
 use crate::error::Result;
-use crate::value::Value;
 use crate::vm::Vm;
 
-pub fn execute_call(vm: &mut Vm, func: InstrIndex, args: Vec<InstrIndex>) -> Result<ExecuteResult> {
+pub fn execute_call(
+    _vm: &mut Vm,
+    _func: InstrIndex,
+    _args: Vec<InstrIndex>,
+) -> Result<ExecuteResult> {
     // TODO: Implement function call
     todo!("execute_call")
 }

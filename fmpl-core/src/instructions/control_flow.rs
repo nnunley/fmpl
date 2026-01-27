@@ -9,9 +9,9 @@ use crate::value::Value;
 use crate::vm::Vm;
 
 /// Execute unconditional jump
-pub fn execute_jump(vm: &mut Vm, target: usize) -> Result<ExecuteResult> {
+pub fn execute_jump(vm: &mut Vm, target: InstrIndex) -> Result<ExecuteResult> {
     let frame = vm.current_frame_mut();
-    frame.ip = target;
+    frame.ip = target.0;
     Ok(ExecuteResult::Jump)
 }
 
@@ -19,7 +19,7 @@ pub fn execute_jump(vm: &mut Vm, target: usize) -> Result<ExecuteResult> {
 pub fn execute_jump_if_false(
     vm: &mut Vm,
     cond: InstrIndex,
-    target: usize,
+    target: InstrIndex,
 ) -> Result<ExecuteResult> {
     let frame = vm.current_frame();
     let cond_val = frame.get(cond);
@@ -32,7 +32,7 @@ pub fn execute_jump_if_false(
 
     if should_jump {
         let frame = vm.current_frame_mut();
-        frame.ip = target;
+        frame.ip = target.0;
         Ok(ExecuteResult::Jump)
     } else {
         Ok(ExecuteResult::Advance)
@@ -40,19 +40,23 @@ pub fn execute_jump_if_false(
 }
 
 /// Execute conditional jump (true)
-pub fn execute_jump_if_true(vm: &mut Vm, cond: InstrIndex, target: usize) -> Result<ExecuteResult> {
+pub fn execute_jump_if_true(
+    vm: &mut Vm,
+    cond: InstrIndex,
+    target: InstrIndex,
+) -> Result<ExecuteResult> {
     let frame = vm.current_frame();
     let cond_val = frame.get(cond);
 
     let should_jump = match cond_val {
-        Value::Bool(b) => *b,
+        Value::Bool(b) => b,
         Value::Null => false,
         _ => true, // Non-null, non-bool values are truthy
     };
 
     if should_jump {
         let frame = vm.current_frame_mut();
-        frame.ip = target;
+        frame.ip = target.0;
         Ok(ExecuteResult::Jump)
     } else {
         Ok(ExecuteResult::Advance)
@@ -60,7 +64,11 @@ pub fn execute_jump_if_true(vm: &mut Vm, cond: InstrIndex, target: usize) -> Res
 }
 
 /// Execute conditional jump (null)
-pub fn execute_jump_if_null(vm: &mut Vm, cond: InstrIndex, target: usize) -> Result<ExecuteResult> {
+pub fn execute_jump_if_null(
+    vm: &mut Vm,
+    cond: InstrIndex,
+    target: InstrIndex,
+) -> Result<ExecuteResult> {
     let frame = vm.current_frame();
     let cond_val = frame.get(cond);
 
@@ -68,7 +76,7 @@ pub fn execute_jump_if_null(vm: &mut Vm, cond: InstrIndex, target: usize) -> Res
 
     if should_jump {
         let frame = vm.current_frame_mut();
-        frame.ip = target;
+        frame.ip = target.0;
         Ok(ExecuteResult::Jump)
     } else {
         Ok(ExecuteResult::Advance)
