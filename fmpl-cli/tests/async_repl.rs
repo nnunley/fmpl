@@ -159,28 +159,25 @@ async fn test_repl_vm_with_runtime_and_wait_for_async() {
     let mut vm = Vm::with_runtime(tokio::runtime::Handle::current());
 
     // Create a simple async stream that returns a value
-    let result = eval(&mut vm, "stream.create(lambda () 42)");
+    // Use block syntax for lambda to ensure it compiles correctly
+    let result = eval(&mut vm, "stream.create(lambda () { 42 })");
     assert!(result.is_ok());
 
     // The REPL should be able to wait for this stream
     let value = result.unwrap();
     match value {
         Value::AsyncStream(stream) => {
+            // Give the async task time to execute
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
             // REPL would call wait_for_async here
             // Verify the stream can be locked and read
             let mut handle = stream.lock().unwrap();
             match handle.recv_blocking() {
-                Some(StreamEvent::Ok(Value::Null)) => {
-                    // Expected from stub implementation
+                Some(StreamEvent::Ok(Value::Int(42))) => {
+                    // Lambda executed successfully and returned 42
                 }
-                Some(StreamEvent::Done) => {
-                    // Also acceptable - stream completed
-                }
-                None => {
-                    // Channel closed - stub implementation may do this
-                    // This is acceptable for now
-                }
-                other => panic!("Unexpected stream event: {:?}", other),
+                other => panic!("Unexpected stream event: {:?}, expected Ok(Int(42))", other),
             }
         }
         other => panic!("Expected AsyncStream, got {:?}", other),

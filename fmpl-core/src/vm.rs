@@ -781,33 +781,42 @@ impl Vm {
 
                     let returned_parse_state = frame.parse_state.clone();
 
-                    self.frames.pop();
+                    // Check if there's a caller frame before popping
+                    if self.frames.len() > 1 {
+                        // Has caller - pop and propagate return value
+                        self.frames.pop();
 
-                    let Some(caller_frame) = self.frames.last_mut() else {
-                        continue;
-                    };
+                        let caller_frame = self.frames.last_mut().unwrap();
 
-                    if Self::is_grammar_rule_failure(&ret_val, &returned_parse_state) {
-                        return Err(Error::ParseFailed {
-                            position: returned_parse_state.position(),
-                            message: "grammar rule failed to match".to_string(),
-                        });
+                        if Self::is_grammar_rule_failure(&ret_val, &returned_parse_state) {
+                            return Err(Error::ParseFailed {
+                                position: returned_parse_state.position(),
+                                message: "grammar rule failed to match".to_string(),
+                            });
+                        }
+
+                        if Self::should_require_full_consumption(
+                            &returned_parse_state,
+                            caller_frame,
+                        ) && !returned_parse_state.is_at_end()
+                        {
+                            return Err(Error::ParseFailed {
+                                position: returned_parse_state.position(),
+                                message: format!(
+                                    "grammar rule did not consume entire input (stopped at position {})",
+                                    returned_parse_state.position()
+                                ),
+                            });
+                        }
+
+                        caller_frame.set_current(ret_val);
+                        caller_frame.parse_state = returned_parse_state;
+                    } else {
+                        // No caller frame - this is a top-level return
+                        // Don't pop the frame - leave it with the return value in current
+                        // Break out of the execution loop
+                        break;
                     }
-
-                    if Self::should_require_full_consumption(&returned_parse_state, caller_frame)
-                        && !returned_parse_state.is_at_end()
-                    {
-                        return Err(Error::ParseFailed {
-                            position: returned_parse_state.position(),
-                            message: format!(
-                                "grammar rule did not consume entire input (stopped at position {})",
-                                returned_parse_state.position()
-                            ),
-                        });
-                    }
-
-                    caller_frame.set_current(ret_val);
-                    caller_frame.parse_state = returned_parse_state;
                 }
 
                 // === Objects ===
@@ -3195,6 +3204,121 @@ impl Vm {
         Ok(())
     }
 
+    /// Execute a lambda with shared VM state (objects and grammars).
+    ///
+    /// This function creates a new VM instance that shares the object database
+    /// and grammar registry with the parent VM, allowing async tasks to access
+    /// and modify shared state safely.
+    ///
+    /// # Arguments
+    /// * `lambda` - The lambda to execute
+    /// * `objects` - Shared object database (Arc<Mutex<ObjectDb>>)
+    /// * `grammars` - Grammar registry (cloned for new VM)
+    ///
+    /// # Returns
+    /// The result of executing the lambda, or an error.
+    fn execute_lambda_with_state(
+        lambda: &Value,
+        objects: &Arc<std::sync::Mutex<ObjectDb>>,
+        grammars: &GrammarRegistry,
+    ) -> Result<Value> {
+        match lambda {
+            Value::Lambda(lambda) => {
+                // Create a new VM instance with shared state
+                let mut vm = Vm {
+                    objects: objects.clone(),
+                    grammars: grammars.clone(),
+                    frames: Vec::new(),
+                    scopes: vec![Scope::default()],
+                    current_user: None,
+                    exception_handlers: Vec::new(),
+                    runtime: None, // No runtime in lambda execution context
+                    compiled_grammars: Arc::new(std::sync::Mutex::new(HashMap::new())),
+                };
+
+                // Create a frame for the lambda (same as call_value does)
+                let mut frame = Frame::new(lambda.code.clone());
+
+                // Bind captures (if any)
+                for (k, v) in &lambda.captures {
+                    frame.locals.insert(k.clone(), v.clone());
+                }
+
+                // Bind arguments (no arguments for our use case)
+                // for (i, val) in args.into_iter().enumerate() {
+                //     if i < lambda.params.len() {
+                //         frame.locals.insert(lambda.params[i].clone(), val);
+                //     }
+                // }
+
+                // Push frame and execute
+                let base_depth = vm.frames.len();
+                vm.frames.push(frame);
+                let exec_result = vm.execute_with_depth(base_depth);
+
+                // Get the result from the last frame's last instruction
+                // Note: Return instruction doesn't pop the frame when there's no caller
+                if exec_result.is_ok() {
+                    if let Some(frame) = vm.frames.last() {
+                        let frame_result = frame.result();
+                        vm.frames.pop(); // Clean up the frame
+                        Ok(frame_result)
+                    } else {
+                        // This shouldn't happen with the fixed Return instruction
+                        Ok(Value::Null)
+                    }
+                } else {
+                    if vm.frames.last().is_some() {
+                        vm.frames.pop(); // Clean up the frame on error
+                    }
+                    // Convert the () error to a Value error
+                    exec_result.map(|_| Value::Null).map_err(|e| e)
+                }
+            }
+            _ => Err(Error::Runtime(
+                "execute_lambda_with_state requires lambda argument".to_string(),
+            )),
+        }
+    }
+
+    /// Execute a lambda asynchronously with shared VM state.
+    ///
+    /// This function is designed to be used in async contexts (e.g., tokio tasks).
+    /// It executes the lambda and sends the result to the provided channel sender.
+    ///
+    /// # Arguments
+    /// * `lambda` - The lambda to execute
+    /// * `objects` - Shared object database
+    /// * `grammars` - Grammar registry
+    /// * `tx` - Channel sender to send the result
+    async fn execute_lambda_async(
+        lambda: Value,
+        objects: Arc<std::sync::Mutex<ObjectDb>>,
+        grammars: GrammarRegistry,
+        tx: tokio::sync::mpsc::Sender<crate::stream::StreamEvent>,
+    ) {
+        use crate::stream::StreamEvent;
+
+        // Execute the lambda with shared state
+        let result = Self::execute_lambda_with_state(&lambda, &objects, &grammars);
+
+        // Send the result to the stream
+        match result {
+            Ok(value) => {
+                // Send asynchronously
+                if let Err(e) = tx.send(StreamEvent::Ok(value)).await {
+                    eprintln!("Error sending stream result: {}", e);
+                }
+            }
+            Err(e) => {
+                let error_msg = Value::String(e.to_string().into());
+                if let Err(send_err) = tx.send(StreamEvent::Err(error_msg)).await {
+                    eprintln!("Error sending stream error: {}", send_err);
+                }
+            }
+        }
+    }
+
     fn call_builtin(&mut self, object: &str, method: &str, args: Vec<Value>) -> Result<Value> {
         match (object, method) {
             ("__builtin_curl", "get") => {
@@ -3509,8 +3633,8 @@ impl Vm {
                     Error::Runtime("stream.create requires runtime handle - use Vm::with_runtime() or run in async context".to_string())
                 })?;
 
-                let _lambda = match args.first() {
-                    Some(Value::Lambda(_lambda)) => _lambda.clone(),
+                let lambda = match args.first() {
+                    Some(Value::Lambda(lambda)) => lambda.clone(),
                     Some(other) => {
                         return Err(Error::Runtime(format!(
                             "stream.create requires lambda argument, got {}",
@@ -3524,22 +3648,19 @@ impl Vm {
                     }
                 };
 
-                use crate::stream::{StreamEvent, StreamHandle, StreamSource, next_id};
+                use crate::stream::{StreamHandle, StreamSource, next_id};
                 use tokio::sync::mpsc;
 
                 let (tx, rx) = mpsc::channel(1); // Bounded channel for backpressure
 
+                // Clone shared state for the async task
+                let objects = self.objects.clone();
+                let grammars = self.grammars.clone();
+
                 // Spawn a task to execute the lambda
                 handle.spawn(async move {
-                    // For this initial implementation, we just complete immediately
-                    // A full implementation would:
-                    // 1. Create a new VM instance
-                    // 2. Copy relevant state (grammars, objects)
-                    // 3. Execute the lambda in that VM
-                    // 4. Send the result to the stream
-
-                    // For now, just send null as a placeholder
-                    let _ = tx.send(StreamEvent::Ok(Value::Null)).await;
+                    // Execute the lambda asynchronously with shared VM state
+                    Self::execute_lambda_async(Value::Lambda(lambda), objects, grammars, tx).await;
                 });
 
                 let stream = StreamHandle::with_source(rx, next_id(), StreamSource::Ephemeral);
