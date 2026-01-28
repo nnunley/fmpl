@@ -1435,7 +1435,7 @@ impl Vm {
 
                 Instruction::MatchLiteral { const_idx } => {
                     let frame = self.frames.last_mut().unwrap();
-                    let literal = frame.code.get_constant(const_idx);
+                    let literal = frame.code.get_constant_as::<SmolStr>(const_idx).unwrap();
                     eprintln!(
                         "DEBUG MatchLiteral: ip={}, literal='{}', position={}, text='{:?}'",
                         frame.ip,
@@ -1456,6 +1456,43 @@ impl Vm {
                             position: frame.parse_state.position(),
                             message: format!("MatchLiteral: expected '{}'", literal),
                         });
+                    }
+                }
+
+                Instruction::MatchLiteralValue { const_idx } => {
+                    // Match a literal value (Int, String, Bool, Symbol, etc.) against the current input value
+                    let frame = self.frames.last_mut().unwrap();
+                    let expected_value = frame.code.get_constant(const_idx);
+                    eprintln!(
+                        "DEBUG MatchLiteralValue: ip={}, expected={:?}, position={}",
+                        frame.ip,
+                        expected_value,
+                        frame.parse_state.position()
+                    );
+
+                    // Get the current input value
+                    let input_value = frame
+                        .parse_state
+                        .input()
+                        .cloned()
+                        .unwrap_or_else(|| Value::Null);
+
+                    // Check if values match using Value's equality
+                    if input_value == expected_value {
+                        // Value matches - advance and return the matched value
+                        frame.parse_state.advance(1);
+                        frame.set_current(input_value);
+                        eprintln!(
+                            "DEBUG MatchLiteralValue: matched, new position={}",
+                            frame.parse_state.position()
+                        );
+                    } else {
+                        // Value doesn't match - return Null to signal pattern failure
+                        eprintln!(
+                            "DEBUG MatchLiteralValue: failed to match, expected={:?}, got={:?}",
+                            expected_value, input_value
+                        );
+                        frame.set_current(Value::Null);
                     }
                 }
 
@@ -1609,7 +1646,7 @@ impl Vm {
                 Instruction::MatchPlusLiteral { const_idx } => {
                     // Match one or more occurrences of a literal string
                     let frame = self.frames.last_mut().unwrap();
-                    let literal = frame.code.get_constant(const_idx);
+                    let literal = frame.code.get_constant_as::<SmolStr>(const_idx).unwrap();
                     let mut results = Vec::new();
                     let mut count = 0;
 
@@ -1724,7 +1761,7 @@ impl Vm {
                 Instruction::MatchStarLiteral { const_idx } => {
                     // Match zero or more occurrences of a literal string
                     let frame = self.frames.last_mut().unwrap();
-                    let literal = frame.code.get_constant(const_idx);
+                    let literal = frame.code.get_constant_as::<SmolStr>(const_idx).unwrap();
                     let mut results = Vec::new();
 
                     loop {
@@ -1759,7 +1796,7 @@ impl Vm {
                 Instruction::MatchStarRule { rule } => {
                     // Zero or more repetitions of a named rule (like OMeta's _many).
                     // Extract data first, then call helper which sets the result.
-                    let rule_name_smol = frame.code.get_constant(rule).clone();
+                    let rule_name_smol = frame.code.get_constant_as::<SmolStr>(rule).unwrap();
                     let grammar_opt = frame.parse_state.grammar().cloned();
                     let initial_position = frame.parse_state.position();
 
@@ -1807,7 +1844,7 @@ impl Vm {
                         frame.code.get_constant(rule)
                     );
                     // Extract data first, then call helper which sets the result.
-                    let rule_name_smol = frame.code.get_constant(rule).clone();
+                    let rule_name_smol = frame.code.get_constant_as::<SmolStr>(rule).unwrap();
                     let grammar_opt = frame.parse_state.grammar().cloned();
                     let initial_position = frame.parse_state.position();
 
@@ -1926,7 +1963,7 @@ impl Vm {
                     let result = frame.get(pattern);
 
                     // Get the variable name from constants
-                    let var_name = frame.code.get_constant(name);
+                    let var_name = frame.code.get_constant_as::<SmolStr>(name).unwrap();
 
                     // Store in locals
                     frame.locals.insert(var_name, result.clone());
@@ -2044,23 +2081,60 @@ impl Vm {
                                         };
 
                                         // Check that all required keys exist and bind their values
-                                        for (key_idx, var_name_idx) in entries {
-                                            let key = frame.code.get_constant(*key_idx);
-                                            let value = match elem_map.get(key.as_str()) {
-                                                Some(v) => v.clone(),
-                                                None => {
-                                                    all_matched = false;
-                                                    break;
+                                        for (key_pattern, value_pattern) in entries {
+                                            // Resolve the key to match
+                                            let keys_to_match: Vec<SmolStr> = match key_pattern {
+                                                crate::compiler::MapKeyPattern::Specific(
+                                                    key_idx,
+                                                ) => {
+                                                    let key = frame
+                                                        .code
+                                                        .get_constant_as::<SmolStr>(*key_idx)
+                                                        .expect("Key constant must be a string");
+                                                    vec![key]
+                                                }
+                                                crate::compiler::MapKeyPattern::Wildcard => {
+                                                    elem_map.keys().cloned().collect()
                                                 }
                                             };
 
-                                            // If there's a variable name, bind the value to it
-                                            if let Some(var_name_idx) = var_name_idx {
-                                                let var_name =
-                                                    frame.code.get_constant(*var_name_idx);
-                                                frame
-                                                    .locals
-                                                    .insert(var_name.clone(), value.clone());
+                                            // Try to find at least one matching key-value pair
+                                            let mut found_match = false;
+                                            'elem_key_loop: for key in &keys_to_match {
+                                                let value = match elem_map.get(key.as_str()) {
+                                                    Some(v) => v,
+                                                    None => continue,
+                                                };
+
+                                                match value_pattern {
+                                                    crate::compiler::MapValuePattern::Wildcard => {
+                                                        found_match = true;
+                                                        break 'elem_key_loop;
+                                                    }
+                                                    crate::compiler::MapValuePattern::Bind(var_name_idx) => {
+                                                        let var_name = frame.code.get_constant_as::<SmolStr>(*var_name_idx)
+                                                            .expect("Variable name constant must be a string");
+                                                        frame.locals.insert(var_name, value.clone());
+                                                        found_match = true;
+                                                        break 'elem_key_loop;
+                                                    }
+                                                    crate::compiler::MapValuePattern::MatchLiteral(value_idx) => {
+                                                        let expected_value = frame.code.get_constant(*value_idx);
+                                                        if value == &expected_value {
+                                                            found_match = true;
+                                                            break 'elem_key_loop;
+                                                        }
+                                                    }
+                                                    crate::compiler::MapValuePattern::Pattern(_pattern_idx) => {
+                                                        // For now, skip pattern matching in nested context
+                                                        // TODO: Support full pattern execution
+                                                    }
+                                                }
+                                            }
+
+                                            if !found_match {
+                                                all_matched = false;
+                                                break;
                                             }
                                         }
 
@@ -2103,8 +2177,10 @@ impl Vm {
                                         // Bind variables
                                         for (j, var_name_opt) in inner_patterns.iter().enumerate() {
                                             if let Some(var_name_idx) = var_name_opt {
-                                                let var_name =
-                                                    frame.code.get_constant(*var_name_idx);
+                                                let var_name = frame
+                                                    .code
+                                                    .get_constant_as::<SmolStr>(*var_name_idx)
+                                                    .expect("Constant must be a string");
                                                 frame.locals.insert(
                                                     var_name.clone(),
                                                     inner_list[j].clone(),
@@ -2113,8 +2189,10 @@ impl Vm {
                                         }
 
                                         if let Some(inner_rest_idx) = inner_rest {
-                                            let rest_name =
-                                                frame.code.get_constant(*inner_rest_idx);
+                                            let rest_name = frame
+                                                .code
+                                                .get_constant_as::<SmolStr>(*inner_rest_idx)
+                                                .expect("Constant must be a string");
                                             let rest_elements: Vec<Value> =
                                                 inner_list[inner_patterns_len..].to_vec();
                                             frame.locals.insert(
@@ -2179,19 +2257,24 @@ impl Vm {
                             // Bind each element to its corresponding variable
                             for (i, var_name_opt) in patterns.iter().enumerate() {
                                 if let Some(var_name_idx) = var_name_opt {
-                                    let var_name = frame.code.get_constant(*var_name_idx);
+                                    let var_name = frame
+                                        .code
+                                        .get_constant_as::<SmolStr>(*var_name_idx)
+                                        .expect("Constant must be a string");
                                     frame.locals.insert(var_name.clone(), input_list[i].clone());
                                 }
                             }
 
                             // Bind rest if present
                             if let Some(rest_idx) = rest {
-                                let rest_name = frame.code.get_constant(rest_idx);
+                                let rest_name = frame
+                                    .code
+                                    .get_constant_as::<SmolStr>(rest_idx)
+                                    .expect("Constant must be a string");
                                 let rest_elements: Vec<Value> = input_list[patterns_len..].to_vec();
-                                frame.locals.insert(
-                                    rest_name.clone(),
-                                    Value::List(Arc::new(rest_elements)),
-                                );
+                                frame
+                                    .locals
+                                    .insert(rest_name, Value::List(Arc::new(rest_elements)));
                             }
 
                             frame.set_current(input_val);
@@ -2214,29 +2297,101 @@ impl Vm {
                         continue;
                     };
 
-                    // Check that all required keys exist and bind their values
-                    for (key_idx, var_name_idx) in &entries {
-                        let key = frame.code.get_constant(*key_idx);
-
-                        // Check if key exists in input map (need &str)
-                        let value = match input_map.get(key.as_str()) {
-                            Some(v) => v,
-                            None => {
-                                // Key not found - match fails
-                                frame.set_current(Value::Null);
-                                continue;
+                    // For each key-value pattern, check the input map
+                    for (key_pattern, value_pattern) in &entries {
+                        // First, resolve which key(s) to match based on key_pattern
+                        let keys_to_match: Vec<SmolStr> = match key_pattern {
+                            crate::compiler::MapKeyPattern::Specific(key_idx) => {
+                                // Specific key - get its string value
+                                let key = frame
+                                    .code
+                                    .get_constant_as::<SmolStr>(*key_idx)
+                                    .expect("Key constant must be a string");
+                                vec![key]
+                            }
+                            crate::compiler::MapKeyPattern::Wildcard => {
+                                // Wildcard key - match ANY one key from the map
+                                // This extracts one key-value pair
+                                input_map.keys().cloned().collect()
                             }
                         };
 
-                        // If there's a variable name, bind the value to it
-                        if let Some(var_name_idx) = var_name_idx {
-                            let var_name = frame.code.get_constant(*var_name_idx);
-                            frame.locals.insert(var_name.clone(), value.clone());
+                        // Try to find at least one matching key-value pair
+                        let mut found_match = false;
+
+                        'key_loop: for key in &keys_to_match {
+                            // Check if key exists in input map
+                            let value = match input_map.get(key.as_str()) {
+                                Some(v) => v,
+                                None => continue,
+                            };
+
+                            // Now match the value against the value pattern
+                            match value_pattern {
+                                crate::compiler::MapValuePattern::Wildcard => {
+                                    // Wildcard - always matches, no binding
+                                    found_match = true;
+                                    break 'key_loop;
+                                }
+                                crate::compiler::MapValuePattern::Bind(var_name_idx) => {
+                                    // Bind the value to the variable
+                                    let var_name = frame
+                                        .code
+                                        .get_constant_as::<SmolStr>(*var_name_idx)
+                                        .expect("Variable name constant must be a string");
+                                    frame.locals.insert(var_name, value.clone());
+                                    found_match = true;
+                                    break 'key_loop;
+                                }
+                                crate::compiler::MapValuePattern::MatchLiteral(value_idx) => {
+                                    // Match literal value
+                                    let expected_value = frame.code.get_constant(*value_idx);
+                                    if value == &expected_value {
+                                        found_match = true;
+                                        break 'key_loop;
+                                    }
+                                    // If literal doesn't match, try next key
+                                }
+                                crate::compiler::MapValuePattern::Pattern(pattern_idx) => {
+                                    // For now, only support simple pattern instructions inline
+                                    // TODO: Support full pattern execution
+                                    let pattern_instr = &frame.code.instructions[pattern_idx.0];
+
+                                    match pattern_instr {
+                                        Instruction::MatchAny => {
+                                            // MatchAny always matches
+                                            found_match = true;
+                                            break 'key_loop;
+                                        }
+                                        Instruction::MatchLiteralValue { const_idx } => {
+                                            // Match literal value
+                                            let expected_value =
+                                                frame.code.get_constant(*const_idx);
+                                            if value == &expected_value {
+                                                found_match = true;
+                                                break 'key_loop;
+                                            }
+                                        }
+                                        _ => {
+                                            // Complex patterns not yet supported in map matching
+                                            // Treat as no match
+                                            eprintln!(
+                                                "Warning: Complex pattern in map value not yet supported, treating as mismatch"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        // If var_name_idx is None, it's a wildcard - no binding
+
+                        if !found_match {
+                            // No matching key found for this pattern
+                            frame.set_current(Value::Null);
+                            continue;
+                        }
                     }
 
-                    // All keys exist and patterns matched - return the input map
+                    // All patterns matched successfully
                     frame.set_current(input_val);
                 }
 
@@ -2307,8 +2462,17 @@ impl Vm {
                         continue;
                     };
 
-                    let expected_tag = frame.code.get_constant(tag_idx);
-                    if input_tag.as_str() != expected_tag.as_str() {
+                    let expected_tag: SmolStr = frame
+                        .code
+                        .get_constant(tag_idx)
+                        .try_into()
+                        .unwrap_or_else(|_| SmolStr::new(""));
+                    let input_tag_str: SmolStr = input_tag
+                        .clone()
+                        .try_into()
+                        .unwrap_or_else(|_| SmolStr::new(""));
+
+                    if input_tag_str != expected_tag {
                         frame.set_current(Value::Null);
                         continue;
                     }
@@ -2322,7 +2486,10 @@ impl Vm {
                     // Bind each child to its corresponding variable (None = wildcard)
                     for (i, var_name_opt) in bindings.iter().enumerate() {
                         if let Some(var_name_idx) = var_name_opt {
-                            let var_name = frame.code.get_constant(*var_name_idx);
+                            let var_name = frame
+                                .code
+                                .get_constant_as::<SmolStr>(*var_name_idx)
+                                .expect("Constant must be a string");
                             frame.locals.insert(var_name.clone(), children[i].clone());
                         }
                     }
@@ -2342,8 +2509,17 @@ impl Vm {
                         continue;
                     };
 
-                    let expected_tag = frame.code.get_constant(tag_idx);
-                    if input_tag.as_str() != expected_tag.as_str() {
+                    let expected_tag: SmolStr = frame
+                        .code
+                        .get_constant(tag_idx)
+                        .try_into()
+                        .unwrap_or_else(|_| SmolStr::new(""));
+                    let input_tag_str: SmolStr = input_tag
+                        .clone()
+                        .try_into()
+                        .unwrap_or_else(|_| SmolStr::new(""));
+
+                    if input_tag_str != expected_tag {
                         frame.set_current(Value::Null);
                         continue;
                     }
@@ -2377,8 +2553,17 @@ impl Vm {
                                     all_matched = false;
                                     break;
                                 };
-                                let expected_inner_tag = frame.code.get_constant(*inner_tag_idx);
-                                if child_tag.as_str() != expected_inner_tag.as_str() {
+                                let expected_inner_tag: SmolStr = frame
+                                    .code
+                                    .get_constant(*inner_tag_idx)
+                                    .try_into()
+                                    .unwrap_or_else(|_| SmolStr::new(""));
+                                let child_tag_str: SmolStr = child_tag
+                                    .clone()
+                                    .try_into()
+                                    .unwrap_or_else(|_| SmolStr::new(""));
+
+                                if child_tag_str != expected_inner_tag {
                                     all_matched = false;
                                     break;
                                 }
@@ -2389,7 +2574,10 @@ impl Vm {
                                 // Bind variables
                                 for (j, var_name_opt) in inner_bindings.iter().enumerate() {
                                     if let Some(var_name_idx) = var_name_opt {
-                                        let var_name = frame.code.get_constant(*var_name_idx);
+                                        let var_name = frame
+                                            .code
+                                            .get_constant_as::<SmolStr>(*var_name_idx)
+                                            .expect("Constant must be a string");
                                         frame
                                             .locals
                                             .insert(var_name.clone(), child_children[j].clone());
@@ -2398,8 +2586,11 @@ impl Vm {
                             }
                             Instruction::MatchBind { pattern: _, name } => {
                                 // Simple binding: bind the child value to the variable
-                                let var_name = frame.code.get_constant(*name);
-                                frame.locals.insert(var_name.clone(), children[i].clone());
+                                let var_name = frame
+                                    .code
+                                    .get_constant_as::<SmolStr>(*name)
+                                    .expect("Constant must be a string");
+                                frame.locals.insert(var_name, children[i].clone());
                             }
                             Instruction::MatchAny => {
                                 // Wildcard - matches anything, no binding
@@ -2425,7 +2616,10 @@ impl Vm {
 
                 Instruction::ApplyRule { rule_idx } => {
                     // Apply a named grammar rule with memoization and left recursion detection.
-                    let rule_name = frame.code.get_constant(rule_idx);
+                    let rule_name = frame
+                        .code
+                        .get_constant_as::<SmolStr>(rule_idx)
+                        .expect("Constant must be a string");
 
                     // Check memoization first (using position + rule name as key)
                     let memo_key =

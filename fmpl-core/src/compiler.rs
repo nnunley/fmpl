@@ -7,6 +7,7 @@
 use crate::ast::*;
 use crate::error::{Error, Result};
 use crate::grammar::Grammar;
+use crate::value::Value;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::{HashMap, HashSet};
@@ -54,6 +55,28 @@ impl From<usize> for ConstIndex {
 ///
 /// Instructions that produce values store their result at `values[ip]`.
 /// Instructions that consume values reference operands by their instruction index.
+/// Pattern for matching map keys in MatchMap instruction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MapKeyPattern {
+    /// Match a specific key (string or symbol).
+    Specific(ConstIndex),
+    /// Match any key (wildcard).
+    Wildcard,
+}
+
+/// Pattern for matching map values in MatchMap instruction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MapValuePattern {
+    /// Match any value, no binding (wildcard).
+    Wildcard,
+    /// Match any value and bind it to a variable.
+    Bind(ConstIndex),
+    /// Match a specific literal value (int, string, bool, etc.).
+    MatchLiteral(ConstIndex),
+    /// Execute a full pattern instruction.
+    Pattern(InstrIndex),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Instruction {
     // Literals (produce values, no operand references)
@@ -360,6 +383,9 @@ pub enum Instruction {
     MatchLiteral {
         const_idx: ConstIndex,
     }, // Match string constant from pool
+    MatchLiteralValue {
+        const_idx: ConstIndex,
+    }, // Match literal value (Int, String, Bool, etc.) from constant pool
     MatchCharClass {
         ranges: Vec<(char, char)>,
     }, // Match character in range [a-z]
@@ -434,8 +460,8 @@ pub enum Instruction {
         rest: Option<ConstIndex>,
     }, // Match list with bindings (no pattern execution)
     MatchMap {
-        entries: Vec<(ConstIndex, Option<ConstIndex>)>,
-    }, // Match map with key-variable bindings (None for wildcard)
+        entries: Vec<(MapKeyPattern, MapValuePattern)>,
+    }, // Match map with key and value patterns
     MatchMapNested {
         entries: Vec<(ConstIndex, NestedBinding)>,
     }, // Match map with nested bindings
@@ -533,9 +559,9 @@ pub struct CompiledCode {
     pub nested: Vec<CompiledCode>,
     /// Original source code (for reflection/decompilation).
     pub source: Option<SmolStr>,
-    /// Constants pool for string/symbol literals referenced by ConstIndex.
-    /// Used by pattern matching instructions.
-    pub constants: Vec<SmolStr>,
+    /// Constants pool for values (Int, Bool, String, Symbol, etc.) referenced by ConstIndex.
+    /// Used by pattern matching instructions and other constant value needs.
+    pub constants: Vec<Value>,
     /// Rule entry points for grammar compilation.
     /// Maps rule names to their instruction indices for ApplyRule/MatchStarRule/MatchPlusRule.
     pub rule_entry_points: HashMap<SmolStr, InstrIndex>,
@@ -587,9 +613,11 @@ impl CompiledCode {
         }
     }
 
-    /// Add a string/symbol to the constants pool and return its index.
-    fn add_constant(&mut self, value: SmolStr) -> ConstIndex {
-        // Check if already exists
+    /// Add a value to the constants pool and return its index.
+    /// Accepts any type that implements Into<Value>, including primitives.
+    fn add_constant<T: Into<Value>>(&mut self, value: T) -> ConstIndex {
+        let value = value.into();
+        // Check if already exists (using Value's PartialEq)
         if let Some(idx) = self.constants.iter().position(|v| v == &value) {
             return ConstIndex(idx);
         }
@@ -599,9 +627,21 @@ impl CompiledCode {
         idx
     }
 
-    /// Get a constant by index.
-    pub fn get_constant(&self, idx: ConstIndex) -> SmolStr {
+    /// Get a constant value by index.
+    pub fn get_constant(&self, idx: ConstIndex) -> Value {
         self.constants[idx.0].clone()
+    }
+
+    /// Get a constant and convert it to the target type using TryInto.
+    pub fn get_constant_as<T>(&self, idx: ConstIndex) -> crate::error::Result<T>
+    where
+        T: std::convert::TryFrom<Value>,
+        <T as std::convert::TryFrom<Value>>::Error: Into<crate::error::Error>,
+    {
+        self.constants[idx.0]
+            .clone()
+            .try_into()
+            .map_err(|e| Into::<crate::error::Error>::into(e))
     }
 
     /// Add a rule entry point for grammar compilation.
@@ -3268,62 +3308,43 @@ impl Compiler {
             }
 
             GP::MapMatch(entries) => {
-                // Check if any patterns are nested
-                let has_nested = entries
+                // Compile each key-value pattern pair
+                let compiled_entries: Result<Vec<(MapKeyPattern, MapValuePattern)>> = entries
                     .iter()
-                    .any(|(_, pattern)| !matches!(pattern, GP::Bind(_, _) | GP::Any));
+                    .map(|(key, pattern)| {
+                        // Compile key pattern (currently only specific keys, no wildcards)
+                        let key_pattern =
+                            MapKeyPattern::Specific(self.code.add_constant(key.clone()));
 
-                if has_nested {
-                    // Use MatchMapNested for nested patterns
-                    let compiled_entries: Vec<(ConstIndex, NestedBinding)> = entries
-                        .iter()
-                        .filter_map(|(key, pattern)| {
-                            // Extract the nested binding path and variable name
-                            let (path, variable) = Self::extract_nested_binding_path(pattern, key)?;
+                        // Compile value pattern
+                        let value_pattern = match pattern {
+                            GP::Any => MapValuePattern::Wildcard,
+                            GP::Bind(_, name) => {
+                                MapValuePattern::Bind(self.code.add_constant(name.clone()))
+                            }
+                            GP::Literal(s) => {
+                                // String literal - match as literal value
+                                MapValuePattern::MatchLiteral(self.code.add_constant(s.clone()))
+                            }
+                            GP::MatchValue(value) => {
+                                // Match a literal value (int, bool, etc.)
+                                MapValuePattern::MatchLiteral(self.code.add_constant(value.clone()))
+                            }
+                            _ => {
+                                // For nested patterns or complex patterns, compile as pattern instruction
+                                let pattern_idx = self.compile_grammar_pattern(pattern)?;
+                                MapValuePattern::Pattern(pattern_idx)
+                            }
+                        };
 
-                            Some((
-                                self.code.add_constant(key.clone()),
-                                NestedBinding { path, variable },
-                            ))
-                        })
-                        .collect();
-
-                    if compiled_entries.is_empty() {
-                        // No bindings - emit MatchMap with wildcards
-                        let wildcard_entries: Vec<(ConstIndex, Option<ConstIndex>)> = entries
-                            .iter()
-                            .map(|(key, _)| (self.code.add_constant(key.clone()), None))
-                            .collect();
-                        self.code.emit(Instruction::MatchMap {
-                            entries: wildcard_entries,
-                        })
-                    } else {
-                        self.code.emit(Instruction::MatchMapNested {
-                            entries: compiled_entries,
-                        })
-                    }
-                } else {
-                    // Use simple MatchMap for direct bindings
-                    let compiled_entries: Vec<(ConstIndex, Option<ConstIndex>)> = entries
-                        .iter()
-                        .map(|(key, pattern)| {
-                            let key_idx = self.code.add_constant(key.clone());
-
-                            // Extract variable name from pattern
-                            let var_name = match pattern {
-                                GP::Bind(_, name) => Some(self.code.add_constant(name.clone())),
-                                GP::Any => None, // Wildcard, no binding
-                                _ => None,       // unreachable due to has_nested check
-                            };
-
-                            Ok((key_idx, var_name))
-                        })
-                        .collect::<Result<Vec<_>>>()?;
-
-                    self.code.emit(Instruction::MatchMap {
-                        entries: compiled_entries,
+                        Ok((key_pattern, value_pattern))
                     })
-                }
+                    .collect();
+
+                let compiled_entries = compiled_entries?;
+                self.code.emit(Instruction::MatchMap {
+                    entries: compiled_entries,
+                })
             }
 
             GP::MatchValue(_)

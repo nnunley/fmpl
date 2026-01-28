@@ -645,6 +645,179 @@ impl PartialEq for Value {
     }
 }
 
+// Into implementations for ergonomic constant creation
+impl From<i64> for Value {
+    fn from(v: i64) -> Self {
+        Value::Int(v)
+    }
+}
+
+impl From<bool> for Value {
+    fn from(v: bool) -> Self {
+        Value::Bool(v)
+    }
+}
+
+impl From<f64> for Value {
+    fn from(v: f64) -> Self {
+        Value::Float(v)
+    }
+}
+
+impl From<&str> for Value {
+    fn from(v: &str) -> Self {
+        Value::String(SmolStr::new(v))
+    }
+}
+
+impl From<String> for Value {
+    fn from(v: String) -> Self {
+        Value::String(SmolStr::new(v))
+    }
+}
+
+impl From<SmolStr> for Value {
+    fn from(v: SmolStr) -> Self {
+        Value::String(v)
+    }
+}
+
+impl From<&Value> for Value {
+    fn from(v: &Value) -> Self {
+        v.clone()
+    }
+}
+
+// TryFrom implementations for extracting values from Value enum
+impl TryFrom<Value> for SmolStr {
+    type Error = Error;
+
+    fn try_from(v: Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::String(s) => Ok(s),
+            Value::Symbol(s) => Ok(s),
+            other => Err(Error::Type {
+                expected: "String or Symbol".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
+impl TryFrom<Value> for i64 {
+    type Error = Error;
+
+    fn try_from(v: Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::Int(n) => Ok(n),
+            other => Err(Error::Type {
+                expected: "Int".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
+impl TryFrom<Value> for bool {
+    type Error = Error;
+
+    fn try_from(v: Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::Bool(b) => Ok(b),
+            other => Err(Error::Type {
+                expected: "Bool".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
+impl TryFrom<Value> for f64 {
+    type Error = Error;
+
+    fn try_from(v: Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::Float(n) => Ok(n),
+            other => Err(Error::Type {
+                expected: "Float".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
+impl TryFrom<Value> for String {
+    type Error = Error;
+
+    fn try_from(v: Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::String(s) => Ok(s.into()),
+            Value::Symbol(s) => Ok(s.into()),
+            other => Err(Error::Type {
+                expected: "String or Symbol".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for SmolStr {
+    type Error = Error;
+
+    fn try_from(v: &'a Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::String(s) => Ok(s.clone()),
+            Value::Symbol(s) => Ok(s.clone()),
+            other => Err(Error::Type {
+                expected: "String or Symbol".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for i64 {
+    type Error = Error;
+
+    fn try_from(v: &'a Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::Int(n) => Ok(*n),
+            other => Err(Error::Type {
+                expected: "Int".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for bool {
+    type Error = Error;
+
+    fn try_from(v: &'a Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::Bool(b) => Ok(*b),
+            other => Err(Error::Type {
+                expected: "Bool".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
+impl<'a> TryFrom<&'a Value> for f64 {
+    type Error = Error;
+
+    fn try_from(v: &'a Value) -> std::result::Result<Self, Self::Error> {
+        match v {
+            Value::Float(n) => Ok(*n),
+            other => Err(Error::Type {
+                expected: "Float".to_string(),
+                got: other.type_name().to_string(),
+            }),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

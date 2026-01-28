@@ -79,15 +79,42 @@ data @ {
 
 ### Literal Patterns
 
+**✅ FULLY IMPLEMENTED**: Literal values in patterns act as guards, matching only when equal.
+
 ```fmpl
-value @ {
-  42        => "the answer"
-  :ok       => "success"
-  "hello"   => "greeting"
-  true      => "affirmative"
-  null      => "nothing"
+-- Integer literals
+%{code: 404} @ {
+  %{code: 404} => "not_found"
+  _            => "found"
+}
+
+-- String literals
+%{type: "user"} @ {
+  %{type: "user"} => "user_type"
+  _               => "other"
+}
+
+-- Boolean literals (note: true/false need proper parsing context)
+%{active: true} @ {
+  %{active: true} => "enabled"
+  _                 => "disabled"
+}
+
+-- Mix literals and bindings
+%{status: 200, body: msg} @ {
+  %{status: 200, body: _:content} => content
 }
 ```
+
+**Key Implementation Details**:
+- Literal values are stored in the constant pool as `Value` types (Int, String, Bool, etc.)
+- The `MatchMap` instruction uses `MapValuePattern::MatchLiteral(const_idx)` to compare values
+- Comparison uses `Value`'s `PartialEq` implementation for type-safe matching
+- Supports all primitive types: integers, floats, strings, booleans, symbols, null
+
+**Future Work**:
+- Wildcard keys: `%{_: value} @ { %{_: literal} => ... }` (VM ready, parser needs update)
+- Complex nested patterns in map values
 
 ---
 

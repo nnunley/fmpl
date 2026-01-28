@@ -182,9 +182,74 @@ The `@` operator is FMPL's swiss-army knife for:
 
 ### Pattern Matching on Data Structures
 
-**Note**: Map pattern matching (`%{tool: t} => ...`) and list pattern matching (`[x, y] => ...`) are planned features. Currently, pattern matching works best with regex patterns on strings.
+**Map Pattern Matching** is now supported! You can match on map structures and extract values:
 
-For map access, use direct field access:
+```fmpl
+-- Match a map with specific key-value pairs
+let response = %{status: 200, body: "ok"}
+
+response @ {
+  %{status: 200} => "success"
+  _ => "other"
+}
+-- Returns: "success"
+
+-- Extract values using bindings (OMeta syntax: pattern:binding)
+response @ {
+  %{status: _:code, body: _:msg} => "code={code}, msg={msg}"
+}
+-- Returns: "code=200, msg=ok"
+```
+
+**Literal Guards**: Match specific literal values in patterns:
+
+```fmpl
+-- Match specific integer value
+%{code: 404} @ {
+  %{code: 404} => "not_found"
+  _ => "found"
+}
+-- Returns: "not_found"
+
+-- Match specific string value
+%{type: "user"} @ {
+  %{type: "user"} => "user_type"
+  _ => "other"
+}
+-- Returns: "user_type"
+
+-- Mix literals and bindings
+%{status: 200, body: "ok"} @ {
+  %{status: 200, body: _:content} => content
+}
+-- Returns: "ok"
+```
+
+**List Pattern Matching** is also supported:
+
+```fmpl
+-- Match a list and extract elements
+[1, 2, 3] @ {
+  [ _:x, _:y, _:z ] => [x, y, z]
+}
+-- Returns: [1, 2, 3]
+
+-- Match with rest pattern
+[1, 2, 3, 4, 5] @ {
+  [ _:first | rest ] => first
+}
+-- Returns: 1
+
+-- Empty list pattern
+[] @ {
+  [] => "empty"
+}
+-- Returns: "empty"
+```
+
+**Note**: Use the OMeta-style binding syntax `_:variable_name` to bind values. Bare identifiers are treated as rule references, not bindings.
+
+For direct map field access, you can still use:
 ```fmpl
 let response = %{
   tool: "curl.get",
