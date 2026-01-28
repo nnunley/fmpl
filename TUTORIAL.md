@@ -18,8 +18,9 @@ A practical guide to FMPL ("of Accardi"), a prototype-based object-oriented prog
 6. [Control Flow](#control-flow)
 7. [Functions and Lambdas](#functions-and-lambdas)
 8. [Objects and Methods](#objects-and-methods)
-9. [Practical Examples](#practical-examples)
-10. [Tool Calling and Agent Workflows](#tool-calling-and-agent-workflows)
+9. [Metaprogramming](#metaprogramming)
+10. [Practical Examples](#practical-examples)
+11. [Tool Calling and Agent Workflows](#tool-calling-and-agent-workflows)
 
 ---
 
@@ -434,6 +435,103 @@ These variables are always available within method bodies, similar to `this` in 
 
 ---
 
+## Metaprogramming
+
+FMPL supports **first-class AST and IR values**, enabling you to write compilers, DSLs, and code generators entirely in FMPL.
+
+### Tagged Values (Constructor Values)
+
+FMPL supports algebraic data types via tagged values:
+
+```fmpl
+-- Create tagged values (constructor syntax)
+:Int(42)
+:Binary(:+, :Int(1), :Int(2))
+:User("alice", %{active: true})
+
+-- Pattern match on tagged values
+let value = :Binary(:+, :Int(1), :Int(2))
+value @ {
+  :Binary(:+, a, b) => "Addition: " ++ a ++ " + " ++ b
+  :Binary(:-, a, b) => "Subtraction: " ++ a ++ " - " ++ b
+  :Int(n) => "Just a number: " ++ n
+}
+-- Returns: "Addition: :Int(1) + :Int(2)"
+```
+
+**Note**: Operator symbols like `:+`, `:-`, `:*` can be used as tagged values and in patterns.
+
+### Parsing Source to AST
+
+Use `ast::parse` to convert FMPL source code into a tagged AST:
+
+```fmpl
+let ast = ast::parse("1 + 2")
+-- Returns: :Binary(:+, :Int(1), :Int(2))
+
+let ast2 = ast::parse("if true then 1 else 2")
+-- Returns: :If(:Bool(true), :Int(1), :Int(2))
+
+let ast3 = ast::parse("[1, 2, 3]")
+-- Returns: :List([:Int(1), :Int(2), :Int(3)])
+```
+
+### Compiling IR to Bytecode
+
+Use `ir::compile` to transform IR (intermediate representation) into executable bytecode:
+
+```fmpl
+-- Direct IR construction
+let code = ir::compile(:Add(:LoadInt(1), :LoadInt(2)))
+-- Returns: <code> (first-class bytecode)
+
+-- With let bindings
+let code2 = ir::compile(
+  :Let(:x, :LoadInt(42),
+    :Var(:x))
+)
+```
+
+Supported IR nodes: `LoadNull`, `LoadBool`, `LoadInt`, `LoadFloat`, `LoadString`, `LoadVar`, `Var`, `Add`, `Sub`, `Mul`, `Div`, `Mod`, `Neg`, `Not`, `Eq`, `NotEq`, `Lt`, `Gt`, `LtEq`, `GtEq`, `Let`, `Seq`, `If`, `Return`, `MakeList`, `MakeTagged`.
+
+### Executing Bytecode
+
+Use `code::eval` to execute compiled bytecode:
+
+```fmpl
+let code = ir::compile(:Add(:LoadInt(1), :LoadInt(2)))
+code::eval(code)
+-- Returns: 3
+```
+
+### Full Metaprogramming Pipeline
+
+Combine all three to write compilers in FMPL:
+
+```fmpl
+-- Parse source, transform AST to IR, compile, execute
+let ast = ast::parse("1 + 2")
+
+let ir = ast @ {
+  :Binary(:+, :Int(a), :Int(b)) => :Add(:LoadInt(a), :LoadInt(b))
+  :Binary(:-, :Int(a), :Int(b)) => :Sub(:LoadInt(a), :LoadInt(b))
+  :Binary(:*, :Int(a), :Int(b)) => :Mul(:LoadInt(a), :LoadInt(b))
+  :Binary(:/, :Int(a), :Int(b)) => :Div(:LoadInt(a), :LoadInt(b))
+}
+
+let code = ir::compile(ir)
+code::eval(code)
+-- Returns: 3
+```
+
+This enables:
+- **Writing compilers** in FMPL (source → AST → IR → bytecode)
+- **DSL implementations** (parse custom syntax, compile to FMPL bytecode)
+- **Code transformation** (read code, modify it, write it back)
+- **Macro systems** (syntactic abstraction via pattern matching)
+
+---
+
 ## Practical Examples
 
 ### Example 1: JSON Parsing and Validation
@@ -695,17 +793,20 @@ cargo test -- --nocapture
 
 ## Status and Limitations
 
-**Currently Implemented** (as of 2026-01-21):
+**Currently Implemented** (as of 2026-01-28):
 - ✅ Core parser and lexer (EBNF grammar)
 - ✅ Expression evaluation (arithmetic: `+`, `-`, `*`, `/`)
-- ✅ Comparisons (`==`, `<`, `>`, `<=`, `>=`)
-- ✅ Pattern matching with `@` operator (regex and wildcard patterns)
+- ✅ Comparisons (`==`, `<`, `>`, `<=`, `>=`, `!=`)
+- ✅ Pattern matching with `@` operator (regex, wildcard, and tagged value patterns)
 - ✅ Grammar system (OMeta-style PEG)
 - ✅ Named object definitions and method calls
 - ✅ Named functions and lambdas
 - ✅ If-then-else conditionals
 - ✅ Let-bindings (statement and expression forms)
 - ✅ Lists (`[]`) and maps (`%{}`)
+- ✅ Tagged values (constructor syntax: `:Tag(args...)`)
+- ✅ Operator symbol literals (`:+`, `:-`, `:*`, etc.)
+- ✅ Metaprogramming (`ast::parse`, `ir::compile`, `code::eval`)
 - ✅ JSON parsing (`json::parse` builtin)
 - ✅ HTTP tools (`::__builtin_curl.get/post`)
 - ✅ Indexed RPN bytecode VM

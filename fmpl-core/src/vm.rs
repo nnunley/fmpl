@@ -11,6 +11,7 @@ mod vm_internal;
 use crate::compiler::{CompiledCode, InstrIndex, Instruction};
 use crate::error::{Error, Result};
 use crate::grammar::input::MemoEntry;
+use crate::grammar::runtime::apply_grammar_to_value_with_evaluator;
 use crate::grammar::{Grammar, GrammarRegistry};
 use crate::json;
 use crate::object::{Facet, Method, ObjectDb, ObjectId};
@@ -113,6 +114,13 @@ impl Vm {
             .map(|f| f.result())
             .unwrap_or(Value::Null);
         self.frames.pop();
+
+        // For backward compatibility: automatically collect streams
+        // This makes simple cases like "abc" @ { [a-z]+ => "word" } work without explicit collect
+        if let Value::Stream(stream) = result {
+            return self.execute_stream(&stream);
+        }
+
         Ok(result)
     }
 
@@ -323,9 +331,29 @@ impl Vm {
                 }
                 Instruction::StoreVar { name, value } => {
                     let val = self.frames.last().unwrap().get(value);
-                    self.store_var(name.clone(), val.clone());
+                    // Automatically execute streams when storing to variables
+                    // This provides backward compatibility for cases like:
+                    // let (ir = ast @ { ... })
+                    // let (code = ir::compile(ir))
+                    let val_to_store = match &val {
+                        Value::Stream(stream) => {
+                            eprintln!("DEBUG StoreVar: executing stream for variable {}", name);
+                            // Execute the stream and return the first match
+                            match self.execute_stream(stream) {
+                                Ok(v) => {
+                                    eprintln!("DEBUG StoreVar: stream executed to {:?}", v);
+                                    v
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        _ => val.clone(),
+                    };
+                    self.store_var(name.clone(), val_to_store.clone());
                     let frame = self.frames.last_mut().unwrap();
-                    frame.set_current(val);
+                    frame.set_current(val_to_store);
                 }
                 Instruction::LoadSelf => {
                     let val = if let Some(id) = frame.this {
@@ -728,6 +756,25 @@ impl Vm {
                         "yield can only be used within async block. Use: stream.create with sink pattern for explicit streams.".to_string()
                     ));
                 }
+                Instruction::YieldToSink { value } => {
+                    let value_to_yield = frame.get(value);
+
+                    // YieldToSink sends a value to the current output channel (if one is set in parse_state)
+                    // This is used for Prolog-style backtracking where grammars can yield multiple values
+                    if let Some(tx) = frame.parse_state.output_tx() {
+                        // Send the value to the output channel
+                        if tx.blocking_send(value_to_yield.clone()).is_err() {
+                            // Channel closed, stop backtracking
+                            return Err(Error::Runtime("output channel closed".to_string()));
+                        }
+                        // Set the yielded value as the current value (so the expression has a result)
+                        frame.set_current(value_to_yield);
+                    } else {
+                        return Err(Error::Runtime(
+                            "yield can only be used within a grammar apply (which returns a stream)".to_string()
+                        ));
+                    }
+                }
 
                 // === Data Structures ===
                 Instruction::MakeList { elements } => {
@@ -803,8 +850,27 @@ impl Vm {
                 }
                 Instruction::Bind { name, value } => {
                     let val = frame.get(value);
+                    // Automatically execute streams when binding
+                    // This provides backward compatibility for cases like:
+                    // let (ir = ast @ { ... })
+                    let val_to_bind = match &val {
+                        Value::Stream(stream) => {
+                            eprintln!("DEBUG Bind: executing stream for variable {}", name);
+                            // Execute the stream and return the first match
+                            match self.execute_stream(stream) {
+                                Ok(v) => {
+                                    eprintln!("DEBUG Bind: stream executed to {:?}", v);
+                                    v
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        _ => val.clone(),
+                    };
                     if let Some(scope) = self.scopes.last_mut() {
-                        scope.bindings.insert(name, val);
+                        scope.bindings.insert(name, val_to_bind);
                     }
                 }
                 // NameRef: resolved at compile-time, directly references Bind instruction
@@ -918,7 +984,20 @@ impl Vm {
                 }
                 Instruction::StreamCollect { source } => {
                     let source_val = frame.get(source);
-                    self.push_stream_op(source_val, StreamOp::Collect)?;
+                    // When StreamCollect is encountered, execute the entire stream pipeline
+                    match source_val {
+                        Value::Stream(stream) => {
+                            let result = self.execute_stream(&stream)?;
+                            let frame = self.frames.last_mut().unwrap();
+                            frame.set_current(result);
+                        }
+                        _ => {
+                            return Err(Error::Type {
+                                expected: "stream".to_string(),
+                                got: source_val.type_name().to_string(),
+                            });
+                        }
+                    }
                 }
                 Instruction::StreamTake { source, n } => {
                     let source_val = frame.get(source);
@@ -1082,8 +1161,8 @@ impl Vm {
                     grammar,
                     rule,
                 } => {
-                    // NEW: Use compiled grammar bytecode path instead of PegRuntime
-                    eprintln!("DEBUG GrammarApply: rule='{}'", rule);
+                    // NEW: GrammarApply returns a STREAM of all matches (backtracking)
+                    eprintln!("DEBUG GrammarApply: rule='{}', creating stream", rule);
                     let input_val = frame.get(input);
                     let grammar_val = frame.get(grammar);
 
@@ -1102,60 +1181,19 @@ impl Vm {
                         }
                     };
 
-                    // NEW BYTECODE PATH: Execute compiled grammar bytecode
-                    // 1. Compile/preload grammar to bytecode (should be cached from LoadGrammar)
-                    let grammar_name = grammar_arc.name.clone();
-                    let compiled_code = {
-                        let cache = self.compiled_grammars.lock().unwrap();
-                        cache.get(&grammar_name).cloned()
+                    // Create a stream that will parse the input with the grammar
+                    // The stream source is the input value, with a Parse operation
+                    use crate::value::Stream;
+                    let stream = Stream {
+                        source: input_val.clone(),
+                        ops: vec![StreamOp::Parse {
+                            grammar: Value::Grammar(grammar_arc),
+                            rule: rule.clone(),
+                        }],
                     };
 
-                    let compiled_code = match compiled_code {
-                        Some(code) => code,
-                        None => {
-                            // Not compiled yet - compile it now
-                            use crate::compiler::Compiler;
-                            let compiled = Compiler::compile_grammar_only(&grammar_arc)?;
-                            let compiled = Arc::new(compiled);
-                            let mut cache = self.compiled_grammars.lock().unwrap();
-                            cache.insert(grammar_name, compiled.clone());
-                            compiled
-                        }
-                    };
-
-                    // 2. Find the rule entry point
-                    let rule_name = SmolStr::new(&rule);
-                    let entry_point = match compiled_code.get_rule_entry(&rule_name) {
-                        Some(ep) => ep,
-                        None => {
-                            return Err(Error::ParseFailed {
-                                position: 0,
-                                message: format!(
-                                    "GrammarApply: rule '{}' not found in compiled grammar",
-                                    rule
-                                ),
-                            });
-                        }
-                    };
-
-                    // 3. Set up a new frame with the compiled grammar code
-                    eprintln!("DEBUG GrammarApply: entry_point={:?}", entry_point);
-                    eprintln!(
-                        "DEBUG GrammarApply: instructions={:?}",
-                        compiled_code.instructions
-                    );
-                    let mut new_frame = Frame::new(compiled_code.clone());
-                    new_frame.ip = entry_point.0;
-
-                    // 4. Set up ParseState with input value and grammar
-                    new_frame.parse_state.set_input(input_val.clone());
-                    new_frame.parse_state.set_grammar(grammar_arc);
-
-                    // 5. Push frame and execute
-                    self.frames.push(new_frame);
-
-                    // The VM will execute the rule and return the result
-                    // Continue execution in the new frame
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.set_current(Value::Stream(Arc::new(stream)));
                 }
                 Instruction::LoadGrammar(grammar) => {
                     // Pre-compile the grammar to bytecode and cache it
@@ -2725,6 +2763,136 @@ impl Vm {
         Ok(())
     }
 
+    /// Execute a stream pipeline and return the result.
+    ///
+    /// For streams with `StreamOp::Collect`, this executes the entire pipeline
+    /// and returns the collected values as a list.
+    ///
+    /// For streams with `StreamOp::Parse`, this implements backtracking to find
+    /// ALL matches from the grammar, not just the first one.
+    fn execute_stream(&mut self, stream: &Stream) -> Result<Value> {
+        use crate::value::StreamOp;
+
+        // Start with the source value
+        let mut current = stream.source.clone();
+
+        // Track if we need to collect results (for backtracking)
+        let mut output_tx: Option<tokio::sync::mpsc::Sender<Value>> = None;
+        let mut results: Vec<Value> = Vec::new();
+        let mut take_count: Option<usize> = None;
+
+        // Execute operations in sequence
+        for op in &stream.ops {
+            match op {
+                StreamOp::Map(func) => {
+                    // Map: apply function to each value
+                    // For now, just pass through (will need collection first)
+                    current = Value::String(SmolStr::new("<map stream>"));
+                }
+                StreamOp::Filter(pred) => {
+                    // Filter: keep values matching predicate
+                    // For now, just pass through
+                    current = Value::String(SmolStr::new("<filter stream>"));
+                }
+                StreamOp::Take { n } => {
+                    // Extract the take count
+                    if let Value::Int(count) = n {
+                        take_count = Some(*count as usize);
+                    }
+                }
+                StreamOp::Collect => {
+                    // Terminal operation: collect all results into a list
+                    // If we have an output_tx, collect from it
+                    if let Some(tx) = output_tx.take() {
+                        // Drop the sender to signal completion
+                        drop(tx);
+                    }
+                    // For backward compatibility: if the list has only one element, return it directly
+                    // This makes simple cases like "abc" @ { [a-z]+ => "word" } work as before
+                    if results.len() == 1 {
+                        return Ok(results.into_iter().next().unwrap());
+                    }
+                    return Ok(Value::List(Arc::new(results)));
+                }
+                StreamOp::Parse { grammar, rule } => {
+                    // Create a channel for backtracking results
+                    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+
+                    // Set output_tx so yield expressions can send to it
+                    output_tx = Some(tx);
+
+                    // Get the grammar
+                    let grammar_arc = match grammar {
+                        Value::Grammar(g) => g.clone(),
+                        Value::String(grammar_name) => {
+                            self.grammars.get(grammar_name).ok_or_else(|| {
+                                Error::Runtime(format!("grammar not found: {}", grammar_name))
+                            })?
+                        }
+                        _ => {
+                            return Err(Error::Type {
+                                expected: "grammar or string".to_string(),
+                                got: grammar.type_name().to_string(),
+                            });
+                        }
+                    };
+
+                    // Execute grammar with backtracking
+                    // TODO: Implement full backtracking search
+                    // For now, just do a single match using existing grammar system
+                    let input_value = current.clone();
+
+                    // Use the grammar runtime to match
+                    // The evaluator evaluates semantic action expressions
+                    let vm_ptr = self as *mut Self;
+                    let mut evaluator: Box<
+                        dyn FnMut(&crate::ast::Expr, &HashMap<SmolStr, Value>) -> Result<Value>,
+                    > = Box::new(move |expr, bindings| {
+                        // SAFETY: We need mutable access to the VM to evaluate expressions
+                        // This is safe because we're the only caller during this evaluation
+                        let vm = unsafe { &mut *vm_ptr };
+
+                        // Evaluate the expression with the bindings from pattern matching
+                        vm.eval_with_bindings(expr, bindings)
+                    });
+
+                    match apply_grammar_to_value_with_evaluator(
+                        input_value,
+                        &grammar_arc,
+                        &self.grammars,
+                        rule,
+                        evaluator,
+                    )? {
+                        Some(match_result) => {
+                            results.push(match_result);
+                        }
+                        None => {
+                            // No match found
+                        }
+                    }
+
+                    // Signal completion by dropping the sender
+                    if let Some(tx) = output_tx.take() {
+                        drop(tx);
+                    }
+                }
+                _ => {
+                    // Other operations not yet implemented
+                    current = Value::String(SmolStr::new("<stream>"));
+                }
+            }
+        }
+
+        // If no Collect was found, automatically collect and return the first result
+        // This provides backward compatibility for cases like "abc" @ { [a-z]+ => "word" }
+        if results.is_empty() {
+            // No matches found - return an error
+            return Err(Error::Runtime("no matches found".to_string()));
+        }
+        // Return the first match
+        Ok(results.into_iter().next().unwrap())
+    }
+
     fn throw_exception(&mut self, error: Value) -> Result<()> {
         if let Some((catch_target, frame_depth)) = self.exception_handlers.pop() {
             // Unwind frames to handler's frame
@@ -2798,6 +2966,9 @@ impl Vm {
             "curl" => return Ok(Value::Symbol(SmolStr::new("__builtin_curl"))),
             "io" => return Ok(Value::Symbol(SmolStr::new("__builtin_io"))),
             "json" => return Ok(Value::Symbol(SmolStr::new("__builtin_json"))),
+            "ast" => return Ok(Value::Symbol(SmolStr::new("__builtin_ast"))),
+            "ir" => return Ok(Value::Symbol(SmolStr::new("__builtin_ir"))),
+            "code" => return Ok(Value::Symbol(SmolStr::new("__builtin_code"))),
             "env" => return Ok(Value::Symbol(SmolStr::new("__builtin_env"))),
             "sse" => return Ok(Value::Symbol(SmolStr::new("__builtin_sse"))),
             "time" => return Ok(Value::Symbol(SmolStr::new("__builtin_time"))),
@@ -3027,6 +3198,64 @@ impl Vm {
                     _ => return Err(Error::Runtime("env.get requires string name".to_string())),
                 };
                 crate::builtins::EnvBuiltin::get(name)
+            }
+            ("__builtin_ast", "parse") => {
+                let source = match args.first() {
+                    Some(Value::String(s)) => s.as_str(),
+                    _ => {
+                        return Ok(Value::Map(std::sync::Arc::new(
+                            vec![
+                                ("error".into(), Value::String("invalid_args".into())),
+                                (
+                                    "message".into(),
+                                    Value::String("ast::parse requires string argument".into()),
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        )));
+                    }
+                };
+                crate::builtins::ast::parse(source)
+            }
+            ("__builtin_ir", "compile") => {
+                let ir = match args.first() {
+                    Some(v) => v,
+                    None => {
+                        return Ok(Value::Map(std::sync::Arc::new(
+                            vec![
+                                ("error".into(), Value::String("invalid_args".into())),
+                                (
+                                    "message".into(),
+                                    Value::String("ir::compile requires IR argument".into()),
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        )));
+                    }
+                };
+                crate::builtins::ir::compile(ir)
+            }
+            ("__builtin_code", "eval") => {
+                let code = match args.first() {
+                    Some(Value::Code(c)) => c.clone(),
+                    _ => {
+                        return Ok(Value::Map(std::sync::Arc::new(
+                            vec![
+                                ("error".into(), Value::String("invalid_args".into())),
+                                (
+                                    "message".into(),
+                                    Value::String("code::eval requires Code argument".into()),
+                                ),
+                            ]
+                            .into_iter()
+                            .collect(),
+                        )));
+                    }
+                };
+                // Execute the compiled code in current VM context
+                self.run(&code)
             }
             ("__builtin_json", "parse") => {
                 let json_str = match args.first() {

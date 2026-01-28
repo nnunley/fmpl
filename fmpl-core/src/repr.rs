@@ -432,6 +432,8 @@ impl Display for Expr {
             }
 
             Expr::StreamLiteral(expr) => write!(f, "stream {{ {} }}", expr),
+
+            Expr::Yield(expr) => write!(f, "yield {}", expr),
         }
     }
 }

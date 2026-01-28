@@ -201,6 +201,9 @@ pub enum Instruction {
     Yield {
         value: InstrIndex,
     }, // Yield value from async generator
+    YieldToSink {
+        value: InstrIndex,
+    }, // Yield value to current sink (for grammar backtracking)
 
     // Data structures (explicit operand indices)
     MakeList {
@@ -959,6 +962,7 @@ impl Compiler {
                         .emit(Instruction::LoadString(SmolStr::new(qn.to_string()))),
                     _ => self.compile_expr(grammar)?,
                 };
+                // GrammarApply now always returns a stream
                 Ok(self.code.emit(Instruction::GrammarApply {
                     input: input_idx,
                     grammar: grammar_idx,
@@ -982,6 +986,11 @@ impl Compiler {
             Expr::StreamLiteral(expr) => {
                 let source = self.compile_expr(expr)?;
                 Ok(self.code.emit(Instruction::MakeStream { source }))
+            }
+            Expr::Yield(expr) => {
+                let value = self.compile_expr(expr)?;
+                // YieldToSink sends the value to the current sink and continues execution
+                Ok(self.code.emit(Instruction::YieldToSink { value }))
             }
             Expr::TryCatch {
                 body,
@@ -1132,6 +1141,63 @@ impl Compiler {
             if qn.parts.len() == 2 {
                 let module = &qn.parts[0];
                 let method = &qn.parts[1];
+
+                // Convert ast::parse(args) to __builtin_ast.parse(args)
+                if module == "ast" && method == "parse" {
+                    let builtin_idx = self
+                        .code
+                        .emit(Instruction::LoadSymbol(SmolStr::new("__builtin_ast")));
+                    let mut arg_indices = Vec::with_capacity(args.len());
+                    for arg in args {
+                        match arg {
+                            Arg::Expr(e) => arg_indices.push(self.compile_expr(e)?),
+                            Arg::Placeholder => unreachable!(),
+                        }
+                    }
+                    return Ok(self.code.emit(Instruction::MethodCall {
+                        receiver: builtin_idx,
+                        method: method.clone(),
+                        args: arg_indices,
+                    }));
+                }
+
+                // Convert ir::compile(args) to __builtin_ir.compile(args)
+                if module == "ir" && method == "compile" {
+                    let builtin_idx = self
+                        .code
+                        .emit(Instruction::LoadSymbol(SmolStr::new("__builtin_ir")));
+                    let mut arg_indices = Vec::with_capacity(args.len());
+                    for arg in args {
+                        match arg {
+                            Arg::Expr(e) => arg_indices.push(self.compile_expr(e)?),
+                            Arg::Placeholder => unreachable!(),
+                        }
+                    }
+                    return Ok(self.code.emit(Instruction::MethodCall {
+                        receiver: builtin_idx,
+                        method: method.clone(),
+                        args: arg_indices,
+                    }));
+                }
+
+                // Convert code::eval(args) to __builtin_code.eval(args)
+                if module == "code" && method == "eval" {
+                    let builtin_idx = self
+                        .code
+                        .emit(Instruction::LoadSymbol(SmolStr::new("__builtin_code")));
+                    let mut arg_indices = Vec::with_capacity(args.len());
+                    for arg in args {
+                        match arg {
+                            Arg::Expr(e) => arg_indices.push(self.compile_expr(e)?),
+                            Arg::Placeholder => unreachable!(),
+                        }
+                    }
+                    return Ok(self.code.emit(Instruction::MethodCall {
+                        receiver: builtin_idx,
+                        method: method.clone(),
+                        args: arg_indices,
+                    }));
+                }
 
                 // Convert json::parse(args) and json::stringify(args) to __builtin_json.method(args)
                 if module == "json" && (method == "parse" || method == "stringify") {

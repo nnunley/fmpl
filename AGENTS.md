@@ -176,3 +176,69 @@ The original grammar defines a language with:
 - `<error>` productions handle malformed input
 - Optional separators: commas between list items are often optional
 - Optional semicolons between statements (`<optsemi>`)
+
+## Using the REPL
+
+The FMPL CLI (`cargo run -p fmpl-cli`) provides an interactive REPL with rustyline history.
+
+### REPL Commands
+
+- `:help`, `:h`, `:?` — Show help
+- `:quit`, `:q`, `:exit` — Exit the REPL
+- `:clear` — Clear the screen
+- `:reset` — Reset VM state (clears all variables)
+- `:objects` — List all named objects
+
+### Loading Files
+
+Use `io::load("path/to/file.fmpl")` to load and execute FMPL code from a file:
+
+```fmpl
+fmpl> io::load("lib/anthropic.fmpl")
+=> :__builtin_io
+fmpl> let (response = anthropic::messages.create(...))
+```
+
+### Examples
+
+```fmpl
+// Basic arithmetic
+fmpl> 1 + 2
+=> 3
+
+// Let bindings
+fmpl> let x = 42
+=> 42
+fmpl> x + 1
+=> 43
+
+// Pattern matching
+// Note: Expressions starting with : must be bound first (REPL limitation)
+fmpl> let x = :Binary(:+, :Int(1), :Int(2))
+=> :Binary(:+, :Int(1), :Int(2))
+fmpl> x @ { :Binary(op, a, b) => [op, a, b] }
+=> [:+, :Int(1), :Int(2)]
+
+// Metaprogramming pipeline
+fmpl> let ast = ast::parse("1 + 2")
+=> :Binary(:+, :Int(1), :Int(2))
+fmpl> let ir = ast @ { :Binary(:+, :Int(a), :Int(b)) => :Add(:LoadInt(a), :LoadInt(b)) }
+=> :Add(:LoadInt(1), :LoadInt(2))
+fmpl> let code = ir::compile(ir)
+=> <code>
+fmpl> code::eval(code)
+=> 3
+
+// Async operations (auto-wait in REPL)
+fmpl> <- http::get("https://example.com")
+=> %{status: 200, body: "..."}
+```
+
+### Current Limitations
+
+- Expressions starting with `:` are interpreted as REPL commands — bind to variable first
+- No `-e` flag for one-liners
+- No direct file execution (`fmpl script.fmpl`)
+- No stdin input for piping
+- No multiline input (single expressions only)
+- Use `io::load()` for loading files within the REPL session

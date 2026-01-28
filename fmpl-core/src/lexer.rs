@@ -66,6 +66,8 @@ pub enum Token {
     Stream,
     #[token("grammar")]
     Grammar,
+    #[token("yield")]
+    Yield,
 
     // Built-in references
     #[token("self")]
@@ -105,7 +107,8 @@ pub enum Token {
     #[regex(r"@[a-zA-Z_][a-zA-Z0-9_]*", |lex| SmolStr::new(&lex.slice()[1..]))]
     FnTag(SmolStr),
 
-    #[regex(r":[a-zA-Z_][a-zA-Z0-9_]*", |lex| SmolStr::new(&lex.slice()[1..]))]
+    // Symbol: either identifier-style (:foo) or operator-style (:+, :==, etc.)
+    #[regex(r":([a-zA-Z_][a-zA-Z0-9_]*|[+\-*/%<>=!|&]+)", |lex| SmolStr::new(&lex.slice()[1..]))]
     Symbol(SmolStr),
 
     #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().ok())]
@@ -314,6 +317,24 @@ mod tests {
         let tokens = Lexer::new(":foo :bar").tokenize().unwrap();
         assert!(matches!(&tokens[0].token, Token::Symbol(s) if s == "foo"));
         assert!(matches!(&tokens[1].token, Token::Symbol(s) if s == "bar"));
+    }
+
+    #[test]
+    fn test_operator_symbols() {
+        // Test operator symbol literals like :+, :-, :==, etc.
+        let tokens = Lexer::new(":+ :- :* :/ :== :!= :<= :>= :&& :||")
+            .tokenize()
+            .unwrap();
+        assert!(matches!(&tokens[0].token, Token::Symbol(s) if s == "+"));
+        assert!(matches!(&tokens[1].token, Token::Symbol(s) if s == "-"));
+        assert!(matches!(&tokens[2].token, Token::Symbol(s) if s == "*"));
+        assert!(matches!(&tokens[3].token, Token::Symbol(s) if s == "/"));
+        assert!(matches!(&tokens[4].token, Token::Symbol(s) if s == "=="));
+        assert!(matches!(&tokens[5].token, Token::Symbol(s) if s == "!="));
+        assert!(matches!(&tokens[6].token, Token::Symbol(s) if s == "<="));
+        assert!(matches!(&tokens[7].token, Token::Symbol(s) if s == ">="));
+        assert!(matches!(&tokens[8].token, Token::Symbol(s) if s == "&&"));
+        assert!(matches!(&tokens[9].token, Token::Symbol(s) if s == "||"));
     }
 
     #[test]

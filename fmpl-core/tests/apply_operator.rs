@@ -22,47 +22,25 @@ mod named_grammar {
     fn string_to_text_parser() {
         let mut vm = Vm::new();
         // Parse digits from a string
-        // Note: integer returns a list of digits, which we need to join
         let result = eval(&mut vm, r#""12345" @ base::parser.integer"#).unwrap();
-        // For now, integer returns a list of strings
-        if let Value::List(ref l) = result {
-            let joined: String = l
-                .iter()
-                .map(|v| {
-                    if let Value::String(s) = v {
-                        s.as_str()
-                    } else {
-                        ""
-                    }
-                })
-                .collect();
-            assert_eq!(joined, "12345");
-        } else {
-            panic!("Expected List, got {:?}", result);
-        }
+        // integer returns the matched string
+        assert!(
+            matches!(result, Value::String(ref s) if s == "12345"),
+            "got {:?}",
+            result
+        );
     }
 
     #[test]
     fn string_to_text_parser_word() {
         let mut vm = Vm::new();
-        // Note: word returns a list of letters, which we need to join
+        // word returns the matched string
         let result = eval(&mut vm, r#""hello" @ base::parser.word"#).unwrap();
-        // For now, word returns a list of strings
-        if let Value::List(ref l) = result {
-            let joined: String = l
-                .iter()
-                .map(|v| {
-                    if let Value::String(s) = v {
-                        s.as_str()
-                    } else {
-                        ""
-                    }
-                })
-                .collect();
-            assert_eq!(joined, "hello");
-        } else {
-            panic!("Expected List, got {:?}", result);
-        }
+        assert!(
+            matches!(result, Value::String(ref s) if s == "hello"),
+            "got {:?}",
+            result
+        );
     }
 
     #[test]
@@ -452,16 +430,12 @@ mod semantic_actions {
         "#,
         )
         .unwrap();
-        // digit+:d returns a list of matched digits
-        if let Value::List(ref l) = result {
-            let expected: Vec<Value> = vec!["1", "2", "3"]
-                .iter()
-                .map(|s| Value::String((*s).into()))
-                .collect();
-            assert_eq!(l.as_ref(), &expected, "got {:?}", result);
-        } else {
-            panic!("Expected List, got {:?}", result);
-        }
+        // digit+:d returns concatenated string when matching character strings
+        assert!(
+            matches!(result, Value::String(ref s) if s == "123"),
+            "got {:?}",
+            result
+        );
     }
 
     #[test]
@@ -529,12 +503,8 @@ mod edge_cases {
         let mut vm = Vm::new();
         // Empty list - end should match
         let result = eval(&mut vm, r#"[] @ base::tree.end"#).unwrap();
-        // MatchEnd returns empty list as sentinel for "matched at end"
-        assert!(
-            matches!(result, Value::List(ref l) if l.is_empty()),
-            "got {:?}",
-            result
-        );
+        // MatchEnd returns Null on successful match
+        assert!(matches!(result, Value::Null), "got {:?}", result);
     }
 }
 

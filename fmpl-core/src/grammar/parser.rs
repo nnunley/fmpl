@@ -503,9 +503,9 @@ impl<'a> GrammarParser<'a> {
                 Ok(Pattern::Rule(name))
             }
             Some(':') => {
-                // Constructor pattern: :Tag(patterns...) or symbol literal :Tag
+                // Constructor pattern: :Tag(patterns...) or symbol literal :Tag/:+
                 self.advance(); // consume ':'
-                let tag = self.parse_ident()?;
+                let tag = self.parse_symbol_name()?;
                 self.skip_whitespace();
                 if self.peek_char() == Some('(') {
                     self.advance(); // consume '('
@@ -529,7 +529,7 @@ impl<'a> GrammarParser<'a> {
                     self.expect_char(')')?;
                     Ok(Pattern::TagMatch(tag, patterns))
                 } else {
-                    // Just :Tag without parens - match symbol value
+                    // Just :Tag/:+ without parens - match symbol value
                     Ok(Pattern::SymbolLiteral(tag))
                 }
             }
@@ -733,9 +733,9 @@ impl<'a> GrammarParser<'a> {
                 Ok(Pattern::Any)
             }
             Some(':') => {
-                // Could be a symbol literal :foo or a nested TagMatch :Tag(...)
+                // Could be a symbol literal :foo/:+ or a nested TagMatch :Tag(...)
                 self.advance();
-                let name = self.parse_ident()?;
+                let name = self.parse_symbol_name()?;
                 self.skip_whitespace();
                 if self.peek_char() == Some('(') {
                     // Nested TagMatch: :Tag(patterns...)
@@ -758,7 +758,7 @@ impl<'a> GrammarParser<'a> {
                     self.expect_char(')')?;
                     Ok(Pattern::TagMatch(name, patterns))
                 } else {
-                    // Symbol literal :foo - matches Value::Symbol("foo")
+                    // Symbol literal :foo/:+ - matches Value::Symbol("foo")/Value::Symbol("+")
                     Ok(Pattern::SymbolLiteral(name))
                 }
             }
@@ -1095,6 +1095,53 @@ impl<'a> GrammarParser<'a> {
             return Err(Error::Parser {
                 token: self.pos,
                 message: "expected identifier".to_string(),
+            });
+        }
+
+        Ok(SmolStr::new(&self.source[start..self.pos]))
+    }
+
+    /// Parse a symbol name (after the colon).
+    /// Supports both identifier-style (:foo) and operator-style (:+, :==, etc.)
+    fn parse_symbol_name(&mut self) -> Result<SmolStr> {
+        let start = self.pos;
+
+        // First check if it's an operator symbol
+        if let Some(c) = self.peek_char() {
+            if matches!(
+                c,
+                '+' | '-' | '*' | '/' | '%' | '<' | '>' | '=' | '!' | '|' | '&'
+            ) {
+                // Parse operator characters
+                while let Some(c) = self.peek_char() {
+                    if matches!(
+                        c,
+                        '+' | '-' | '*' | '/' | '%' | '<' | '>' | '=' | '!' | '|' | '&'
+                    ) {
+                        self.advance();
+                    } else {
+                        break;
+                    }
+                }
+                if self.pos > start {
+                    return Ok(SmolStr::new(&self.source[start..self.pos]));
+                }
+            }
+        }
+
+        // Otherwise parse as identifier
+        while let Some(c) = self.peek_char() {
+            if c.is_alphanumeric() || c == '_' {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if self.pos == start {
+            return Err(Error::Parser {
+                token: self.pos,
+                message: "expected symbol name".to_string(),
             });
         }
 

@@ -670,6 +670,7 @@ impl<'a> Parser<'a> {
             Token::Lambda => self.parse_lambda(),
             Token::Backslash => self.parse_short_lambda(),
             Token::Return => self.parse_return(),
+            Token::Yield => self.parse_yield(),
             Token::Spawn => self.parse_spawn(),
             Token::Match => self.parse_match(),
             Token::Try => self.parse_try_catch(),
@@ -1109,6 +1110,7 @@ impl<'a> Parser<'a> {
                 | Token::Do
                 | Token::Lambda
                 | Token::Return
+                | Token::Yield
                 | Token::Spawn
                 | Token::Try
                 | Token::Catch
@@ -1387,6 +1389,15 @@ impl<'a> Parser<'a> {
 
         let expr = self.parse_expr()?;
         Ok(Expr::Return(Some(Box::new(expr))))
+    }
+
+    /// Parse yield expression.
+    fn parse_yield(&mut self) -> Result<Expr> {
+        self.expect(&Token::Yield)?;
+
+        // yield requires an expression
+        let expr = self.parse_expr()?;
+        Ok(Expr::Yield(Box::new(expr)))
     }
 
     /// Parse spawn expression.

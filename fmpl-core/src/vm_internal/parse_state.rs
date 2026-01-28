@@ -15,6 +15,7 @@ use crate::value::Value;
 use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 
 /// A single frame in the input stack for tree descent.
 #[derive(Debug, Clone)]
@@ -77,6 +78,12 @@ pub struct ParseState {
     /// Per-position memoization table for packrat parsing.
     /// Key: (identity, position, rule_name), Value: memo entry
     memo: HashMap<MemoKey, MemoEntry>,
+    /// Output channel for stream-based grammar apply.
+    /// When set, each match sends its result to this channel.
+    /// Used for Prolog-style backtracking where grammar apply returns a stream of all matches.
+    output_tx: Option<mpsc::Sender<Value>>,
+    /// Abort flag for early termination (e.g., when take(n) is satisfied)
+    abort: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Key for memoization table.
@@ -97,7 +104,39 @@ impl ParseState {
             input_stack: Vec::new(),
             grammar: None,
             memo: HashMap::new(),
+            output_tx: None,
+            abort: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Set the output channel for stream-based grammar apply.
+    pub fn set_output_tx(&mut self, tx: mpsc::Sender<Value>) {
+        self.output_tx = Some(tx);
+    }
+
+    /// Get the current output channel (if set).
+    pub fn output_tx(&self) -> Option<&mpsc::Sender<Value>> {
+        self.output_tx.as_ref()
+    }
+
+    /// Clear the output channel.
+    pub fn clear_output_tx(&mut self) {
+        self.output_tx = None;
+    }
+
+    /// Get the abort flag (for early termination).
+    pub fn abort_flag(&self) -> &Arc<std::sync::atomic::AtomicBool> {
+        &self.abort
+    }
+
+    /// Check if aborted.
+    pub fn is_aborted(&self) -> bool {
+        self.abort.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Set abort flag (stops backtracking).
+    pub fn abort(&self) {
+        self.abort.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Set the input value for pattern matching.

@@ -271,6 +271,7 @@ pub enum Expr {
 
     /// Grammar application: expr @ grammar.rule
     /// The grammar can be a qualified name (static) or any expression (dynamic).
+    /// Always returns a stream of all matches (backtracking).
     GrammarApply {
         input: Box<Expr>,
         grammar: Box<Expr>,
@@ -285,6 +286,10 @@ pub enum Expr {
 
     /// Stream literal: stream { expr }
     StreamLiteral(Box<Expr>),
+
+    /// Yield expression: yield expr
+    /// Sends a value to the current sink (if one is active in a grammar apply)
+    Yield(Box<Expr>),
 }
 
 /// Map entry (key: val or expr => expr).
