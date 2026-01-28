@@ -974,6 +974,41 @@ impl Vm {
                         }
                     }
                 }
+                Instruction::ExtractTaggedChild { source, index } => {
+                    let tagged_val = frame.get(source);
+                    match tagged_val {
+                        Value::Tagged(_, children) => {
+                            let value = children.get(index).cloned().ok_or_else(|| {
+                                Error::Runtime(format!("child index {} out of bounds", index))
+                            })?;
+                            let frame = self.frames.last_mut().unwrap();
+                            frame.set_current(value);
+                        }
+                        _ => {
+                            return Err(Error::Type {
+                                expected: "tagged".to_string(),
+                                got: tagged_val.type_name().to_string(),
+                            });
+                        }
+                    }
+                }
+                Instruction::MatchTag {
+                    value,
+                    tag,
+                    fail_target,
+                } => {
+                    let val = frame.get(value);
+                    let matches = match val {
+                        Value::Tagged(t, _) => t == tag,
+                        _ => false,
+                    };
+                    if !matches {
+                        frame.ip = fail_target.as_usize();
+                        continue;
+                    }
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.set_current(Value::Bool(true));
+                }
 
                 // === Object Definition ===
                 Instruction::DefineObject(name) => {
@@ -2221,6 +2256,133 @@ impl Vm {
 
                     // All paths navigated successfully - return the input map
                     frame.set_current(input_val);
+                }
+
+                Instruction::MatchTaggedWithBindings { tag_idx, bindings } => {
+                    // Match a tagged value with simple bindings.
+                    // E.g., :Int(n) matches Value::Tagged("Int", [v]) and binds n = v
+                    let input_val = frame.parse_state.input().cloned().unwrap_or(Value::Null);
+
+                    // Check if input is a Tagged value with matching tag
+                    let Value::Tagged(ref input_tag, ref children) = input_val else {
+                        frame.set_current(Value::Null);
+                        continue;
+                    };
+
+                    let expected_tag = frame.code.get_constant(tag_idx);
+                    if input_tag.as_str() != expected_tag.as_str() {
+                        frame.set_current(Value::Null);
+                        continue;
+                    }
+
+                    // Check arity matches
+                    if children.len() != bindings.len() {
+                        frame.set_current(Value::Null);
+                        continue;
+                    }
+
+                    // Bind each child to its corresponding variable (None = wildcard)
+                    for (i, var_name_opt) in bindings.iter().enumerate() {
+                        if let Some(var_name_idx) = var_name_opt {
+                            let var_name = frame.code.get_constant(*var_name_idx);
+                            frame.locals.insert(var_name.clone(), children[i].clone());
+                        }
+                    }
+
+                    // Return the matched tagged value
+                    frame.set_current(input_val);
+                }
+
+                Instruction::MatchTagged { tag_idx, patterns } => {
+                    // Match a tagged value with nested pattern execution.
+                    // E.g., :Binary(:plus, :Int(a), :Int(b)) needs to match nested Tagged values
+                    let input_val = frame.parse_state.input().cloned().unwrap_or(Value::Null);
+
+                    // Check if input is a Tagged value with matching tag
+                    let Value::Tagged(ref input_tag, ref children) = input_val else {
+                        frame.set_current(Value::Null);
+                        continue;
+                    };
+
+                    let expected_tag = frame.code.get_constant(tag_idx);
+                    if input_tag.as_str() != expected_tag.as_str() {
+                        frame.set_current(Value::Null);
+                        continue;
+                    }
+
+                    // Check arity matches
+                    if children.len() != patterns.len() {
+                        frame.set_current(Value::Null);
+                        continue;
+                    }
+
+                    // Execute each pattern instruction against the corresponding child
+                    let saved_input = frame.parse_state.input().cloned();
+
+                    let mut all_matched = true;
+                    for (i, pattern_idx) in patterns.iter().enumerate() {
+                        // Set the child as input for the pattern
+                        frame.parse_state.set_input(children[i].clone());
+                        frame.parse_state.set_input_pos(Some(0));
+
+                        // Get and execute the pattern instruction
+                        let pattern_instr = frame.code.instructions[pattern_idx.0].clone();
+
+                        match &pattern_instr {
+                            Instruction::MatchTaggedWithBindings {
+                                tag_idx: inner_tag_idx,
+                                bindings: inner_bindings,
+                            } => {
+                                // Nested TagMatch with simple bindings
+                                let child = &children[i];
+                                let Value::Tagged(child_tag, child_children) = child else {
+                                    all_matched = false;
+                                    break;
+                                };
+                                let expected_inner_tag = frame.code.get_constant(*inner_tag_idx);
+                                if child_tag.as_str() != expected_inner_tag.as_str() {
+                                    all_matched = false;
+                                    break;
+                                }
+                                if child_children.len() != inner_bindings.len() {
+                                    all_matched = false;
+                                    break;
+                                }
+                                // Bind variables
+                                for (j, var_name_opt) in inner_bindings.iter().enumerate() {
+                                    if let Some(var_name_idx) = var_name_opt {
+                                        let var_name = frame.code.get_constant(*var_name_idx);
+                                        frame
+                                            .locals
+                                            .insert(var_name.clone(), child_children[j].clone());
+                                    }
+                                }
+                            }
+                            Instruction::MatchBind { pattern: _, name } => {
+                                // Simple binding: bind the child value to the variable
+                                let var_name = frame.code.get_constant(*name);
+                                frame.locals.insert(var_name.clone(), children[i].clone());
+                            }
+                            Instruction::MatchAny => {
+                                // Wildcard - matches anything, no binding
+                            }
+                            _ => {
+                                // Other patterns - for now treat as wildcard
+                                // TODO: Execute the full pattern
+                            }
+                        }
+                    }
+
+                    // Restore input
+                    if let Some(saved) = saved_input {
+                        frame.parse_state.set_input(saved);
+                    }
+
+                    if all_matched {
+                        frame.set_current(input_val);
+                    } else {
+                        frame.set_current(Value::Null);
+                    }
                 }
 
                 Instruction::ApplyRule { rule_idx } => {

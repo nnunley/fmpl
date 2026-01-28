@@ -1318,8 +1318,11 @@ impl<'a> Parser<'a> {
             let mut bindings = Vec::new();
             while !self.check(&Token::RParen) && !self.is_at_end() {
                 // Check if this is a pattern or simple binding
-                let binding = if self.check(&Token::Percent) || self.check(&Token::LBracket) {
-                    // Pattern destructuring: %{...} = expr or [...] = expr
+                let binding = if self.check(&Token::Percent)
+                    || self.check(&Token::LBracket)
+                    || self.is_symbol_with_paren()
+                {
+                    // Pattern destructuring: %{...} = expr or [...] = expr or :Tag(...) = expr
                     let pattern = self.parse_pattern()?;
                     self.expect(&Token::Eq)?;
                     let init = self.parse_expr()?;
@@ -1535,7 +1538,25 @@ impl<'a> Parser<'a> {
             Token::Symbol(s) => {
                 let s = s.clone();
                 self.advance();
-                Pattern::Symbol(s)
+                // Check for constructor pattern: :Tag(patterns...)
+                if self.check(&Token::LParen) {
+                    self.advance(); // consume '('
+                    let mut patterns = Vec::new();
+                    if !self.check(&Token::RParen) {
+                        patterns.push(self.parse_pattern()?);
+                        while self.check(&Token::Comma) {
+                            self.advance();
+                            if self.check(&Token::RParen) {
+                                break; // trailing comma
+                            }
+                            patterns.push(self.parse_pattern()?);
+                        }
+                    }
+                    self.expect(&Token::RParen)?;
+                    Pattern::Constructor(s, patterns)
+                } else {
+                    Pattern::Symbol(s)
+                }
             }
             Token::Ident(s) => {
                 let s = s.clone();
@@ -1629,6 +1650,12 @@ impl<'a> Parser<'a> {
     fn check_symbol_key(&self) -> bool {
         matches!(self.peek_token(), Some(Token::Symbol(_)))
             && self.peek_ahead(1).map(|t| &t.token) == Some(&Token::Colon)
+    }
+
+    /// Check if current position is a symbol followed by LParen (constructor pattern)
+    fn is_symbol_with_paren(&self) -> bool {
+        matches!(self.peek_token(), Some(Token::Symbol(_)))
+            && self.peek_ahead(1).map(|t| &t.token) == Some(&Token::LParen)
     }
 
     fn expect(&mut self, token: &Token) -> Result<()> {

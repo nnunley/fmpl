@@ -550,6 +550,21 @@ impl<'a> Display for GrammarPatternRepr<'a> {
                 write!(f, "}}")
             }
             GrammarPattern::SymbolMatch(sym) => write!(f, ":{}", sym),
+            GrammarPattern::SymbolLiteral(sym) => write!(f, ":{}", sym),
+            GrammarPattern::TagMatch(tag, pats) => {
+                write!(f, ":{}", tag)?;
+                if !pats.is_empty() {
+                    write!(f, "(")?;
+                    for (i, p) in pats.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", GrammarPatternRepr(p))?;
+                    }
+                    write!(f, ")")?;
+                }
+                Ok(())
+            }
             GrammarPattern::End => write!(f, "end"),
 
             // Binary patterns
@@ -634,6 +649,7 @@ impl SourceRepr for Value {
             Value::TupleSpace(_) => "<tuplespace>".to_string(),
             Value::TupleSpaceFacet(_) => "<tuplespace_facet>".to_string(),
             Value::Cursor(c) => format!("<cursor branch:{} pos:{}>", c.branch_id, c.position.index),
+            Value::Code(_) => "<code>".to_string(),
         }
     }
 }

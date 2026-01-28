@@ -726,6 +726,75 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
                 Ok(ParseResult::Failure)
             }
 
+            Pattern::SymbolLiteral(name) => {
+                // Match a symbol with the given name (used for :foo patterns in match blocks)
+                if !self.input.supports_value_patterns() {
+                    return Err(Error::Runtime(
+                        "value patterns not supported for this input type".to_string(),
+                    ));
+                }
+                if let Some(InputItem::Value(Value::Symbol(sym))) = self.input.head(&pos)
+                    && sym.as_str() == name.as_str()
+                {
+                    let new_pos = self.input.tail(&pos);
+                    return Ok(ParseResult::Success(
+                        Value::Symbol(sym),
+                        self.input.index(&new_pos),
+                    ));
+                }
+                Ok(ParseResult::Failure)
+            }
+
+            Pattern::TagMatch(tag, child_patterns) => {
+                // Match a tagged/constructor value like :Int(42) or :Binary(:plus, 1, 2)
+                if !self.input.supports_value_patterns() {
+                    return Err(Error::Runtime(
+                        "value patterns not supported for this input type".to_string(),
+                    ));
+                }
+
+                // Get the tagged value from input
+                let (value_tag, children) = match self.input.head(&pos) {
+                    Some(InputItem::Value(Value::Tagged(t, c))) => (t, (*c).clone()),
+                    _ => return Ok(ParseResult::Failure),
+                };
+
+                // Check tag matches
+                if value_tag.as_str() != tag.as_str() {
+                    return Ok(ParseResult::Failure);
+                }
+
+                // Check arity matches
+                if children.len() != child_patterns.len() {
+                    return Ok(ParseResult::Failure);
+                }
+
+                // Match each child pattern against corresponding child value
+                let mut matched_values = Vec::new();
+                for (i, pat) in child_patterns.iter().enumerate() {
+                    let sub_input = ValueInput::new(vec![children[i].clone()]);
+                    let mut sub_runtime =
+                        PegRuntime::new(sub_input, self.registry, self.grammar.clone());
+                    sub_runtime.bindings = self.bindings.clone();
+
+                    let result = sub_runtime.match_pattern(pat, 0)?;
+                    match result {
+                        ParseResult::Success(v, _) => {
+                            matched_values.push(v);
+                            // Merge bindings back
+                            self.bindings.extend(sub_runtime.bindings);
+                        }
+                        ParseResult::Failure => return Ok(ParseResult::Failure),
+                    }
+                }
+
+                let new_pos = self.input.tail(&pos);
+                Ok(ParseResult::Success(
+                    Value::Tagged(value_tag, Arc::new(matched_values)),
+                    self.input.index(&new_pos),
+                ))
+            }
+
             Pattern::ListMatch(patterns, rest) => {
                 if !self.input.supports_value_patterns() {
                     return Err(Error::Runtime(

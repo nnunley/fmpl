@@ -283,6 +283,13 @@ pub enum Pattern {
     /// Match a symbol with a specific name.
     SymbolMatch(SmolStr),
 
+    /// Match a symbol literal (like :foo in patterns).
+    SymbolLiteral(SmolStr),
+
+    /// Match a tagged/constructor value with specific tag and child patterns.
+    /// E.g., :Int(n) matches Value::Tagged("Int", [n])
+    TagMatch(SmolStr, Vec<Pattern>),
+
     /// Descend into a value and apply a pattern (for tree walking).
     /// When parsing a list, this pops an element and matches against it.
     Apply(Box<Pattern>),

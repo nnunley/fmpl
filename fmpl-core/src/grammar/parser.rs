@@ -502,6 +502,37 @@ impl<'a> GrammarParser<'a> {
                 let name = self.parse_ident()?;
                 Ok(Pattern::Rule(name))
             }
+            Some(':') => {
+                // Constructor pattern: :Tag(patterns...) or symbol literal :Tag
+                self.advance(); // consume ':'
+                let tag = self.parse_ident()?;
+                self.skip_whitespace();
+                if self.peek_char() == Some('(') {
+                    self.advance(); // consume '('
+                    self.skip_whitespace();
+                    let mut patterns = Vec::new();
+                    if self.peek_char() != Some(')') {
+                        // Use value_pattern parsing for constructor children -
+                        // this treats bare identifiers as bindings, not rule references
+                        patterns.push(self.parse_tag_child_pattern()?);
+                        self.skip_whitespace();
+                        while self.peek_char() == Some(',') {
+                            self.advance();
+                            self.skip_whitespace();
+                            if self.peek_char() == Some(')') {
+                                break; // trailing comma
+                            }
+                            patterns.push(self.parse_tag_child_pattern()?);
+                            self.skip_whitespace();
+                        }
+                    }
+                    self.expect_char(')')?;
+                    Ok(Pattern::TagMatch(tag, patterns))
+                } else {
+                    // Just :Tag without parens - match symbol value
+                    Ok(Pattern::SymbolLiteral(tag))
+                }
+            }
             Some(c) => Err(Error::Parser {
                 token: self.pos,
                 message: format!("unexpected character in pattern: {:?}", c),
@@ -688,6 +719,96 @@ impl<'a> GrammarParser<'a> {
 
         self.expect_char(']')?;
         Ok(Pattern::ListMatch(patterns, rest_pattern))
+    }
+
+    /// Parse a pattern inside a TagMatch (constructor pattern).
+    /// Like value patterns, bare identifiers are bindings, not rule references.
+    /// But this also supports nested TagMatch patterns like :Binary(op, :Int(a), :Int(b)).
+    fn parse_tag_child_pattern(&mut self) -> Result<Pattern> {
+        self.skip_whitespace();
+
+        match self.peek_char() {
+            Some('_') => {
+                self.advance();
+                Ok(Pattern::Any)
+            }
+            Some(':') => {
+                // Could be a symbol literal :foo or a nested TagMatch :Tag(...)
+                self.advance();
+                let name = self.parse_ident()?;
+                self.skip_whitespace();
+                if self.peek_char() == Some('(') {
+                    // Nested TagMatch: :Tag(patterns...)
+                    self.advance(); // consume '('
+                    self.skip_whitespace();
+                    let mut patterns = Vec::new();
+                    if self.peek_char() != Some(')') {
+                        patterns.push(self.parse_tag_child_pattern()?);
+                        self.skip_whitespace();
+                        while self.peek_char() == Some(',') {
+                            self.advance();
+                            self.skip_whitespace();
+                            if self.peek_char() == Some(')') {
+                                break; // trailing comma
+                            }
+                            patterns.push(self.parse_tag_child_pattern()?);
+                            self.skip_whitespace();
+                        }
+                    }
+                    self.expect_char(')')?;
+                    Ok(Pattern::TagMatch(name, patterns))
+                } else {
+                    // Symbol literal :foo - matches Value::Symbol("foo")
+                    Ok(Pattern::SymbolLiteral(name))
+                }
+            }
+            Some('[') => {
+                // List pattern
+                self.advance();
+                self.parse_list_pattern()
+            }
+            Some('%') => {
+                // Map pattern
+                self.parse_map_pattern()
+            }
+            Some(c) if c.is_alphabetic() => {
+                // Bare identifier - treat as binding (not rule reference)
+                let name = self.parse_ident()?;
+                Ok(Pattern::Bind(Box::new(Pattern::Any), name))
+            }
+            Some('"') => {
+                let s = self.parse_string()?;
+                Ok(Pattern::MatchValue(Value::String(s.into())))
+            }
+            Some('\'') => {
+                let s = self.parse_char_literal()?;
+                let mut str_buf = String::new();
+                str_buf.push(s);
+                Ok(Pattern::MatchValue(Value::String(str_buf.into())))
+            }
+            Some(c) if c.is_ascii_digit() || c == '-' => {
+                // Parse a number literal
+                let num_str = self.parse_number_literal()?;
+                if num_str.contains('.') {
+                    let f: f64 = num_str.parse().map_err(|_| Error::Parser {
+                        token: self.pos,
+                        message: format!("invalid float literal: {}", num_str),
+                    })?;
+                    Ok(Pattern::MatchValue(Value::Float(f)))
+                } else {
+                    let i: i64 = num_str.parse().map_err(|_| Error::Parser {
+                        token: self.pos,
+                        message: format!("invalid int literal: {}", num_str),
+                    })?;
+                    Ok(Pattern::MatchValue(Value::Int(i)))
+                }
+            }
+            Some(c) => Err(Error::Parser {
+                token: self.pos,
+                message: format!("unexpected character in constructor pattern: {:?}", c),
+            }),
+            None => Err(Error::UnexpectedEof),
+        }
     }
 
     /// Parse a value pattern (used inside map/list patterns).
@@ -891,6 +1012,23 @@ impl<'a> GrammarParser<'a> {
                 '(' => paren_depth += 1,
                 ')' if paren_depth > 0 => paren_depth -= 1,
                 ';' if brace_depth == 0 && paren_depth == 0 => break, // Next case
+                '\n' if brace_depth == 0 && paren_depth == 0 => {
+                    // Check if the next non-whitespace char starts a new pattern
+                    // Patterns can start with: :Symbol, _, [, %, ident, ', "
+                    let remaining = &self.source[self.pos + 1..];
+                    let trimmed = remaining.trim_start_matches(|c: char| c == ' ' || c == '\t');
+                    if let Some(first) = trimmed.chars().next() {
+                        // Break if we see a pattern-starting character at start of line
+                        if first == ':'
+                            || first == '_'
+                            || first == '['
+                            || first == '%'
+                            || first.is_alphabetic()
+                        {
+                            break;
+                        }
+                    }
+                }
                 _ => {}
             }
 

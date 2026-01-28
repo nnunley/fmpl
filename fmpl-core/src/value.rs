@@ -57,6 +57,9 @@ pub enum Value {
     /// Cursor into a stream - CoW reference for RLM-style observation.
     #[serde(skip)]
     Cursor(Arc<Cursor>),
+    /// Compiled bytecode (opaque, executable).
+    #[serde(skip)]
+    Code(Arc<CompiledCode>),
 }
 
 /// A cursor into a stream - lightweight CoW reference.
@@ -272,6 +275,7 @@ impl Value {
             Value::TupleSpace(_) => "tuplespace",
             Value::TupleSpaceFacet(_) => "tuplespace_facet",
             Value::Cursor(_) => "cursor",
+            Value::Code(_) => "code",
         }
     }
 
@@ -630,6 +634,7 @@ impl fmt::Display for Value {
                 "<cursor branch:{} pos:{}>",
                 c.branch_id, c.position.index
             ),
+            Value::Code(_) => write!(f, "<code>"),
         }
     }
 }
@@ -703,5 +708,29 @@ mod tests {
             ]),
         );
         assert_eq!(format!("{}", outer), ":Binary(:+, :Int(1), :Int(2))");
+    }
+
+    #[test]
+    fn test_code_value_type_name() {
+        use crate::compiler::CompiledCode;
+        let code = CompiledCode::default();
+        let val = Value::Code(Arc::new(code));
+        assert_eq!(val.type_name(), "code");
+    }
+
+    #[test]
+    fn test_code_value_display() {
+        use crate::compiler::CompiledCode;
+        let code = CompiledCode::default();
+        let val = Value::Code(Arc::new(code));
+        assert_eq!(format!("{}", val), "<code>");
+    }
+
+    #[test]
+    fn test_code_value_is_truthy() {
+        use crate::compiler::CompiledCode;
+        let code = CompiledCode::default();
+        let val = Value::Code(Arc::new(code));
+        assert!(val.is_truthy());
     }
 }

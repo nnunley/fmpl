@@ -302,6 +302,16 @@ pub enum Instruction {
         source: InstrIndex,
         index: usize,
     },
+    ExtractTaggedChild {
+        source: InstrIndex,
+        index: usize,
+    },
+    /// Check if value is a Tagged with expected tag, jump to fail_target if not
+    MatchTag {
+        value: InstrIndex,
+        tag: SmolStr,
+        fail_target: InstrIndex,
+    },
 
     // === Grammar Pattern Instructions (for PEG pattern matching) ===
     // These instructions implement PEG pattern matching directly in the VM
@@ -426,6 +436,18 @@ pub enum Instruction {
     MatchMapNested {
         entries: Vec<(ConstIndex, NestedBinding)>,
     }, // Match map with nested bindings
+    /// Match a tagged/constructor value: :Tag(child_patterns...)
+    /// tag_idx is constant index of expected tag name
+    /// patterns are child pattern instruction indices (can be nested TagMatch, Bind, Any, etc.)
+    MatchTagged {
+        tag_idx: ConstIndex,
+        patterns: Vec<InstrIndex>,
+    },
+    /// Match a tagged value with simple bindings (no nested patterns execution)
+    MatchTaggedWithBindings {
+        tag_idx: ConstIndex,
+        bindings: Vec<Option<ConstIndex>>,
+    },
 
     // Rule application
     ApplyRule {
@@ -2495,6 +2517,17 @@ impl Compiler {
                     self.compile_pattern_binding(pat, extracted)?;
                 }
             }
+            Pattern::Constructor(_tag, patterns) => {
+                // Extract children positionally from Tagged value
+                // Note: this doesn't do runtime tag checking in let bindings
+                // Full matching with tag check happens in @ blocks via MatchTag
+                for (i, pat) in patterns.iter().enumerate() {
+                    let extracted = self
+                        .code
+                        .emit(Instruction::ExtractTaggedChild { source, index: i });
+                    self.compile_pattern_binding(pat, extracted)?;
+                }
+            }
             _ => {
                 return Err(Error::Compiler(format!(
                     "pattern type {:?} not supported in let binding",
@@ -3227,9 +3260,50 @@ impl Compiler {
                 }
             }
 
-            GP::MatchValue(_) | GP::MatchType(_) | GP::SymbolMatch(_) | GP::Apply(_) => {
+            GP::MatchValue(_)
+            | GP::MatchType(_)
+            | GP::SymbolMatch(_)
+            | GP::SymbolLiteral(_)
+            | GP::Apply(_) => {
                 // For now, compile as MatchAny
+                // TODO: Implement proper compilation for these patterns
                 self.code.emit(Instruction::MatchAny)
+            }
+
+            GP::TagMatch(tag, child_patterns) => {
+                // Check if all patterns are simple (Bind or Any)
+                let all_simple = child_patterns.iter().all(|p| {
+                    matches!(p, GP::Bind(inner, _) if matches!(inner.as_ref(), GP::Any))
+                        || matches!(p, GP::Any)
+                });
+
+                if all_simple {
+                    // Simple case: all patterns are direct bindings or wildcards
+                    // Use MatchTaggedWithBindings for efficiency
+                    let tag_idx = self.code.add_constant(tag.clone());
+                    let bindings: Vec<Option<ConstIndex>> = child_patterns
+                        .iter()
+                        .map(|p| match p {
+                            GP::Bind(_, name) => Some(self.code.add_constant(name.clone())),
+                            GP::Any => None,
+                            _ => unreachable!(),
+                        })
+                        .collect();
+                    self.code
+                        .emit(Instruction::MatchTaggedWithBindings { tag_idx, bindings })
+                } else {
+                    // Complex case: nested patterns need full matching
+                    // Use MatchTagged with compiled child patterns
+                    let tag_idx = self.code.add_constant(tag.clone());
+                    let compiled_patterns: Vec<InstrIndex> = child_patterns
+                        .iter()
+                        .map(|p| self.compile_grammar_pattern(p))
+                        .collect::<Result<Vec<_>>>()?;
+                    self.code.emit(Instruction::MatchTagged {
+                        tag_idx,
+                        patterns: compiled_patterns,
+                    })
+                }
             }
         })
     }

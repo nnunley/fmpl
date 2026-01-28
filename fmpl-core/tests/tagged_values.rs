@@ -81,3 +81,81 @@ fn test_tagged_trailing_comma() {
         panic!("expected Tagged, got {:?}", result);
     }
 }
+
+// Pattern matching tests
+
+#[test]
+fn test_tagged_pattern_match_simple() {
+    let mut vm = Vm::new();
+    let result = eval(&mut vm, r#":Int(42) @ { :Int(n) => n }"#).unwrap();
+    assert!(
+        matches!(result, Value::Int(42)),
+        "expected 42, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_tagged_pattern_match_nested() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        :Binary(:plus, :Int(1), :Int(2)) @ {
+            :Binary(op, :Int(a), :Int(b)) => [op, a, b]
+        }
+    "#,
+    )
+    .unwrap();
+    if let Value::List(items) = result {
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[0], Value::Symbol(s) if s == "plus"));
+        assert!(matches!(&items[1], Value::Int(1)));
+        assert!(matches!(&items[2], Value::Int(2)));
+    } else {
+        panic!("expected list, got {:?}", result);
+    }
+}
+
+#[test]
+fn test_tagged_pattern_match_choice() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        :Int(42) @ {
+            :String(s) => "string"
+            :Int(n) => "int"
+            _ => "other"
+        }
+    "#,
+    )
+    .unwrap();
+    assert!(
+        matches!(result, Value::String(ref s) if s == "int"),
+        "expected \"int\", got {:?}",
+        result
+    );
+}
+
+#[test]
+fn test_tagged_let_destructure() {
+    let mut vm = Vm::new();
+    // Note: FMPL uses `let (bindings) body` not `let (bindings) in body`
+    let result = eval(
+        &mut vm,
+        r#"
+        let (:Binary(op, lhs, rhs) = :Binary(:plus, 1, 2))
+        [op, lhs, rhs]
+    "#,
+    )
+    .unwrap();
+    if let Value::List(items) = result {
+        assert_eq!(items.len(), 3);
+        assert!(matches!(&items[0], Value::Symbol(s) if s == "plus"));
+        assert!(matches!(&items[1], Value::Int(1)));
+        assert!(matches!(&items[2], Value::Int(2)));
+    } else {
+        panic!("expected list, got {:?}", result);
+    }
+}
