@@ -755,6 +755,11 @@ impl Vm {
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(Value::Map(Arc::new(map)));
                 }
+                Instruction::MakeTagged { tag, args } => {
+                    let children: Vec<Value> = args.iter().map(|&idx| frame.get(idx)).collect();
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.set_current(Value::Tagged(tag.clone(), Arc::new(children)));
+                }
                 Instruction::Index { collection, key } => {
                     let col = frame.get(collection);
                     let k = frame.get(key);

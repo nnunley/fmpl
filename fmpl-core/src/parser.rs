@@ -567,7 +567,25 @@ impl<'a> Parser<'a> {
             Token::Symbol(s) => {
                 let s = s.clone();
                 self.advance();
-                Ok(Expr::Symbol(s))
+                // Check for tagged value: :Symbol(args...)
+                if self.check(&Token::LParen) {
+                    self.advance(); // consume '('
+                    let mut args = Vec::new();
+                    if !self.check(&Token::RParen) {
+                        args.push(self.parse_expr()?);
+                        while self.check(&Token::Comma) {
+                            self.advance();
+                            if self.check(&Token::RParen) {
+                                break; // trailing comma
+                            }
+                            args.push(self.parse_expr()?);
+                        }
+                    }
+                    self.expect(&Token::RParen)?;
+                    Ok(Expr::Tagged(s, args))
+                } else {
+                    Ok(Expr::Symbol(s))
+                }
             }
             Token::True => {
                 self.advance();

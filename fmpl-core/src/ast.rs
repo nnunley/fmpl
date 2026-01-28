@@ -136,6 +136,8 @@ pub enum Expr {
     String(SmolStr),
     /// Symbol literal (:foo).
     Symbol(SmolStr),
+    /// Tagged/constructor value (:Tag(args...)).
+    Tagged(SmolStr, Vec<Expr>),
     /// Boolean literal.
     Bool(bool),
     /// Null literal.

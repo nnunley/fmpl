@@ -209,6 +209,10 @@ pub enum Instruction {
     MakeMap {
         pairs: Vec<(InstrIndex, InstrIndex)>,
     },
+    MakeTagged {
+        tag: SmolStr,
+        args: Vec<InstrIndex>,
+    },
     Index {
         collection: InstrIndex,
         key: InstrIndex,
@@ -723,6 +727,16 @@ impl Compiler {
             Expr::Float(f) => Ok(self.code.emit(Instruction::LoadFloat(*f))),
             Expr::String(s) => Ok(self.code.emit(Instruction::LoadString(s.clone()))),
             Expr::Symbol(s) => Ok(self.code.emit(Instruction::LoadSymbol(s.clone()))),
+            Expr::Tagged(tag, args) => {
+                let mut arg_indices = Vec::with_capacity(args.len());
+                for arg in args {
+                    arg_indices.push(self.compile_expr(arg)?);
+                }
+                Ok(self.code.emit(Instruction::MakeTagged {
+                    tag: tag.clone(),
+                    args: arg_indices,
+                }))
+            }
             Expr::Bool(b) => Ok(self.code.emit(Instruction::LoadBool(*b))),
             Expr::Null => Ok(self.code.emit(Instruction::LoadNull)),
             Expr::Ident(name) => {

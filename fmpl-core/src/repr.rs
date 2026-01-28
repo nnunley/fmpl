@@ -216,6 +216,20 @@ impl Display for Expr {
             Expr::Float(n) => write!(f, "{}", n),
             Expr::String(s) => write!(f, "\"{}\"", escape_string(s)),
             Expr::Symbol(s) => write!(f, ":{}", s),
+            Expr::Tagged(tag, args) => {
+                write!(f, ":{}", tag)?;
+                if !args.is_empty() {
+                    write!(f, "(")?;
+                    for (i, arg) in args.iter().enumerate() {
+                        if i > 0 {
+                            write!(f, ", ")?;
+                        }
+                        write!(f, "{}", arg)?;
+                    }
+                    write!(f, ")")?;
+                }
+                Ok(())
+            }
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Null => write!(f, "null"),
             Expr::Ident(name) => write!(f, "{}", name),
