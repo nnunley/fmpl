@@ -1,0 +1,16 @@
+-- lib/core/prelude.fmpl
+-- Core helper functions for FMPL grammar actions
+
+-- Grammar for parsing digits to integers
+let digit_grammar = grammar digit_grammar {
+    int = "0" => 0 | "1" => 1 | "2" => 2 | "3" => 3 | "4" => 4
+        | "5" => 5 | "6" => 6 | "7" => 7 | "8" => 8 | "9" => 9
+}
+
+-- Convert a single digit character to its integer value
+-- to_int("5") => 5
+let to_int = \c c @ digit_grammar.int
+
+-- Join a list of strings into a single string
+-- join(["a", "b", "c"]) => "abc"
+let join = \list string.join(list)

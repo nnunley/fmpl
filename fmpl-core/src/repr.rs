@@ -41,6 +41,7 @@ impl Display for BinOp {
             BinOp::And => write!(f, "&&"),
             BinOp::Or => write!(f, "||"),
             BinOp::Pipe => write!(f, "|>"),
+            BinOp::In => write!(f, " in "),
         }
     }
 }
@@ -508,9 +509,13 @@ impl<'a> Display for GrammarPatternRepr<'a> {
                 Ok(())
             }
             GrammarPattern::Choice(pats) => {
-                for (i, p) in pats.iter().enumerate() {
+                for (i, (p, uses_bt)) in pats.iter().enumerate() {
                     if i > 0 {
                         write!(f, " | ")?;
+                    }
+                    // Show ? marker for backtracking alternatives
+                    if *uses_bt {
+                        write!(f, "?")?;
                     }
                     write!(f, "{}", GrammarPatternRepr(p))?;
                 }
@@ -521,7 +526,13 @@ impl<'a> Display for GrammarPatternRepr<'a> {
             GrammarPattern::Optional(p) => write!(f, "{}?", GrammarPatternRepr(p)),
             GrammarPattern::Lookahead(p) => write!(f, "&{}", GrammarPatternRepr(p)),
             GrammarPattern::Not(p) => write!(f, "!{}", GrammarPatternRepr(p)),
-            GrammarPattern::Bind(p, name) => write!(f, "{}:{}", GrammarPatternRepr(p), name),
+            GrammarPattern::Bind(p, name, is_choice) => {
+                if *is_choice {
+                    write!(f, "{}:?{}", GrammarPatternRepr(p), name)
+                } else {
+                    write!(f, "{}:{}", GrammarPatternRepr(p), name)
+                }
+            }
             GrammarPattern::Action(p, expr) => write!(f, "{} => {}", GrammarPatternRepr(p), expr),
             GrammarPattern::Predicate(expr) => write!(f, "&{{ {} }}", expr),
             GrammarPattern::Guard(p, expr) => write!(f, "{} when {}", GrammarPatternRepr(p), expr),
@@ -1008,9 +1019,9 @@ mod tests {
         let repr = format!(
             "{}",
             GrammarPatternRepr(&GP::Choice(vec![
-                GP::Char('a'),
-                GP::Char('b'),
-                GP::Char('c'),
+                (GP::Char('a'), false),
+                (GP::Char('b'), false),
+                (GP::Char('c'), false),
             ]))
         );
         assert_eq!(repr, "'a' | 'b' | 'c'");
@@ -1068,7 +1079,11 @@ mod tests {
         use crate::grammar::Pattern as GP;
         let repr = format!(
             "{}",
-            GrammarPatternRepr(&GP::Bind(Box::new(GP::Rule("digit".into())), "d".into()))
+            GrammarPatternRepr(&GP::Bind(
+                Box::new(GP::Rule("digit".into())),
+                "d".into(),
+                false
+            ))
         );
         assert_eq!(repr, "digit:d");
     }
@@ -1110,7 +1125,11 @@ mod tests {
         let repr = format!(
             "{}",
             GrammarPatternRepr(&GP::Action(
-                Box::new(GP::Bind(Box::new(GP::Rule("digit".into())), "d".into())),
+                Box::new(GP::Bind(
+                    Box::new(GP::Rule("digit".into())),
+                    "d".into(),
+                    false
+                )),
                 Expr::Ident("d".into()),
             ))
         );
@@ -1223,6 +1242,7 @@ mod tests {
             Rule {
                 pattern: GP::CharClass(vec![crate::grammar::CharRange::Range('0', '9')]),
                 action: None,
+                backtracking: false,
             },
         );
         rules.insert(
@@ -1230,6 +1250,7 @@ mod tests {
             Rule {
                 pattern: GP::Plus(Box::new(GP::Rule("digit".into()))),
                 action: Some(Expr::Ident("digits".into())),
+                backtracking: false,
             },
         );
 
@@ -1268,6 +1289,7 @@ mod tests {
             Rule {
                 pattern: GP::Any,
                 action: None,
+                backtracking: false,
             },
         );
 

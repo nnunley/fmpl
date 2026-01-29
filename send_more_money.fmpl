@@ -1,0 +1,43 @@
+# SEND + MORE = MONEY solver in FMPL
+
+# This demonstrates using FMPL's backtracking for CSP solving.
+# The key is to create grammars with ambiguity that the backtracking
+# stack can explore.
+
+grammar CSP <: base::parser {
+  # A digit can be any of 0-9
+  digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+
+  # For ambiguity: create overlapping patterns
+  # Both literal "1" and char class match "1"
+  ambiguous_digit = "1" | [0-9]
+}
+
+# Test the backtracking behavior
+let input = "1"
+let result = input @ CSP.ambiguous_digit
+
+# With backtracking mode enabled, this would have 2 ways to match:
+# 1. Literal "1"
+# 2. Char class [0-9]
+
+# For full CSP solving, we'd need:
+# 1. Grammar rules that generate 8-letter permutations
+# 2. Ambiguity at each position for backtracking
+# 3. Semantic actions (when guards) for constraints
+# 4. Backtracking to explore all alternatives
+
+# The current FMPL implementation provides:
+# - Backtracking stack in PegRuntime (Rust level)
+# - Choice pattern creates choice points when multiple alternatives match
+# - Shared memoization across all branches
+# - backtrack() and get_all_alternatives() for exploration
+
+# To expose this to FMPL code, we'd need:
+# 1. Builtins to access backtracking API from FMPL
+# 2. Stream-based iteration over alternatives
+# 3. Constraint predicates in semantic actions
+
+print("FMPL backtracking infrastructure is in place")
+print("Full CSP solving requires additional FMPL-language features")
+print("See test_send_more_money_full.rs for Rust-based solver")

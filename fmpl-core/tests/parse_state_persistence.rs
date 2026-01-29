@@ -3,13 +3,11 @@
 //! Simulates the agent pause/resume scenario where a parse is suspended
 //! mid-stream, persisted to Fjall, and resumed in a new "session".
 
-#[cfg(feature = "fjall-persistence")]
 mod tests {
     use fmpl_core::grammar::incremental::ParseState;
     use fmpl_core::value::Value;
     use smol_str::SmolStr;
     use std::collections::HashMap;
-    use std::sync::Arc;
     use tempfile::tempdir;
 
     /// Simulates suspending a parse mid-stream and resuming later.
@@ -26,9 +24,9 @@ mod tests {
 
         // --- Session 1: Start parsing, get suspended waiting for human ---
 
-        let keyspace1 = fjall::Config::new(temp_dir.path()).open().unwrap();
-        let partition1 = keyspace1
-            .open_partition("parse_states", Default::default())
+        let db1 = fjall::Database::builder(temp_dir.path()).open().unwrap();
+        let keyspace1 = db1
+            .keyspace("parse_states", || fjall::KeyspaceCreateOptions::default())
             .unwrap();
 
         // Simulate parse in progress
@@ -47,22 +45,22 @@ mod tests {
 
         // Persist before "human approval" (simulated process shutdown)
         suspended_state
-            .save_to_fjall(&partition1, session_id)
+            .save_to_fjall(&keyspace1, session_id)
             .unwrap();
 
         // Explicitly drop to simulate session end
-        drop(partition1);
         drop(keyspace1);
+        drop(db1);
 
         // --- Session 2: Human approved, resume the parse ---
 
-        let keyspace2 = fjall::Config::new(temp_dir.path()).open().unwrap();
-        let partition2 = keyspace2
-            .open_partition("parse_states", Default::default())
+        let db2 = fjall::Database::builder(temp_dir.path()).open().unwrap();
+        let keyspace2 = db2
+            .keyspace("parse_states", || fjall::KeyspaceCreateOptions::default())
             .unwrap();
 
         // Restore suspended state
-        let restored = ParseState::load_from_fjall(&partition2, session_id)
+        let restored = ParseState::load_from_fjall(&keyspace2, session_id)
             .unwrap()
             .expect("should find suspended state");
 
@@ -81,9 +79,9 @@ mod tests {
         );
 
         // Clean up: delete the state after successful resume
-        partition2.remove(session_id).unwrap();
+        keyspace2.remove(session_id).unwrap();
         assert!(
-            ParseState::load_from_fjall(&partition2, session_id)
+            ParseState::load_from_fjall(&keyspace2, session_id)
                 .unwrap()
                 .is_none()
         );
@@ -93,9 +91,9 @@ mod tests {
     #[test]
     fn test_complex_bindings_roundtrip() {
         let temp_dir = tempdir().unwrap();
-        let keyspace = fjall::Config::new(temp_dir.path()).open().unwrap();
-        let partition = keyspace
-            .open_partition("parse_states", Default::default())
+        let db = fjall::Database::builder(temp_dir.path()).open().unwrap();
+        let keyspace = db
+            .keyspace("parse_states", || fjall::KeyspaceCreateOptions::default())
             .unwrap();
 
         let mut bindings = HashMap::new();
@@ -105,7 +103,7 @@ mod tests {
         bindings.insert(SmolStr::new("null_val"), Value::Null);
         bindings.insert(
             SmolStr::new("list_val"),
-            Value::List(Arc::new(vec![
+            Value::List(std::sync::Arc::new(vec![
                 Value::Int(1),
                 Value::Int(2),
                 Value::String("three".into()),
@@ -118,8 +116,8 @@ mod tests {
             bindings,
         };
 
-        state.save_to_fjall(&partition, b"complex").unwrap();
-        let restored = ParseState::load_from_fjall(&partition, b"complex")
+        state.save_to_fjall(&keyspace, b"complex").unwrap();
+        let restored = ParseState::load_from_fjall(&keyspace, b"complex")
             .unwrap()
             .unwrap();
 
@@ -155,9 +153,9 @@ mod tests {
     #[test]
     fn test_multiple_sessions() {
         let temp_dir = tempdir().unwrap();
-        let keyspace = fjall::Config::new(temp_dir.path()).open().unwrap();
-        let partition = keyspace
-            .open_partition("parse_states", Default::default())
+        let db = fjall::Database::builder(temp_dir.path()).open().unwrap();
+        let keyspace = db
+            .keyspace("parse_states", || fjall::KeyspaceCreateOptions::default())
             .unwrap();
 
         // Create several sessions
@@ -172,13 +170,13 @@ mod tests {
                 bindings,
             };
 
-            state.save_to_fjall(&partition, key.as_bytes()).unwrap();
+            state.save_to_fjall(&keyspace, key.as_bytes()).unwrap();
         }
 
         // Verify each session independently
         for i in 0..5 {
             let key = format!("session_{}", i);
-            let restored = ParseState::load_from_fjall(&partition, key.as_bytes())
+            let restored = ParseState::load_from_fjall(&keyspace, key.as_bytes())
                 .unwrap()
                 .expect("should find session");
 
@@ -194,9 +192,9 @@ mod tests {
     #[test]
     fn test_session_update() {
         let temp_dir = tempdir().unwrap();
-        let keyspace = fjall::Config::new(temp_dir.path()).open().unwrap();
-        let partition = keyspace
-            .open_partition("parse_states", Default::default())
+        let db = fjall::Database::builder(temp_dir.path()).open().unwrap();
+        let keyspace = db
+            .keyspace("parse_states", || fjall::KeyspaceCreateOptions::default())
             .unwrap();
 
         let key = b"evolving_session";
@@ -207,7 +205,7 @@ mod tests {
             rule_stack: vec![(SmolStr::new("rule1"), 0)],
             bindings: HashMap::new(),
         };
-        state1.save_to_fjall(&partition, key).unwrap();
+        state1.save_to_fjall(&keyspace, key).unwrap();
 
         // Updated state
         let mut bindings = HashMap::new();
@@ -218,10 +216,10 @@ mod tests {
             rule_stack: vec![(SmolStr::new("rule1"), 0), (SmolStr::new("rule2"), 30)],
             bindings,
         };
-        state2.save_to_fjall(&partition, key).unwrap();
+        state2.save_to_fjall(&keyspace, key).unwrap();
 
         // Should get the updated state
-        let restored = ParseState::load_from_fjall(&partition, key)
+        let restored = ParseState::load_from_fjall(&keyspace, key)
             .unwrap()
             .expect("should find session");
 
@@ -237,9 +235,9 @@ mod tests {
     #[test]
     fn test_deep_rule_stack() {
         let temp_dir = tempdir().unwrap();
-        let keyspace = fjall::Config::new(temp_dir.path()).open().unwrap();
-        let partition = keyspace
-            .open_partition("parse_states", Default::default())
+        let db = fjall::Database::builder(temp_dir.path()).open().unwrap();
+        let keyspace = db
+            .keyspace("parse_states", || fjall::KeyspaceCreateOptions::default())
             .unwrap();
 
         // Create a deep rule stack (simulating nested grammar rules)
@@ -253,8 +251,8 @@ mod tests {
             bindings: HashMap::new(),
         };
 
-        state.save_to_fjall(&partition, b"deep_stack").unwrap();
-        let restored = ParseState::load_from_fjall(&partition, b"deep_stack")
+        state.save_to_fjall(&keyspace, b"deep_stack").unwrap();
+        let restored = ParseState::load_from_fjall(&keyspace, b"deep_stack")
             .unwrap()
             .unwrap();
 

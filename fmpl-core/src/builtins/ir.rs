@@ -230,6 +230,98 @@ impl IrCompiler {
                 }
                 Ok(self.emit(Instruction::MakeTagged { tag, args }))
             }
+            "MakeMap" => {
+                // :MakeMap([[key_ir1, val_ir1], [key_ir2, val_ir2], ...])
+                let pair_list = self.expect_list(&children[0])?;
+                let mut pairs = Vec::new();
+                for pair in pair_list {
+                    let pair_items = self.expect_list(&pair)?;
+                    if pair_items.len() != 2 {
+                        return Err(Error::Runtime(format!(
+                            "MakeMap pair must have 2 elements, got {}",
+                            pair_items.len()
+                        )));
+                    }
+                    let key = self.compile_ir(&pair_items[0])?;
+                    let val = self.compile_ir(&pair_items[1])?;
+                    pairs.push((key, val));
+                }
+                Ok(self.emit(Instruction::MakeMap { pairs }))
+            }
+            "Index" => {
+                // :Index(collection_ir, key_ir)
+                let collection = self.compile_ir(&children[0])?;
+                let key = self.compile_ir(&children[1])?;
+                Ok(self.emit(Instruction::Index { collection, key }))
+            }
+            "Call" => {
+                // :Call(func_ir, [arg_ir1, arg_ir2, ...])
+                let func = self.compile_ir(&children[0])?;
+                let arg_list = self.expect_list(&children[1])?;
+                let mut args = Vec::new();
+                for arg in arg_list {
+                    args.push(self.compile_ir(&arg)?);
+                }
+                Ok(self.emit(Instruction::Call { func, args }))
+            }
+            "MethodCall" => {
+                // :MethodCall(receiver_ir, :method_name, [arg_ir1, arg_ir2, ...])
+                let receiver = self.compile_ir(&children[0])?;
+                let method = self.expect_symbol(&children[1])?;
+                let arg_list = self.expect_list(&children[2])?;
+                let mut args = Vec::new();
+                for arg in arg_list {
+                    args.push(self.compile_ir(&arg)?);
+                }
+                Ok(self.emit(Instruction::MethodCall {
+                    receiver,
+                    method,
+                    args,
+                }))
+            }
+            "GetProp" => {
+                // :GetProp(object_ir, :prop_name)
+                let object = self.compile_ir(&children[0])?;
+                let name = self.expect_symbol(&children[1])?;
+                Ok(self.emit(Instruction::GetProp { object, name }))
+            }
+            "SetProp" => {
+                // :SetProp(object_ir, :prop_name, value_ir)
+                let object = self.compile_ir(&children[0])?;
+                let name = self.expect_symbol(&children[1])?;
+                let value = self.compile_ir(&children[2])?;
+                Ok(self.emit(Instruction::SetProp {
+                    object,
+                    name,
+                    value,
+                }))
+            }
+            "SyncCall" => {
+                // :SyncCall(target_ir)
+                let target = self.compile_ir(&children[0])?;
+                Ok(self.emit(Instruction::SyncCall { target }))
+            }
+            "AsyncCall" => {
+                // :AsyncCall(target_ir)
+                let target = self.compile_ir(&children[0])?;
+                Ok(self.emit(Instruction::AsyncCall { target }))
+            }
+            "Spawn" => {
+                // :Spawn(constructor_ir, [arg_ir1, arg_ir2, ...])
+                let object = self.compile_ir(&children[0])?;
+                let arg_list = self.expect_list(&children[1])?;
+                let mut args = Vec::new();
+                for arg in arg_list {
+                    args.push(self.compile_ir(&arg)?);
+                }
+                Ok(self.emit(Instruction::Spawn { object, args }))
+            }
+            "GetFacet" => {
+                // :GetFacet(object_ir, :facet_name)
+                let object = self.compile_ir(&children[0])?;
+                let name = self.expect_symbol(&children[1])?;
+                Ok(self.emit(Instruction::GetFacet { object, name }))
+            }
             _ => Err(Error::Runtime(format!("Unknown IR node: {}", tag))),
         }
     }

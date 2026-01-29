@@ -377,7 +377,7 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
-    /// Parse comparison (< > <= >=).
+    /// Parse comparison (< > <= >= in).
     fn parse_comparison(&mut self) -> Result<Expr> {
         let mut left = self.parse_term()?;
 
@@ -390,6 +390,8 @@ impl<'a> Parser<'a> {
                 BinOp::LtEq
             } else if self.check(&Token::GtEq) {
                 BinOp::GtEq
+            } else if self.check(&Token::In) {
+                BinOp::In
             } else {
                 break;
             };
@@ -705,8 +707,15 @@ impl<'a> Parser<'a> {
                     }
                     Ok(Expr::Qualified(QualifiedName { parts }))
                 } else if self.peek_ahead(1).map(|t| &t.token) == Some(&Token::LBrace) {
-                    // grammar { rules } - grammar literal
+                    // grammar { rules } - anonymous grammar literal
                     self.parse_grammar_literal()
+                } else if self
+                    .peek_ahead(1)
+                    .map(|t| matches!(&t.token, Token::Ident(_)))
+                    .unwrap_or(false)
+                {
+                    // grammar Name { rules } - named grammar
+                    self.parse_named_grammar()
                 } else {
                     // grammar as a bare identifier - refers to the grammar builtin
                     self.advance();
@@ -769,6 +778,54 @@ impl<'a> Parser<'a> {
         // Parse using GrammarParser
         let mut grammar_parser = GrammarParser::new(grammar_source);
         let grammar = grammar_parser.parse_anonymous()?;
+
+        Ok(Expr::GrammarLiteral(grammar))
+    }
+
+    /// Parse named grammar: `grammar Name { rules }`
+    fn parse_named_grammar(&mut self) -> Result<Expr> {
+        // We need source access to parse grammar body
+        let source = self
+            .source
+            .ok_or_else(|| self.error("named grammars require source access"))?;
+
+        // Get the start position of "grammar" keyword
+        let grammar_start = self.tokens[self.pos].span.start;
+        self.expect(&Token::Grammar)?;
+
+        // Expect the grammar name
+        let _name = self.expect_ident()?;
+
+        // Find the opening brace token
+        self.expect(&Token::LBrace)?;
+
+        // Find matching closing brace (handling nesting)
+        let mut depth = 1;
+        while depth > 0 && !self.is_at_end() {
+            match self.peek_token() {
+                Some(Token::LBrace) => depth += 1,
+                Some(Token::RBrace) => depth -= 1,
+                _ => {}
+            }
+            if depth > 0 {
+                self.advance();
+            }
+        }
+
+        if depth != 0 {
+            return Err(self.error("unmatched brace in named grammar"));
+        }
+
+        // Get the end position (including the closing brace)
+        let end = self.tokens[self.pos].span.end;
+        self.advance(); // consume the closing brace
+
+        // Extract the full grammar source (from "grammar" to "}")
+        let grammar_source = &source[grammar_start..end];
+
+        // Parse using GrammarParser.parse() which expects "grammar Name { ... }"
+        let mut grammar_parser = GrammarParser::new(grammar_source);
+        let grammar = grammar_parser.parse()?;
 
         Ok(Expr::GrammarLiteral(grammar))
     }

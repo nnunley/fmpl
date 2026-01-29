@@ -13,15 +13,12 @@
 
 use crate::stream::{StreamEvent, StreamHandle};
 use crate::value::Value;
-#[cfg(feature = "fjall-persistence")]
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::cell::RefCell;
 use std::collections::HashMap;
-#[cfg(feature = "fjall-persistence")]
 use std::path::PathBuf;
 use std::rc::Rc;
-#[cfg(feature = "fjall-persistence")]
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
@@ -51,13 +48,11 @@ pub struct StreamPosition {
     /// Source reference for pulling more data.
     source: Rc<StreamSource>,
     /// Optional Fjall partition for memo persistence.
-    #[cfg(feature = "fjall-persistence")]
     memo_fjall: Option<Arc<Mutex<MemoFjall>>>,
 }
 
 /// Cached parse result for memoization.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "fjall-persistence", derive(Serialize, Deserialize))]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MemoEntry {
     /// Parsing in progress (for left recursion detection).
     InProgress,
@@ -66,14 +61,11 @@ pub enum MemoEntry {
 }
 
 /// Fjall-backed overflow storage for spilled positions.
-#[cfg(feature = "fjall-persistence")]
 struct FjallOverflow {
     #[allow(dead_code)]
     keyspace: fjall::Keyspace,
-    partition: fjall::PartitionHandle,
 }
 
-#[cfg(feature = "fjall-persistence")]
 impl std::fmt::Debug for FjallOverflow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FjallOverflow").finish_non_exhaustive()
@@ -82,10 +74,8 @@ impl std::fmt::Debug for FjallOverflow {
 
 /// Fjall-backed memo storage wrapper for StreamPosition.
 /// Wraps a PartitionHandle with Debug implementation.
-#[cfg(feature = "fjall-persistence")]
-struct MemoFjall(fjall::PartitionHandle);
+struct MemoFjall(fjall::Keyspace);
 
-#[cfg(feature = "fjall-persistence")]
 impl std::fmt::Debug for MemoFjall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoFjall").finish_non_exhaustive()
@@ -103,10 +93,8 @@ enum StreamSource {
         /// Cached positions for position index lookup.
         positions: Mutex<Vec<Rc<StreamPosition>>>,
         /// Fjall overflow for spilled positions (optional).
-        #[cfg(feature = "fjall-persistence")]
         fjall: Option<FjallOverflow>,
         /// Memory limit before spilling (default: no limit).
-        #[cfg(feature = "fjall-persistence")]
         memory_limit: Option<usize>,
     },
     /// From a static list of values (no blocking needed).
@@ -125,9 +113,7 @@ impl StreamPosition {
             handle: Mutex::new(handle),
             timeout,
             positions: Mutex::new(Vec::new()),
-            #[cfg(feature = "fjall-persistence")]
             fjall: None,
-            #[cfg(feature = "fjall-persistence")]
             memory_limit: None,
         });
 
@@ -139,7 +125,6 @@ impl StreamPosition {
             index: 0,
             memo: RefCell::new(HashMap::new()),
             source: source.clone(),
-            #[cfg(feature = "fjall-persistence")]
             memo_fjall: None,
         });
 
@@ -156,7 +141,6 @@ impl StreamPosition {
     /// `timeout` is the timeout for blocking recv operations (use `None` for infinite blocking).
     /// `fjall_path` is the optional directory for Fjall storage (None = no overflow).
     /// `memory_limit` is the number of positions to keep in memory before spilling to Fjall.
-    #[cfg(feature = "fjall-persistence")]
     pub fn from_async_with_fjall(
         handle: StreamHandle,
         timeout: Option<Duration>,
@@ -164,16 +148,13 @@ impl StreamPosition {
         memory_limit: usize,
     ) -> Rc<Self> {
         let fjall = fjall_path.map(|path| {
-            let keyspace = fjall::Config::new(path)
+            let db = fjall::Database::builder(path)
                 .open()
-                .expect("failed to open fjall keyspace");
-            let partition = keyspace
-                .open_partition("positions", Default::default())
-                .expect("failed to open positions partition");
-            FjallOverflow {
-                keyspace,
-                partition,
-            }
+                .expect("failed to open fjall database");
+            let keyspace = db
+                .keyspace("positions", || fjall::KeyspaceCreateOptions::default())
+                .expect("failed to open positions keyspace");
+            FjallOverflow { keyspace }
         });
 
         let source = Rc::new(StreamSource::Async {
@@ -206,36 +187,26 @@ impl StreamPosition {
     /// Create a new stream from a static list of values.
     pub fn from_values(values: Vec<Value>) -> Rc<Self> {
         if values.is_empty() {
-            return Self::end_of_stream(
-                #[cfg(feature = "fjall-persistence")]
-                None,
-            );
+            return Self::end_of_stream(None);
         }
 
         let source = Rc::new(StreamSource::Static(values.clone()));
-        Self::build_static_chain(
-            source,
-            &values,
-            0,
-            #[cfg(feature = "fjall-persistence")]
-            None,
-        )
+        Self::build_static_chain(source, &values, 0, None)
     }
 
     /// Create a new stream from a static list of values with Fjall memo backing.
     ///
     /// `fjall_path` is the directory for Fjall storage for memo tables.
-    #[cfg(feature = "fjall-persistence")]
     pub fn from_values_with_memo_fjall(values: Vec<Value>, fjall_path: PathBuf) -> Rc<Self> {
         if values.is_empty() {
             return Self::end_of_stream(None);
         }
 
-        let keyspace = fjall::Config::new(&fjall_path)
+        let keyspace = fjall::Database::builder(&fjall_path)
             .open()
             .expect("failed to open fjall keyspace for memo");
         let partition = keyspace
-            .open_partition("memo", Default::default())
+            .keyspace("memo", || fjall::KeyspaceCreateOptions::default())
             .expect("failed to open memo partition");
         let memo_fjall = Some(Arc::new(Mutex::new(MemoFjall(partition))));
 
@@ -244,19 +215,6 @@ impl StreamPosition {
     }
 
     /// Create an end-of-stream position.
-    #[cfg(not(feature = "fjall-persistence"))]
-    fn end_of_stream() -> Rc<Self> {
-        Rc::new(Self {
-            head: None,
-            tail: RefCell::new(None),
-            index: 0,
-            memo: RefCell::new(HashMap::new()),
-            source: Rc::new(StreamSource::Empty),
-        })
-    }
-
-    /// Create an end-of-stream position with optional Fjall memo backing.
-    #[cfg(feature = "fjall-persistence")]
     fn end_of_stream(memo_fjall: Option<Arc<Mutex<MemoFjall>>>) -> Rc<Self> {
         Rc::new(Self {
             head: None,
@@ -269,29 +227,6 @@ impl StreamPosition {
     }
 
     /// Build a chain of positions from static values.
-    #[cfg(not(feature = "fjall-persistence"))]
-    fn build_static_chain(source: Rc<StreamSource>, values: &[Value], index: usize) -> Rc<Self> {
-        if index >= values.len() {
-            return Rc::new(Self {
-                head: None,
-                tail: RefCell::new(None),
-                index,
-                memo: RefCell::new(HashMap::new()),
-                source,
-            });
-        }
-
-        Rc::new(Self {
-            head: Some(values[index].clone()),
-            tail: RefCell::new(None), // Lazily computed
-            index,
-            memo: RefCell::new(HashMap::new()),
-            source,
-        })
-    }
-
-    /// Build a chain of positions from static values with optional Fjall memo backing.
-    #[cfg(feature = "fjall-persistence")]
     fn build_static_chain(
         source: Rc<StreamSource>,
         values: &[Value],
@@ -427,55 +362,6 @@ impl StreamPosition {
     }
 
     /// Get the tail (next position), computing lazily if needed.
-    #[cfg(not(feature = "fjall-persistence"))]
-    pub fn tail(self: &Rc<Self>) -> Rc<Self> {
-        // Check if tail is already computed
-        if let Some(ref tail) = *self.tail.borrow() {
-            return tail.clone();
-        }
-
-        // Compute tail based on source type
-        let new_tail = match self.source.as_ref() {
-            StreamSource::Async { positions, .. } => {
-                // Check if we already have this position cached
-                let positions_guard = positions.lock().unwrap();
-                if let Some(cached) = positions_guard.get(self.index + 1) {
-                    cached.clone()
-                } else {
-                    drop(positions_guard); // Release lock before pulling
-
-                    // Pull next value from async source
-                    let head = Self::pull_next(&self.source);
-                    let new_pos = Rc::new(Self {
-                        head,
-                        tail: RefCell::new(None),
-                        index: self.index + 1,
-                        memo: RefCell::new(HashMap::new()),
-                        source: self.source.clone(),
-                    });
-
-                    // Cache the new position
-                    if let StreamSource::Async { positions, .. } = self.source.as_ref() {
-                        positions.lock().unwrap().push(new_pos.clone());
-                    }
-
-                    new_pos
-                }
-            }
-            StreamSource::Static(values) => {
-                Self::build_static_chain(self.source.clone(), values, self.index + 1)
-            }
-            StreamSource::Empty => Self::end_of_stream(),
-        };
-
-        // Cache the computed tail
-        *self.tail.borrow_mut() = Some(new_tail.clone());
-        new_tail
-    }
-
-    /// Get the tail (next position), computing lazily if needed.
-    /// With Fjall support for overflow handling.
-    #[cfg(feature = "fjall-persistence")]
     pub fn tail(self: &Rc<Self>) -> Rc<Self> {
         // Check if tail is already computed
         if let Some(ref tail) = *self.tail.borrow() {
@@ -563,7 +449,6 @@ impl StreamPosition {
     }
 
     /// Spill a position to Fjall storage.
-    #[cfg(feature = "fjall-persistence")]
     fn spill_to_fjall(fjall: &FjallOverflow, pos: &Rc<StreamPosition>) {
         // Serialize the head value (if any) using serde_json
         let head_bytes = pos
@@ -579,13 +464,12 @@ impl StreamPosition {
             serde_json::to_vec(&head_bytes).expect("failed to serialize position for fjall");
 
         fjall
-            .partition
+            .keyspace
             .insert(key, value)
             .expect("failed to insert position into fjall");
     }
 
     /// Restore a position from Fjall storage.
-    #[cfg(feature = "fjall-persistence")]
     fn restore_from_fjall(
         fjall: &FjallOverflow,
         index: usize,
@@ -594,7 +478,7 @@ impl StreamPosition {
     ) -> Option<Rc<StreamPosition>> {
         let key = index.to_be_bytes();
 
-        if let Ok(Some(value_bytes)) = fjall.partition.get(key) {
+        if let Ok(Some(value_bytes)) = fjall.keyspace.get(key) {
             // Deserialize the Option<Vec<u8>>
             let head_bytes: Option<Vec<u8>> =
                 serde_json::from_slice(&value_bytes).expect("failed to deserialize from fjall");
@@ -630,14 +514,6 @@ impl StreamPosition {
     }
 
     /// Get the memoization entry for a rule at this position.
-    #[cfg(not(feature = "fjall-persistence"))]
-    pub fn get_memo(&self, rule: &SmolStr) -> Option<MemoEntry> {
-        self.memo.borrow().get(rule).cloned()
-    }
-
-    /// Get the memoization entry for a rule at this position.
-    /// Checks in-memory cache first, then Fjall storage if configured.
-    #[cfg(feature = "fjall-persistence")]
     pub fn get_memo(&self, rule: &SmolStr) -> Option<MemoEntry> {
         // Check in-memory cache first
         if let Some(entry) = self.memo.borrow().get(rule).cloned() {
@@ -662,14 +538,6 @@ impl StreamPosition {
     }
 
     /// Set the memoization entry for a rule at this position.
-    #[cfg(not(feature = "fjall-persistence"))]
-    pub fn set_memo(&self, rule: SmolStr, entry: MemoEntry) {
-        self.memo.borrow_mut().insert(rule, entry);
-    }
-
-    /// Set the memoization entry for a rule at this position.
-    /// Writes to both in-memory cache and Fjall storage if configured.
-    #[cfg(feature = "fjall-persistence")]
     pub fn set_memo(&self, rule: SmolStr, entry: MemoEntry) {
         // Write to in-memory cache
         self.memo.borrow_mut().insert(rule.clone(), entry.clone());
@@ -772,7 +640,6 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc;
 
-    #[cfg(feature = "fjall-persistence")]
     #[test]
     fn test_fjall_overflow_basic() {
         use tempfile::tempdir;
@@ -881,7 +748,6 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "fjall-persistence")]
     #[test]
     fn test_memo_persists_to_fjall() {
         use tempfile::tempdir;

@@ -219,6 +219,108 @@ pub fn expr_to_value(expr: &Expr) -> Value {
         Expr::User => Value::Tagged(SmolStr::new("User"), Arc::new(vec![])),
         Expr::Args => Value::Tagged(SmolStr::new("Args"), Arc::new(vec![])),
 
+        Expr::AsyncCall(e) => {
+            Value::Tagged(SmolStr::new("AsyncCall"), Arc::new(vec![expr_to_value(e)]))
+        }
+
+        Expr::SyncCall(e) => {
+            Value::Tagged(SmolStr::new("SyncCall"), Arc::new(vec![expr_to_value(e)]))
+        }
+
+        Expr::FacetAccess(obj, facet) => Value::Tagged(
+            SmolStr::new("FacetAccess"),
+            Arc::new(vec![expr_to_value(obj), Value::Symbol(facet.clone())]),
+        ),
+
+        Expr::Spawn(expr, args) => Value::Tagged(
+            SmolStr::new("Spawn"),
+            Arc::new(vec![
+                expr_to_value(expr),
+                Value::List(Arc::new(args.iter().map(arg_to_value).collect())),
+            ]),
+        ),
+
+        Expr::ObjectDef(def) => Value::Tagged(
+            SmolStr::new("ObjectDef"),
+            Arc::new(vec![
+                // Object name as qualified name
+                Value::List(Arc::new(
+                    def.name
+                        .parts
+                        .iter()
+                        .map(|p| Value::Symbol(p.clone()))
+                        .collect(),
+                )),
+                // Parameters
+                Value::List(Arc::new(
+                    def.params
+                        .iter()
+                        .map(|p| Value::Symbol(p.clone()))
+                        .collect(),
+                )),
+                // Parents
+                Value::List(Arc::new(
+                    def.parents
+                        .iter()
+                        .map(|p| {
+                            Value::List(Arc::new(
+                                p.parts.iter().map(|s| Value::Symbol(s.clone())).collect(),
+                            ))
+                        })
+                        .collect(),
+                )),
+            ]),
+        ),
+
+        Expr::Match(expr, cases) => Value::Tagged(
+            SmolStr::new("Match"),
+            Arc::new(vec![
+                expr_to_value(expr),
+                Value::List(Arc::new(
+                    cases
+                        .iter()
+                        .map(|c| {
+                            Value::Tagged(
+                                SmolStr::new("Case"),
+                                Arc::new(vec![
+                                    pattern_to_value(&c.pattern),
+                                    c.guard
+                                        .as_ref()
+                                        .map(|g| expr_to_value(g))
+                                        .unwrap_or(Value::Null),
+                                    expr_to_value(&c.body),
+                                ]),
+                            )
+                        })
+                        .collect(),
+                )),
+            ]),
+        ),
+
+        Expr::TryCatch {
+            body,
+            error_binding,
+            catch_body,
+        } => Value::Tagged(
+            SmolStr::new("TryCatch"),
+            Arc::new(vec![
+                expr_to_value(body),
+                Value::Symbol(error_binding.clone()),
+                expr_to_value(catch_body),
+            ]),
+        ),
+
+        Expr::Throw(expr) => {
+            Value::Tagged(SmolStr::new("Throw"), Arc::new(vec![expr_to_value(expr)]))
+        }
+
+        Expr::Sequence(exprs) => Value::Tagged(
+            SmolStr::new("Sequence"),
+            Arc::new(vec![Value::List(Arc::new(
+                exprs.iter().map(expr_to_value).collect(),
+            ))]),
+        ),
+
         // Catch-all for less common cases
         _ => Value::Tagged(
             SmolStr::new("Unknown"),
@@ -324,6 +426,7 @@ fn binop_to_str(op: BinOp) -> &'static str {
         BinOp::And => "&&",
         BinOp::Or => "||",
         BinOp::Pipe => "|>",
+        BinOp::In => " in ",
     }
 }
 

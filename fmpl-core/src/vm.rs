@@ -505,6 +505,36 @@ impl Vm {
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(result);
                 }
+                Instruction::In { lhs, rhs } => {
+                    // Membership test: lhs in rhs
+                    // rhs can be a list, string, or map (for map keys)
+                    let elem = frame.get(lhs);
+                    let collection = frame.get(rhs);
+                    let result = match collection {
+                        Value::List(items) => {
+                            // Check if elem is in the list
+                            items.contains(&elem)
+                        }
+                        Value::String(s) => {
+                            // Check if elem (as string) is a substring
+                            match elem {
+                                Value::String(elem_str) => s.contains(elem_str.as_str()),
+                                _ => false,
+                            }
+                        }
+                        Value::Map(map) => {
+                            // Check if elem is a key in the map
+                            match elem {
+                                Value::String(key) => map.contains_key(key.as_str()),
+                                Value::Symbol(key) => map.contains_key(key.as_str()),
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    };
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.set_current(Value::Bool(result));
+                }
 
                 // === Control Flow ===
                 Instruction::Jump { target } => {
@@ -3183,6 +3213,7 @@ impl Vm {
             "tuplespace" => return Ok(Value::Symbol(SmolStr::new("__builtin_tuplespace"))),
             "stream" => return Ok(Value::Symbol(SmolStr::new("__builtin_stream"))),
             "cursor" => return Ok(Value::Symbol(SmolStr::new("__builtin_cursor"))),
+            "string" => return Ok(Value::Symbol(SmolStr::new("__builtin_string"))),
             _ => {}
         }
 
@@ -3775,6 +3806,36 @@ impl Vm {
                 let sink = SinkHandle::new(tx, next_id());
 
                 Ok(Value::Sink(Arc::new(sink)))
+            }
+            ("__builtin_string", "join") => {
+                // string.join(list) -> String
+                // Joins a list of strings into a single string.
+                //
+                // Usage:
+                //   string.join(["a", "b", "c"]) => "abc"
+                //   string.join([]) => ""
+                //
+                let list = match args.first() {
+                    Some(Value::List(lst)) => lst,
+                    _ => {
+                        return Err(Error::Runtime(
+                            "string.join requires list argument".to_string(),
+                        ));
+                    }
+                };
+                let mut result = String::new();
+                for item in list.iter() {
+                    match item {
+                        Value::String(s) => result.push_str(s),
+                        other => {
+                            return Err(Error::Runtime(format!(
+                                "string.join list items must be strings, got {}",
+                                other.type_name()
+                            )));
+                        }
+                    }
+                }
+                Ok(Value::String(SmolStr::new(result)))
             }
             _ => Err(Error::Runtime(format!(
                 "unknown builtin: {}.{}",

@@ -92,7 +92,8 @@ impl<'a> GrammarParser<'a> {
             }
 
             // Parse pattern => action (or pattern when guard => action)
-            let pattern = self.parse_pattern()?;
+            // Use parse_pattern_without_action so we don't consume the => action here
+            let pattern = self.parse_pattern_without_action()?;
             self.skip_whitespace();
 
             // Check for optional guard: pattern when guard => action
@@ -159,7 +160,8 @@ impl<'a> GrammarParser<'a> {
             for (i, case) in cases.iter().enumerate() {
                 eprintln!("DEBUG parse_match_block: case {}: {:?}", i, case);
             }
-            Pattern::Choice(cases)
+            // Match blocks use traditional PEG semantics (no backtracking)
+            Pattern::Choice(cases.into_iter().map(|p| (p, false)).collect())
         };
         grammar.add_rule(SmolStr::new("main"), Rule::new(main_pattern));
         eprintln!(
@@ -173,6 +175,11 @@ impl<'a> GrammarParser<'a> {
     fn parse_rules_into(&mut self, grammar: &mut Grammar) -> Result<()> {
         loop {
             self.skip_whitespace();
+            eprintln!(
+                "DEBUG parse_rules_into: pos={}, next_char={:?}",
+                self.pos,
+                self.peek_char()
+            );
             if self.peek_char() == Some('}') {
                 self.advance();
                 break;
@@ -185,6 +192,10 @@ impl<'a> GrammarParser<'a> {
             }
 
             let (rule_name, rule) = self.parse_rule()?;
+            eprintln!(
+                "DEBUG parse_rules_into: parsed rule '{}', pattern={:?}",
+                rule_name, rule.pattern
+            );
             grammar.add_rule(rule_name, rule);
 
             // Consume optional semicolon between rules
@@ -197,27 +208,32 @@ impl<'a> GrammarParser<'a> {
         Ok(())
     }
 
-    /// Parse a single rule: `name = pattern (=> action)?`
+    /// Parse a single rule: `?name = pattern (=> action)?`
     fn parse_rule(&mut self) -> Result<(SmolStr, Rule)> {
+        // Check for `?` backtracking marker
+        let backtracking = if self.peek_char() == Some('?') {
+            self.advance();
+            true
+        } else {
+            false
+        };
+        self.skip_whitespace();
+
         let name = self.parse_ident()?;
         self.skip_whitespace();
         self.expect_char('=')?;
         self.skip_whitespace();
 
+        // Parse pattern with optional when guard
         let pattern = self.parse_pattern()?;
         self.skip_whitespace();
 
-        let action = if self.peek_str("=>") {
-            self.advance_by(2);
-            self.skip_whitespace();
-            Some(self.parse_action()?)
-        } else {
-            None
-        };
-
-        let rule = match action {
-            Some(a) => Rule::with_action(pattern, a),
-            None => Rule::new(pattern),
+        // Actions are now handled at the alternative level (inside parse_choice -> parse_alternative)
+        // so Rule.action is no longer used. Actions are embedded in Pattern::Action.
+        let rule = Rule {
+            pattern,
+            action: None,
+            backtracking,
         };
 
         Ok((name, rule))
@@ -225,51 +241,297 @@ impl<'a> GrammarParser<'a> {
 
     /// Parse a pattern (ordered choice at top level).
     fn parse_pattern(&mut self) -> Result<Pattern> {
-        self.parse_choice()
+        self.parse_choice(true) // allow actions in grammar rules
     }
 
-    /// Parse choice: `a | b | c`
-    fn parse_choice(&mut self) -> Result<Pattern> {
-        let mut alternatives = vec![self.parse_sequence()?];
+    /// Parse pattern without consuming actions - for match blocks where actions are handled separately
+    fn parse_pattern_without_action(&mut self) -> Result<Pattern> {
+        self.parse_choice(false)
+    }
+
+    /// Parse choice: `?a | ?b | c`
+    /// Alternatives can be prefixed with `?` to enable backtracking for that alternative.
+    /// Each alternative can have its own action: `"a" => 1 | "b" => 2` (if allow_action is true)
+    fn parse_choice(&mut self, allow_action: bool) -> Result<Pattern> {
+        // Check for `?` marker on first alternative
+        let first_uses_backtracking = if self.peek_char() == Some('?') {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        // Parse first alternative (sequence + optional action)
+        let first_alt = self.parse_alternative(allow_action)?;
+        let mut alternatives = vec![(first_alt, first_uses_backtracking)]; // (pattern, uses_backtracking)
 
         loop {
             self.skip_whitespace();
             if self.peek_char() == Some('|') && !self.peek_str("|>") {
                 self.advance();
                 self.skip_whitespace();
-                alternatives.push(self.parse_sequence()?);
+
+                // Check for `?` marker on this alternative
+                let uses_backtracking = if self.peek_char() == Some('?') {
+                    self.advance();
+                    true
+                } else {
+                    false
+                };
+
+                let pattern = self.parse_alternative(allow_action)?;
+                alternatives.push((pattern, uses_backtracking));
             } else {
                 break;
             }
         }
 
         if alternatives.len() == 1 {
-            Ok(alternatives.pop().unwrap())
+            Ok(alternatives.pop().unwrap().0)
         } else {
             Ok(Pattern::Choice(alternatives))
         }
     }
 
-    /// Parse sequence: `a b c`
+    /// Parse a single alternative in a choice: `sequence (when guard)? (=> action)?`
+    /// If allow_action is false, don't consume the action (for match blocks)
+    fn parse_alternative(&mut self, allow_action: bool) -> Result<Pattern> {
+        let pattern = self.parse_sequence()?;
+        self.skip_whitespace();
+
+        // Check for when guard on this alternative (only when allow_action, because
+        // match blocks handle their own when guards)
+        let pattern = if allow_action && self.peek_keyword("when") {
+            self.advance_by(4); // consume "when"
+            self.skip_whitespace();
+
+            // Parse the guard expression - read until we see "=>" or a terminating character
+            let guard_start = self.pos;
+            while !self.is_eof() {
+                if self.peek_str("=>")
+                    || self.peek_char() == Some(';')
+                    || self.peek_char() == Some('}')
+                    || self.peek_char() == Some('|')
+                    || self.peek_char() == Some('\n')
+                {
+                    break;
+                }
+                self.advance();
+            }
+            let guard_source = &self.source[guard_start..self.pos].trim();
+
+            eprintln!(
+                "DEBUG when guard: parsing guard expression: {:?}",
+                guard_source
+            );
+
+            // Parse the guard as an FMPL expression
+            let lexer = Lexer::new(guard_source);
+            let tokens = lexer.tokenize()?;
+            let mut expr_parser = ExprParser::new(&tokens);
+            let guard_expr = expr_parser.parse()?;
+
+            Pattern::Guard(Box::new(pattern), guard_expr)
+        } else {
+            pattern
+        };
+
+        self.skip_whitespace();
+
+        // Check for action on this alternative (only in grammar rules, not match blocks)
+        if allow_action && self.peek_str("=>") {
+            self.advance_by(2);
+            self.skip_whitespace();
+            let action = self.parse_alternative_action()?;
+            Ok(Pattern::Action(Box::new(pattern), action))
+        } else {
+            Ok(pattern)
+        }
+    }
+
+    /// Parse an action within an alternative (stops at | ; } or newline followed by identifier)
+    fn parse_alternative_action(&mut self) -> Result<Expr> {
+        let start = self.pos;
+        let mut brace_depth = 0;
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
+        let mut in_string = false;
+        let mut escape_next = false;
+
+        while !self.is_eof() {
+            let c = self.peek_char().unwrap();
+
+            if escape_next {
+                escape_next = false;
+                self.advance();
+                continue;
+            }
+
+            if c == '\\' {
+                escape_next = true;
+                self.advance();
+                continue;
+            }
+
+            if c == '"' {
+                in_string = !in_string;
+                self.advance();
+                continue;
+            }
+
+            if in_string {
+                self.advance();
+                continue;
+            }
+
+            match c {
+                '{' => brace_depth += 1,
+                '}' if brace_depth > 0 => brace_depth -= 1,
+                '}' => break, // End of grammar
+                '(' => paren_depth += 1,
+                ')' if paren_depth > 0 => paren_depth -= 1,
+                '[' => bracket_depth += 1,
+                ']' if bracket_depth > 0 => bracket_depth -= 1,
+                '|' if brace_depth == 0
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && !self.peek_str("|>") =>
+                {
+                    break;
+                } // Choice separator
+                ';' if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 => break, // Rule terminator
+                '\n' => {
+                    // Check if there's a rule starting on next line
+                    let saved_pos = self.pos;
+                    self.advance(); // consume newline
+                    self.skip_whitespace();
+                    if self.is_at_rule_start() || self.peek_char() == Some('}') {
+                        self.pos = saved_pos;
+                        break;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+
+            self.advance();
+        }
+
+        let action_src = &self.source[start..self.pos].trim();
+        if action_src.is_empty() {
+            return Err(Error::Parser {
+                token: start,
+                message: "empty semantic action".to_string(),
+            });
+        }
+
+        // Parse as FMPL expression
+        let tokens = Lexer::new(action_src).tokenize()?;
+        let expr = ExprParser::with_source(&tokens, action_src).parse()?;
+        Ok(expr)
+    }
+
+    /// Parse sequence: `a b c` or `a:x when guard b:y when guard`
+    /// Each element can have its own `when` guard for CSP-style constraints.
     fn parse_sequence(&mut self) -> Result<Pattern> {
         let mut items = Vec::new();
 
         loop {
             self.skip_whitespace();
-            // Stop at choice separator, action arrow, rule end, semicolon, guard keyword, or grammar end
+            // Stop at choice separator, action arrow, rule end, semicolon, or grammar end
             if self.is_eof()
                 || self.peek_char() == Some('|')
                 || self.peek_char() == Some('}')
                 || self.peek_char() == Some(')')
                 || self.peek_char() == Some(';')
                 || self.peek_str("=>")
-                || self.peek_str("when")
                 || self.is_at_rule_start()
             {
                 break;
             }
 
-            items.push(self.parse_prefix()?);
+            // Check if this is a 'when' at the start of position - that means it's an alternative-level guard
+            if self.peek_keyword("when") && items.is_empty() {
+                // 'when' at the very start means this is an alternative-level guard, not sequence-level
+                break;
+            }
+
+            let mut elem = self.parse_prefix()?;
+
+            // Check for per-element when guard: element when guard
+            self.skip_whitespace();
+            if self.peek_keyword("when") {
+                self.advance_by(4); // consume "when"
+                self.skip_whitespace();
+
+                // Parse guard until next element, choice, action, or rule end
+                let guard_start = self.pos;
+                let mut paren_depth = 0;
+                let mut bracket_depth = 0;
+                while !self.is_eof() {
+                    let c = self.peek_char().unwrap();
+                    match c {
+                        '(' => paren_depth += 1,
+                        ')' if paren_depth > 0 => paren_depth -= 1,
+                        '[' => bracket_depth += 1,
+                        ']' if bracket_depth > 0 => bracket_depth -= 1,
+                        '|' | ';' | '}' if paren_depth == 0 && bracket_depth == 0 => break,
+                        _ => {}
+                    }
+                    // Check for => (action arrow) at depth 0
+                    if paren_depth == 0 && bracket_depth == 0 && self.peek_str("=>") {
+                        break;
+                    }
+                    // Check for start of next sequence element (identifier not followed by 'in')
+                    if paren_depth == 0 && bracket_depth == 0 {
+                        // Look for pattern starts: identifier, string literal, character class, etc.
+                        if c.is_alphabetic() && !self.peek_keyword("when") {
+                            // Could be start of next pattern - peek ahead to see if it's an identifier
+                            // followed by something that looks like a pattern
+                            let saved = self.pos;
+                            // Try to parse as an expression or pattern start
+                            // If the identifier is followed by : or whitespace+pattern, it's a new element
+                            while let Some(ch) = self.peek_char() {
+                                if ch.is_alphanumeric() || ch == '_' {
+                                    self.advance();
+                                } else {
+                                    break;
+                                }
+                            }
+                            self.skip_whitespace();
+                            let next = self.peek_char();
+                            self.pos = saved;
+                            if next == Some(':')
+                                || next == Some('(')
+                                || next == Some('[')
+                                || next == Some('"')
+                            {
+                                // Looks like a new pattern element
+                                break;
+                            }
+                            // Otherwise continue as part of the guard expression
+                        }
+                    }
+                    self.advance();
+                }
+                let guard_source = &self.source[guard_start..self.pos].trim();
+
+                if !guard_source.is_empty() {
+                    eprintln!(
+                        "DEBUG sequence when guard: parsing guard expression: {:?}",
+                        guard_source
+                    );
+
+                    let lexer = Lexer::new(guard_source);
+                    let tokens = lexer.tokenize()?;
+                    let mut expr_parser = ExprParser::new(&tokens);
+                    let guard_expr = expr_parser.parse()?;
+
+                    elem = Pattern::Guard(Box::new(elem), guard_expr);
+                }
+            }
+
+            items.push(elem);
         }
 
         match items.len() {
@@ -326,8 +588,15 @@ impl<'a> GrammarParser<'a> {
                 }
                 Some(':') => {
                     self.advance();
+                    // Check for choice point marker: digit:?s
+                    let is_choice = if self.peek_char() == Some('?') {
+                        self.advance();
+                        true
+                    } else {
+                        false
+                    };
                     let name = self.parse_ident()?;
-                    pattern = Pattern::Bind(Box::new(pattern), name);
+                    pattern = Pattern::Bind(Box::new(pattern), name, is_choice);
                 }
                 _ => break,
             }
@@ -694,7 +963,11 @@ impl<'a> GrammarParser<'a> {
                 self.advance();
                 self.skip_whitespace();
                 let rest_ident = self.parse_ident()?;
-                rest_pattern = Some(Box::new(Pattern::Bind(Box::new(Pattern::Any), rest_ident)));
+                rest_pattern = Some(Box::new(Pattern::Bind(
+                    Box::new(Pattern::Any),
+                    rest_ident,
+                    false,
+                )));
                 break;
             }
 
@@ -712,7 +985,11 @@ impl<'a> GrammarParser<'a> {
                 self.advance();
                 self.skip_whitespace();
                 let rest_ident = self.parse_ident()?;
-                rest_pattern = Some(Box::new(Pattern::Bind(Box::new(Pattern::Any), rest_ident)));
+                rest_pattern = Some(Box::new(Pattern::Bind(
+                    Box::new(Pattern::Any),
+                    rest_ident,
+                    false,
+                )));
                 break;
             }
         }
@@ -774,7 +1051,7 @@ impl<'a> GrammarParser<'a> {
             Some(c) if c.is_alphabetic() => {
                 // Bare identifier - treat as binding (not rule reference)
                 let name = self.parse_ident()?;
-                Ok(Pattern::Bind(Box::new(Pattern::Any), name))
+                Ok(Pattern::Bind(Box::new(Pattern::Any), name, false))
             }
             Some('"') => {
                 let s = self.parse_string()?;
@@ -884,7 +1161,7 @@ impl<'a> GrammarParser<'a> {
             self.advance();
             self.skip_whitespace();
             let binding_name = self.parse_ident()?;
-            Ok(Pattern::Bind(Box::new(pattern), binding_name))
+            Ok(Pattern::Bind(Box::new(pattern), binding_name, false))
         } else {
             Ok(pattern)
         }
@@ -959,6 +1236,8 @@ impl<'a> GrammarParser<'a> {
                 '}' => break, // End of grammar
                 '(' => paren_depth += 1,
                 ')' if paren_depth > 0 => paren_depth -= 1,
+                '|' if brace_depth == 0 && paren_depth == 0 && !self.peek_str("|>") => break, // Choice separator
+                ';' if brace_depth == 0 && paren_depth == 0 => break, // Rule terminator
                 _ => {}
             }
 
@@ -1191,6 +1470,19 @@ impl<'a> GrammarParser<'a> {
         self.source[self.pos..].starts_with(s)
     }
 
+    fn peek_keyword(&self, s: &str) -> bool {
+        if !self.peek_str(s) {
+            return false;
+        }
+        // Check that after the keyword is either EOF or non-identifier character
+        let next_pos = self.pos + s.len();
+        if next_pos >= self.source.len() {
+            return true;
+        }
+        let next_char = self.source[next_pos..].chars().next().unwrap();
+        !next_char.is_alphanumeric() && next_char != '_'
+    }
+
     fn advance(&mut self) -> Option<char> {
         let c = self.peek_char()?;
         self.pos += c.len_utf8();
@@ -1385,11 +1677,15 @@ mod tests {
         let grammar = parser.parse().unwrap();
         let rule = grammar.rules.get("digit").unwrap();
 
-        match rule.action.as_ref() {
-            Some(Expr::GrammarLiteral(inner)) => {
+        // Actions are now embedded in Pattern::Action, not in Rule.action
+        match &rule.pattern {
+            Pattern::Action(_, Expr::GrammarLiteral(inner)) => {
                 assert!(inner.rules.contains_key("inner"));
             }
-            _ => panic!("expected grammar literal action"),
+            _ => panic!(
+                "expected Pattern::Action with grammar literal, got {:?}",
+                rule.pattern
+            ),
         }
     }
 }

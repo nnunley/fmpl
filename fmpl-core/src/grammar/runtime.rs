@@ -27,6 +27,27 @@ use std::time::Duration;
 pub type ActionEvaluator<'e> =
     Box<dyn FnMut(&crate::ast::Expr, &HashMap<SmolStr, Value>) -> Result<Value> + 'e>;
 
+/// A backtracking stack entry.
+///
+/// Can be either a single target (for simple backtracking) or a choice point
+/// (for exploring multiple alternatives from a Choice pattern).
+#[derive(Debug, Clone)]
+enum BacktrackEntry {
+    /// A single target to resume parsing from.
+    Single { position: usize, value: Value },
+    /// A choice point with multiple successful alternatives.
+    /// Stores the bindings at the point of choice, enabling Prolog-style backtracking.
+    Choice {
+        position: usize,
+        /// Remaining alternatives: (value, end_position)
+        alternatives: Vec<(Value, usize)>,
+        /// Index of next alternative to try
+        next_index: usize,
+        /// Bindings saved at the choice point, restored when backtracking
+        saved_bindings: HashMap<SmolStr, Value>,
+    },
+}
+
 /// Generic PEG parser runtime.
 ///
 /// This runtime is generic over `PegInput`, allowing it to parse from
@@ -41,6 +62,12 @@ pub struct PegRuntime<'a, 'e, I: PegInput> {
     /// When true, Choice returns all successful alternatives for backtracking.
     /// When false, Choice returns first match only (traditional PEG behavior).
     backtracking_mode: bool,
+    /// Stack of choice points for backtracking.
+    /// Each entry can be a Single target or a Choice with multiple alternatives.
+    backtracking_stack: Vec<BacktrackEntry>,
+    /// When true, the next Choice pattern will treat ALL alternatives as choice points.
+    /// This is set by `Bind(_, _, true)` (digit:?s syntax) before evaluating the inner pattern.
+    force_choice_backtracking: bool,
 }
 
 impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
@@ -53,6 +80,8 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
             action_evaluator: None,
             bindings: HashMap::new(),
             backtracking_mode: false, // Default: traditional PEG behavior
+            backtracking_stack: Vec::new(),
+            force_choice_backtracking: false,
         }
     }
 
@@ -69,26 +98,40 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
     }
 
     /// Parse input starting at position 0 with the given rule.
+    ///
+    /// In backtracking mode, when parsing fails due to a guard, this will
+    /// automatically restore to the most recent choice point and try the next
+    /// alternative (Prolog-style backtracking).
     pub fn parse(&mut self, rule_name: &str) -> Result<ParseResult> {
         self.bindings.clear();
+        self.backtracking_stack.clear();
         let start = self.input.start();
         self.apply_rule(&SmolStr::new(rule_name), start)
     }
 
     /// Apply a named rule at a position.
     fn apply_rule(&mut self, rule_name: &SmolStr, pos: I::Position) -> Result<ParseResult> {
-        // Check memo cache
-        if let Some(entry) = self.input.get_memo(&pos, rule_name) {
-            return match entry {
-                MemoEntry::InProgress => {
-                    // Left recursion detected - fail this branch
-                    Ok(ParseResult::Failure)
-                }
-                MemoEntry::Done(value, end_index) => match value {
-                    Some(v) => Ok(ParseResult::Success(v, end_index)),
-                    None => Ok(ParseResult::Failure),
-                },
-            };
+        let pos_index = self.input.index(&pos);
+
+        // In backtracking mode, if there's a Choice entry for this position,
+        // skip memo and let the Choice logic return the next alternative.
+        let skip_memo =
+            self.backtracking_mode && self.find_choice_entry_for_position(pos_index).is_some();
+
+        // Check memo cache (unless backtracking should override)
+        if !skip_memo {
+            if let Some(entry) = self.input.get_memo(&pos, rule_name) {
+                return match entry {
+                    MemoEntry::InProgress => {
+                        // Left recursion detected - fail this branch
+                        Ok(ParseResult::Failure)
+                    }
+                    MemoEntry::Done(value, end_index) => match value {
+                        Some(v) => Ok(ParseResult::Success(v, end_index)),
+                        None => Ok(ParseResult::Failure),
+                    },
+                };
+            }
         }
 
         // Mark as in progress for left recursion detection
@@ -315,19 +358,77 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
             }
 
             Pattern::Choice(alternatives) => {
-                // In backtracking mode, try all alternatives and return all successful ones.
-                // In traditional mode (default), return first match only (PEG semantics).
-                let start_index = self.input.index(&pos);
-                let mut successful_alternatives: Vec<(Value, usize)> = Vec::new();
+                // Choice with optional backtracking marker per alternative.
+                // Each alternative is (Pattern, uses_backtracking).
+                //
+                // Traditional PEG semantics (no ? markers):
+                //   First match wins, stop immediately
+                //
+                // Backtracking semantics (with ? markers OR force_choice_backtracking):
+                //   Collect all marked alternatives for backtracking search
+                //   Unmarked alternatives still use traditional semantics
+                //
+                // The force_choice_backtracking flag is set by digit:?s syntax,
+                // which makes ALL alternatives into choice points.
 
-                for alt in alternatives {
+                let start_index = self.input.index(&pos);
+
+                // Check if any alternative uses backtracking, or if we're forced
+                let any_backtracking = self.force_choice_backtracking
+                    || alternatives.iter().any(|(_, uses_bt)| *uses_bt);
+
+                if !any_backtracking {
+                    // Traditional PEG: return first match immediately
+                    for (alt, _uses_bt) in alternatives {
+                        match self.match_pattern(alt, pos.clone())? {
+                            ParseResult::Success(v, new_index) => {
+                                return Ok(ParseResult::Success(v, new_index));
+                            }
+                            ParseResult::Failure => continue,
+                        }
+                    }
+                    return Ok(ParseResult::Failure);
+                }
+
+                // PROLOG-STYLE BACKTRACKING:
+                // Check if there's already a choice point for this position on the stack.
+                // If so, return the next alternative from it instead of recomputing.
+                if let Some(entry_idx) = self.find_choice_entry_for_position(start_index) {
+                    if let Some(BacktrackEntry::Choice {
+                        alternatives,
+                        next_index,
+                        ..
+                    }) = self.backtracking_stack.get(entry_idx)
+                    {
+                        if *next_index < alternatives.len() {
+                            let (value, end_pos) = alternatives[*next_index].clone();
+                            // Increment next_index for the next backtrack
+                            if let Some(BacktrackEntry::Choice { next_index: ni, .. }) =
+                                self.backtracking_stack.get_mut(entry_idx)
+                            {
+                                *ni += 1;
+                            }
+                            return Ok(ParseResult::Success(value, end_pos));
+                        } else {
+                            // All alternatives exhausted
+                            return Ok(ParseResult::Failure);
+                        }
+                    }
+                }
+
+                // Backtracking mode: collect successful alternatives
+                // If force_choice_backtracking is set, ALL alternatives are choice points
+                let mut successful_alternatives: Vec<(Value, usize)> = Vec::new();
+                let force_all = self.force_choice_backtracking;
+
+                for (alt, uses_bt) in alternatives {
                     match self.match_pattern(alt, pos.clone())? {
                         ParseResult::Success(v, new_index) => {
-                            if self.backtracking_mode {
-                                // Collect all successful alternatives
+                            if force_all || *uses_bt {
+                                // Marked alternative (or forced): collect for backtracking
                                 successful_alternatives.push((v, new_index));
                             } else {
-                                // Traditional PEG: return first match immediately
+                                // Unmarked: traditional PEG semantics, return immediately
                                 return Ok(ParseResult::Success(v, new_index));
                             }
                         }
@@ -335,38 +436,27 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
                     }
                 }
 
-                // If we have successful alternatives, return them
+                // Handle successful alternatives
                 if !successful_alternatives.is_empty() {
-                    if successful_alternatives.len() == 1 {
-                        // Single match - return the value directly (for backward compatibility)
+                    if successful_alternatives.len() > 1 {
+                        // Multiple marked alternatives matched:
+                        // Push choice point onto stack and return first alternative
+                        // Save current bindings so we can restore on backtrack
+                        let choice_entry = BacktrackEntry::Choice {
+                            position: start_index,
+                            alternatives: successful_alternatives.clone(),
+                            next_index: 1, // Next time, try alternative 1
+                            saved_bindings: self.bindings.clone(),
+                        };
+                        self.backtracking_stack.push(choice_entry);
+
+                        // Return the first alternative
                         let (value, end_pos) = successful_alternatives.into_iter().next().unwrap();
                         Ok(ParseResult::Success(value, end_pos))
                     } else {
-                        // Multiple matches - return a list of tagged values
-                        // Each tagged value contains: :AlternativeMatch(value, consumed_count, start_pos, end_pos)
-                        // This allows the caller to create forked streams from each alternative
-                        let mut max_end_pos = start_index;
-                        let mut alternatives_with_meta = Vec::new();
-
-                        for (value, end_pos) in successful_alternatives {
-                            max_end_pos = max_end_pos.max(end_pos);
-                            let consumed_count = end_pos.saturating_sub(start_index);
-
-                            // Create a tagged value with metadata for stream creation
-                            let meta = Value::Tagged(
-                                SmolStr::new("AlternativeMatch"),
-                                Arc::new(vec![
-                                    value,                             // The matched value
-                                    Value::Int(consumed_count as i64), // Tokens consumed
-                                    Value::Int(start_index as i64),    // Start position
-                                    Value::Int(end_pos as i64),        // End position
-                                ]),
-                            );
-                            alternatives_with_meta.push(meta);
-                        }
-
-                        let result = Value::List(Arc::new(alternatives_with_meta));
-                        Ok(ParseResult::Success(result, max_end_pos))
+                        // Single match: return the value directly
+                        let (value, end_pos) = successful_alternatives.into_iter().next().unwrap();
+                        Ok(ParseResult::Success(value, end_pos))
                     }
                 } else {
                     Ok(ParseResult::Failure)
@@ -475,13 +565,26 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
                 }
             }
 
-            Pattern::Bind(inner, name) => match self.match_pattern(inner, pos)? {
-                ParseResult::Success(v, new_index) => {
-                    self.bindings.insert(name.clone(), v.clone());
-                    Ok(ParseResult::Success(v, new_index))
+            Pattern::Bind(inner, name, is_choice) => {
+                // If is_choice is true (digit:?s syntax), set force_choice_backtracking
+                // so that any Choice patterns in the inner pattern will treat ALL
+                // alternatives as choice points for backtracking.
+                let was_forced = self.force_choice_backtracking;
+                if *is_choice {
+                    self.force_choice_backtracking = true;
                 }
-                ParseResult::Failure => Ok(ParseResult::Failure),
-            },
+                let result = self.match_pattern(inner, pos);
+                // Restore the flag
+                self.force_choice_backtracking = was_forced;
+
+                match result? {
+                    ParseResult::Success(v, new_index) => {
+                        self.bindings.insert(name.clone(), v.clone());
+                        Ok(ParseResult::Success(v, new_index))
+                    }
+                    ParseResult::Failure => Ok(ParseResult::Failure),
+                }
+            }
 
             Pattern::Predicate(expr) => {
                 // Evaluate expression, succeed if truthy
@@ -495,17 +598,31 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
 
             Pattern::Guard(pattern, guard_expr) => {
                 // Match the pattern first, then check the guard
-                match self.match_pattern(pattern, pos)? {
-                    ParseResult::Success(matched, new_index) => {
-                        // The guard can reference variables bound by the pattern
-                        let result = self.evaluate_predicate(guard_expr)?;
-                        if result.is_truthy() {
-                            Ok(ParseResult::Success(matched, new_index))
-                        } else {
-                            Ok(ParseResult::Failure)
+                // In backtracking mode, if the guard fails, try backtracking to get
+                // a different value from a choice point, then re-match the inner pattern
+                loop {
+                    match self.match_pattern(pattern, pos.clone())? {
+                        ParseResult::Success(matched, new_index) => {
+                            // The guard can reference variables bound by the pattern
+                            let result = self.evaluate_predicate(guard_expr)?;
+                            if result.is_truthy() {
+                                return Ok(ParseResult::Success(matched, new_index));
+                            } else {
+                                // Guard failed - try backtracking if in backtracking mode
+                                if self.backtracking_mode && self.has_more_choices() {
+                                    // Restore bindings and prepare for next iteration
+                                    // backtrack_with_restore will set up state for next alternative
+                                    if self.backtrack_with_restore().is_some() {
+                                        // Continue the loop to re-match the inner pattern
+                                        // The Choice pattern will now return the next alternative
+                                        continue;
+                                    }
+                                }
+                                return Ok(ParseResult::Failure);
+                            }
                         }
+                        ParseResult::Failure => return Ok(ParseResult::Failure),
                     }
-                    ParseResult::Failure => Ok(ParseResult::Failure),
                 }
             }
 
@@ -1275,6 +1392,7 @@ pub fn apply_grammar_to_value_with_evaluator<'e>(
             let text_input = TextInput::new(s.as_str());
             let input_len = s.len();
             let mut runtime = PegRuntime::new(text_input, registry, grammar.clone())
+                .with_backtracking_mode() // Enable Prolog-style backtracking
                 .with_action_evaluator(evaluator);
             match runtime.parse(rule_name)? {
                 ParseResult::Success(v, pos) if pos == input_len => Ok(Some(v)),
@@ -1464,11 +1582,172 @@ pub fn apply_grammar_with_backtracking<'e>(
     Ok(())
 }
 
+impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
+    /// Check if there are more choice alternatives to explore.
+    ///
+    /// Returns true if the backtracking stack has choice points that haven't
+    /// been fully explored yet.
+    pub fn has_more_choices(&self) -> bool {
+        self.backtracking_stack.iter().any(|entry| match entry {
+            BacktrackEntry::Single { .. } => true,
+            BacktrackEntry::Choice {
+                next_index,
+                alternatives,
+                ..
+            } => *next_index < alternatives.len(),
+        })
+    }
+
+    /// Backtrack to the next alternative at the top of the stack.
+    ///
+    /// Returns the next alternative value and position, or None if all choices
+    /// have been exhausted.
+    ///
+    /// This allows depth-first exploration of all alternatives:
+    /// ```fmpl
+    /// while runtime.has_more_choices() {
+    ///     if let Some((value, pos)) = runtime.backtrack() {
+    ///         // Continue parsing from pos with value
+    ///     }
+    /// }
+    /// ```
+    pub fn backtrack(&mut self) -> Option<(Value, usize)> {
+        while let Some(entry) = self.backtracking_stack.last_mut() {
+            match entry {
+                BacktrackEntry::Single { position, value } => {
+                    // Single target: pop and return it
+                    let pos = *position;
+                    let val = value.clone();
+                    self.backtracking_stack.pop();
+                    return Some((val, pos));
+                }
+                BacktrackEntry::Choice {
+                    next_index,
+                    alternatives,
+                    ..
+                } => {
+                    if *next_index < alternatives.len() {
+                        let index = *next_index;
+                        *next_index += 1;
+                        let (value, pos) = alternatives[index].clone();
+                        return Some((value, pos));
+                    } else {
+                        // All alternatives at this choice point have been explored
+                        self.backtracking_stack.pop();
+                        // Continue to the next entry on the stack
+                        continue;
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a Choice entry on the backtracking stack for the given input position.
+    /// Returns the index of the entry if found.
+    fn find_choice_entry_for_position(&self, position: usize) -> Option<usize> {
+        for (idx, entry) in self.backtracking_stack.iter().enumerate().rev() {
+            if let BacktrackEntry::Choice {
+                position: entry_pos,
+                ..
+            } = entry
+            {
+                if *entry_pos == position {
+                    return Some(idx);
+                }
+            }
+        }
+        None
+    }
+
+    /// Backtrack with binding restoration for Prolog-style backtracking.
+    ///
+    /// This method is used when a guard fails and we need to try the next
+    /// alternative. It restores the bindings that were saved at the choice point
+    /// so that subsequent guard evaluations see the correct variable values.
+    fn backtrack_with_restore(&mut self) -> Option<(Value, usize)> {
+        while let Some(entry) = self.backtracking_stack.last_mut() {
+            match entry {
+                BacktrackEntry::Single { position, value } => {
+                    let pos = *position;
+                    let val = value.clone();
+                    self.backtracking_stack.pop();
+                    return Some((val, pos));
+                }
+                BacktrackEntry::Choice {
+                    next_index,
+                    alternatives,
+                    saved_bindings,
+                    ..
+                } => {
+                    if *next_index < alternatives.len() {
+                        // Don't increment next_index here - let Choice pattern do it
+                        // when it returns the alternative. This method just restores
+                        // bindings and signals that backtracking is possible.
+                        let (value, pos) = alternatives[*next_index].clone();
+                        // Restore bindings to the state at the choice point
+                        self.bindings = saved_bindings.clone();
+                        return Some((value, pos));
+                    } else {
+                        // All alternatives exhausted - restore bindings and pop
+                        self.bindings = saved_bindings.clone();
+                        self.backtracking_stack.pop();
+                        continue;
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Push a single target onto the backtracking stack.
+    ///
+    /// This is useful for explicit continuation points in search algorithms.
+    /// For example, in a solver you might push intermediate states to explore later.
+    ///
+    /// ```fmpl
+    /// // Push a continuation point to explore later
+    /// runtime.push_target(value, position);
+    /// ```
+    pub fn push_target(&mut self, value: Value, position: usize) {
+        self.backtracking_stack
+            .push(BacktrackEntry::Single { position, value });
+    }
+
+    /// Get all remaining alternatives from the backtracking stack.
+    ///
+    /// This returns a list of all unexplored alternatives, which can be used
+    /// for parallel iteration or forking the parser.
+    ///
+    /// Returns a list of (value, position) pairs.
+    pub fn get_all_alternatives(&self) -> Vec<(Value, usize)> {
+        let mut results = Vec::new();
+        for entry in &self.backtracking_stack {
+            match entry {
+                BacktrackEntry::Single { position, value } => {
+                    results.push((value.clone(), *position));
+                }
+                BacktrackEntry::Choice {
+                    next_index,
+                    alternatives,
+                    ..
+                } => {
+                    // Add all remaining alternatives from this choice point
+                    for i in *next_index..alternatives.len() {
+                        results.push(alternatives[i].clone());
+                    }
+                }
+            }
+        }
+        results
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::CharRange;
-    use super::super::incremental::ParseNext;
     use super::*;
+    use crate::grammar::incremental::ParseNext;
+    use crate::grammar::{CharRange, Rule};
 
     #[test]
     fn test_parse_digit() {
@@ -1523,7 +1802,7 @@ mod tests {
         // hex = [0-9a-fA-F]+
         grammar.add_rule(
             SmolStr::new("hex"),
-            super::super::Rule::new(Pattern::Plus(Box::new(Pattern::CharClass(vec![
+            Rule::new(Pattern::Plus(Box::new(Pattern::CharClass(vec![
                 CharRange::Range('0', '9'),
                 CharRange::Range('a', 'f'),
                 CharRange::Range('A', 'F'),
@@ -1546,7 +1825,7 @@ mod tests {
         // ident_colon = word ':' spaces word
         grammar.add_rule(
             SmolStr::new("pair"),
-            super::super::Rule::new(Pattern::Seq(vec![
+            Rule::new(Pattern::Seq(vec![
                 Pattern::Rule(SmolStr::new("word")),
                 Pattern::Char(':'),
                 Pattern::Rule(SmolStr::new("spaces")),
@@ -1569,9 +1848,9 @@ mod tests {
         // bool = "true" | "false"
         grammar.add_rule(
             SmolStr::new("bool"),
-            super::super::Rule::new(Pattern::Choice(vec![
-                Pattern::Literal(SmolStr::new("true")),
-                Pattern::Literal(SmolStr::new("false")),
+            Rule::new(Pattern::Choice(vec![
+                (Pattern::Literal(SmolStr::new("true")), false),
+                (Pattern::Literal(SmolStr::new("false")), false),
             ])),
         );
 
@@ -1598,7 +1877,7 @@ mod tests {
         // Actually: letter_if_digit_ahead = &digit letter
         grammar.add_rule(
             SmolStr::new("check"),
-            super::super::Rule::new(Pattern::Seq(vec![
+            Rule::new(Pattern::Seq(vec![
                 Pattern::Lookahead(Box::new(Pattern::Rule(SmolStr::new("digit")))),
                 Pattern::Rule(SmolStr::new("digit")),
             ])),
@@ -1622,7 +1901,7 @@ mod tests {
         // not_a = ~'a' .
         grammar.add_rule(
             SmolStr::new("not_a"),
-            super::super::Rule::new(Pattern::Seq(vec![
+            Rule::new(Pattern::Seq(vec![
                 Pattern::Not(Box::new(Pattern::Char('a'))),
                 Pattern::Any,
             ])),
@@ -1647,9 +1926,10 @@ mod tests {
         // capture = word:w => w
         grammar.add_rule(
             SmolStr::new("capture"),
-            super::super::Rule::new(Pattern::Bind(
+            Rule::new(Pattern::Bind(
                 Box::new(Pattern::Rule(SmolStr::new("word"))),
                 SmolStr::new("w"),
+                false, // not a choice point
             )),
         );
 
@@ -1733,7 +2013,7 @@ mod tests {
         // magic = byte(0x89) byte(0x50)
         grammar.add_rule(
             SmolStr::new("magic"),
-            super::super::Rule::new(Pattern::Seq(vec![Pattern::Byte(0x89), Pattern::Byte(0x50)])),
+            Rule::new(Pattern::Seq(vec![Pattern::Byte(0x89), Pattern::Byte(0x50)])),
         );
 
         registry.register(grammar);
@@ -1762,7 +2042,7 @@ mod tests {
         // printable = byte(0x20..0x7E)
         grammar.add_rule(
             SmolStr::new("printable"),
-            super::super::Rule::new(Pattern::ByteRange(0x20, 0x7E)),
+            Rule::new(Pattern::ByteRange(0x20, 0x7E)),
         );
 
         registry.register(grammar);
@@ -1787,10 +2067,7 @@ mod tests {
         let mut grammar = Grammar::new(SmolStr::new("test::bytes"));
 
         // four_bytes = bytes(4)
-        grammar.add_rule(
-            SmolStr::new("four_bytes"),
-            super::super::Rule::new(Pattern::Bytes(4)),
-        );
+        grammar.add_rule(SmolStr::new("four_bytes"), Rule::new(Pattern::Bytes(4)));
 
         registry.register(grammar);
 
@@ -1877,7 +2154,7 @@ mod tests {
         // match_42 = 42
         grammar.add_rule(
             SmolStr::new("match_42"),
-            super::super::Rule::new(Pattern::MatchValue(Value::Int(42))),
+            Rule::new(Pattern::MatchValue(Value::Int(42))),
         );
 
         registry.register(grammar);
@@ -1903,7 +2180,7 @@ mod tests {
         // add_sym = :add
         grammar.add_rule(
             SmolStr::new("add_sym"),
-            super::super::Rule::new(Pattern::SymbolMatch(SmolStr::new("add"))),
+            Rule::new(Pattern::SymbolMatch(SmolStr::new("add"))),
         );
 
         registry.register(grammar);
@@ -1934,7 +2211,7 @@ mod tests {
         // pair = [int int]
         grammar.add_rule(
             SmolStr::new("pair"),
-            super::super::Rule::new(Pattern::ListMatch(
+            Rule::new(Pattern::ListMatch(
                 vec![
                     Pattern::MatchType(SmolStr::new("int")),
                     Pattern::MatchType(SmolStr::new("int")),
@@ -1988,7 +2265,7 @@ mod tests {
         // This descends into the current value (expecting a list) and matches an int
         grammar.add_rule(
             SmolStr::new("single_int"),
-            super::super::Rule::new(Pattern::Apply(Box::new(Pattern::MatchType(SmolStr::new(
+            Rule::new(Pattern::Apply(Box::new(Pattern::MatchType(SmolStr::new(
                 "int",
             ))))),
         );
@@ -2022,7 +2299,7 @@ mod tests {
         let mut parent = Grammar::new(SmolStr::new("parent"));
         parent.add_rule(
             SmolStr::new("greeting"),
-            super::super::Rule::new(Pattern::Literal(SmolStr::new("hello"))),
+            Rule::new(Pattern::Literal(SmolStr::new("hello"))),
         );
         let parent = Arc::new(parent);
 
@@ -2091,7 +2368,7 @@ mod tests {
         let mut custom = Grammar::with_parent_grammar(SmolStr::new("test"), grammar.clone());
         custom.add_rule(
             SmolStr::new("ints"),
-            super::super::Rule::new(Pattern::Star(Box::new(Pattern::MatchType(SmolStr::new(
+            Rule::new(Pattern::Star(Box::new(Pattern::MatchType(SmolStr::new(
                 "int",
             ))))),
         );
@@ -2120,7 +2397,7 @@ mod tests {
         let mut custom = Grammar::with_parent_grammar(SmolStr::new("test"), grammar.clone());
         custom.add_rule(
             SmolStr::new("ints"),
-            super::super::Rule::new(Pattern::Plus(Box::new(Pattern::MatchType(SmolStr::new(
+            Rule::new(Pattern::Plus(Box::new(Pattern::MatchType(SmolStr::new(
                 "int",
             ))))),
         );
@@ -2171,9 +2448,9 @@ mod tests {
         let mut custom = Grammar::with_parent_grammar(SmolStr::new("test"), grammar.clone());
         custom.add_rule(
             SmolStr::new("int_or_string"),
-            super::super::Rule::new(Pattern::Choice(vec![
-                Pattern::MatchType(SmolStr::new("int")),
-                Pattern::MatchType(SmolStr::new("string")),
+            Rule::new(Pattern::Choice(vec![
+                (Pattern::MatchType(SmolStr::new("int")), false),
+                (Pattern::MatchType(SmolStr::new("string")), false),
             ])),
         );
         let custom = Arc::new(custom);
@@ -2206,7 +2483,11 @@ mod tests {
         let mut custom = Grammar::with_parent_grammar(SmolStr::new("test"), grammar.clone());
         custom.add_rule(
             SmolStr::new("bound"),
-            super::super::Rule::new(Pattern::Bind(Box::new(Pattern::Any), SmolStr::new("x"))),
+            Rule::new(Pattern::Bind(
+                Box::new(Pattern::Any),
+                SmolStr::new("x"),
+                false, // not a choice point
+            )),
         );
         let custom = Arc::new(custom);
 
@@ -2228,7 +2509,7 @@ mod tests {
         let mut custom = Grammar::with_parent_grammar(SmolStr::new("test"), grammar.clone());
         custom.add_rule(
             SmolStr::new("test_rule"),
-            super::super::Rule::new(Pattern::MatchType(SmolStr::new("int"))),
+            Rule::new(Pattern::MatchType(SmolStr::new("int"))),
         );
         let custom = Arc::new(custom);
 
@@ -2310,12 +2591,13 @@ mod tests {
 
         // Create a grammar where multiple alternatives can succeed
         // For text input: "a" can match both: the literal "a" and the character class [a-z]
+        // Using ? markers to enable backtracking for both alternatives
         let mut custom = Grammar::with_parent_grammar(SmolStr::new("test"), grammar.clone());
         custom.add_rule(
             SmolStr::new("multiple_matches"),
-            super::super::Rule::new(Pattern::Choice(vec![
-                Pattern::Literal(SmolStr::new("a")),
-                Pattern::CharClass(vec![CharRange::Range('a', 'z')]),
+            Rule::new(Pattern::Choice(vec![
+                (Pattern::Literal(SmolStr::new("a")), true), // ? marker for backtracking
+                (Pattern::CharClass(vec![CharRange::Range('a', 'z')]), true), // ? marker for backtracking
             ])),
         );
         let custom = Arc::new(custom);
@@ -2325,42 +2607,27 @@ mod tests {
         let mut runtime = PegRuntime::new(input, &registry, custom).with_backtracking_mode(); // Enable backtracking mode
         let result = runtime.parse("multiple_matches").unwrap();
 
-        // Should return a list of AlternativeMatch tagged values
+        // With backtracking stack, Choice returns the first alternative directly
+        // and stores the rest on the stack
         match result {
-            ParseResult::Success(Value::List(items), end_pos) => {
-                assert_eq!(
-                    items.len(),
-                    2,
-                    "expected 2 alternatives, got {}",
-                    items.len()
-                );
+            ParseResult::Success(Value::String(s), end_pos) => {
+                assert_eq!(s, "a"); // First alternative matches literal "a"
                 assert_eq!(end_pos, 1, "expected end position 1, got {}", end_pos);
-
-                // Check first alternative
-                if let Value::Tagged(tag, children) = &items[0] {
-                    assert_eq!(tag.as_str(), "AlternativeMatch");
-                    assert_eq!(children.len(), 4);
-                    // children[0] is the matched value
-                    // children[1] is consumed count
-                    // children[2] is start position
-                    // children[3] is end position
-                    if let Value::Int(n) = children[1] {
-                        assert_eq!(n, 1); // consumed 1 character
-                    } else {
-                        panic!("expected Int for consumed count");
-                    }
-                } else {
-                    panic!("expected Tagged value, got {:?}", items[0]);
-                }
-
-                // Check second alternative
-                if let Value::Tagged(tag, _) = &items[1] {
-                    assert_eq!(tag.as_str(), "AlternativeMatch");
-                } else {
-                    panic!("expected Tagged value, got {:?}", items[1]);
-                }
             }
-            other => panic!("expected Success with List, got {:?}", other),
+            other => panic!("expected Success with String, got {:?}", other),
         }
+
+        // Check that we have more choices on the stack
+        assert!(runtime.has_more_choices(), "expected more choices on stack");
+
+        // Backtrack to get the second alternative
+        let second = runtime.backtrack();
+        assert!(second.is_some(), "expected second alternative");
+        let (value, pos) = second.unwrap();
+        assert_eq!(value, Value::String("a".into()));
+        assert_eq!(pos, 1);
+
+        // No more choices after backtracking once
+        assert!(!runtime.has_more_choices(), "expected no more choices");
     }
 }

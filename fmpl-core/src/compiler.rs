@@ -156,6 +156,10 @@ pub enum Instruction {
         lhs: InstrIndex,
         rhs: InstrIndex,
     },
+    In {
+        lhs: InstrIndex,
+        rhs: InstrIndex,
+    }, // Membership test: lhs in rhs
 
     // Control flow
     Jump {
@@ -1065,6 +1069,7 @@ impl Compiler {
                     BinOp::Gt => self.code.emit(Instruction::Gt { lhs, rhs }),
                     BinOp::LtEq => self.code.emit(Instruction::LtEq { lhs, rhs }),
                     BinOp::GtEq => self.code.emit(Instruction::GtEq { lhs, rhs }),
+                    BinOp::In => self.code.emit(Instruction::In { lhs, rhs }),
                     BinOp::And | BinOp::Or | BinOp::Pipe => unreachable!(),
                 })
             }
@@ -1345,6 +1350,25 @@ impl Compiler {
                     let builtin_idx = self
                         .code
                         .emit(Instruction::LoadSymbol(SmolStr::new("__builtin_cursor")));
+                    let mut arg_indices = Vec::with_capacity(args.len());
+                    for arg in args {
+                        match arg {
+                            Arg::Expr(e) => arg_indices.push(self.compile_expr(e)?),
+                            Arg::Placeholder => unreachable!(),
+                        }
+                    }
+                    return Ok(self.code.emit(Instruction::MethodCall {
+                        receiver: builtin_idx,
+                        method: method.clone(),
+                        args: arg_indices,
+                    }));
+                }
+
+                // Convert io::load(args) to __builtin_io.load(args)
+                if module == "io" && method == "load" {
+                    let builtin_idx = self
+                        .code
+                        .emit(Instruction::LoadSymbol(SmolStr::new("__builtin_io")));
                     let mut arg_indices = Vec::with_capacity(args.len());
                     for arg in args {
                         match arg {
@@ -2653,7 +2677,7 @@ impl Compiler {
         use crate::grammar::Pattern as GP;
 
         match pattern {
-            GP::Bind(_, name) => {
+            GP::Bind(_, name, _) => {
                 // Direct binding - path is just [key]
                 Some((vec![key.clone()], name.clone()))
             }
@@ -2748,30 +2772,15 @@ impl Compiler {
             }
 
             GP::Choice(patterns) => {
-                // Choice lowered to IR with proper backtracking:
+                // Choice with optional backtracking marker per alternative.
+                // Each pattern is (Pattern, uses_backtracking).
                 //
-                //   result_var = null
-                //   checkpoint = ParseCheckpoint
+                // Traditional PEG semantics (no ? markers):
+                //   First match wins, stop immediately
                 //
-                //   case1_result = <compile pattern 1>
-                //   JumpIfNull case1_result, try_case2
-                //   StoreVar result_var, case1_result
-                //   Jump done
-                //
-                // try_case2:
-                //   ParseRestore checkpoint
-                //   case2_result = <compile pattern 2>
-                //   JumpIfNull case2_result, try_case3
-                //   StoreVar result_var, case2_result
-                //   Jump done
-                //
-                // try_case3:
-                //   ParseRestore checkpoint
-                //   case3_result = <compile pattern 3>
-                //   StoreVar result_var, case3_result  // Last case, no jump needed
-                //
-                // done:
-                //   LoadVar result_var
+                // Backtracking semantics (with ? markers):
+                //   Collect all marked alternatives for backtracking search
+                //   Unmarked alternatives still use traditional semantics (return first match)
 
                 if patterns.is_empty() {
                     // Empty choice - always fail (return Null)
@@ -2779,9 +2788,32 @@ impl Compiler {
                 }
 
                 if patterns.len() == 1 {
-                    // Single pattern - no choice needed
-                    return self.compile_grammar_pattern(&patterns[0]);
+                    // Single pattern - no choice needed, ignore backtracking flag
+                    return self.compile_grammar_pattern(&patterns[0].0);
                 }
+
+                // Check if any alternative uses backtracking
+                let any_backtracking = patterns.iter().any(|(_, uses_bt)| *uses_bt);
+
+                if any_backtracking {
+                    // TODO: Full backtracking implementation
+                    // For now, emit the same IR as traditional PEG
+                    // Future: Create BacktrackEntry::Choice with all successful alternatives
+                }
+
+                // Compile choice to IR with checkpoint/restore:
+                //   result_var = null
+                //   checkpoint = ParseCheckpoint
+                //   for each pattern:
+                //     case_result = <compile pattern>
+                //     if not last:
+                //       JumpIfNull case_result, next_case
+                //       StoreVar result_var, case_result
+                //       Jump done
+                //       next_case: ParseRestore checkpoint
+                //     else:
+                //       StoreVar result_var, case_result
+                //   done: LoadVar result_var
 
                 // Generate unique var name for result
                 let result_var =
@@ -2800,7 +2832,7 @@ impl Compiler {
                 let patterns_len = patterns.len();
                 let mut jump_to_done: Vec<InstrIndex> = Vec::new();
 
-                for (i, pattern) in patterns.iter().enumerate() {
+                for (i, (pattern, _uses_bt)) in patterns.iter().enumerate() {
                     let is_last = i == patterns_len - 1;
 
                     // Compile this case
@@ -3090,7 +3122,7 @@ impl Compiler {
                 self.code.emit(Instruction::MatchNot { pattern: inner })
             }
 
-            GP::Bind(p, name) => {
+            GP::Bind(p, name, _) => {
                 let pattern_idx = self.compile_grammar_pattern(p)?;
                 let const_idx = self.code.add_constant(name.clone());
                 self.code.emit(Instruction::MatchBind {
@@ -3233,10 +3265,10 @@ impl Compiler {
                 // Check if any pattern is complex (not just Bind or Any)
                 let has_complex_patterns = patterns
                     .iter()
-                    .any(|p| !matches!(p, GP::Bind(_, _) | GP::Any))
-                    || rest
-                        .as_ref()
-                        .map_or(false, |r| !matches!(r.as_ref(), GP::Bind(_, _) | GP::Any));
+                    .any(|p| !matches!(p, GP::Bind(_, _, _) | GP::Any))
+                    || rest.as_ref().map_or(false, |r| {
+                        !matches!(r.as_ref(), GP::Bind(_, _, _) | GP::Any)
+                    });
 
                 if has_complex_patterns {
                     // OMeta-style list matching with tree descent for complex patterns:
@@ -3275,7 +3307,7 @@ impl Compiler {
                     let pattern_bindings: Vec<Option<SmolStr>> = patterns
                         .iter()
                         .map(|p| match p {
-                            GP::Bind(_, name) => Some(name.clone()),
+                            GP::Bind(_, name, _) => Some(name.clone()),
                             GP::Any => None,
                             _ => None,
                         })
@@ -3293,7 +3325,7 @@ impl Compiler {
                     // Extract rest binding if present
                     let rest_binding = match rest {
                         Some(rest_pat) => match rest_pat.as_ref() {
-                            GP::Bind(_, name) => Some(self.code.add_constant(name.clone())),
+                            GP::Bind(_, name, _) => Some(self.code.add_constant(name.clone())),
                             GP::Any => None,
                             _ => None,
                         },
@@ -3319,7 +3351,7 @@ impl Compiler {
                         // Compile value pattern
                         let value_pattern = match pattern {
                             GP::Any => MapValuePattern::Wildcard,
-                            GP::Bind(_, name) => {
+                            GP::Bind(_, name, _) => {
                                 MapValuePattern::Bind(self.code.add_constant(name.clone()))
                             }
                             GP::Literal(s) => {
@@ -3360,7 +3392,7 @@ impl Compiler {
             GP::TagMatch(tag, child_patterns) => {
                 // Check if all patterns are simple (Bind or Any)
                 let all_simple = child_patterns.iter().all(|p| {
-                    matches!(p, GP::Bind(inner, _) if matches!(inner.as_ref(), GP::Any))
+                    matches!(p, GP::Bind(inner, _, _) if matches!(inner.as_ref(), GP::Any))
                         || matches!(p, GP::Any)
                 });
 
@@ -3371,7 +3403,7 @@ impl Compiler {
                     let bindings: Vec<Option<ConstIndex>> = child_patterns
                         .iter()
                         .map(|p| match p {
-                            GP::Bind(_, name) => Some(self.code.add_constant(name.clone())),
+                            GP::Bind(_, name, _) => Some(self.code.add_constant(name.clone())),
                             GP::Any => None,
                             _ => unreachable!(),
                         })

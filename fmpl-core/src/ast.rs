@@ -39,6 +39,7 @@ pub enum BinOp {
     And,
     Or,
     Pipe,
+    In, // 'x in list' membership test
 }
 
 /// Unary operators.

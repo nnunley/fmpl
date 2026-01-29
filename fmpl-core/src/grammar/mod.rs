@@ -148,6 +148,8 @@ pub struct Rule {
     pub pattern: Pattern,
     /// Semantic action producing a value (optional).
     pub action: Option<Expr>,
+    /// Whether this rule uses backtracking (enabled by `?` marker).
+    pub backtracking: bool,
 }
 
 impl Rule {
@@ -155,6 +157,7 @@ impl Rule {
         Self {
             pattern,
             action: None,
+            backtracking: false,
         }
     }
 
@@ -162,7 +165,13 @@ impl Rule {
         Self {
             pattern,
             action: Some(action),
+            backtracking: false,
         }
+    }
+
+    pub fn with_backtracking(mut self, backtracking: bool) -> Self {
+        self.backtracking = backtracking;
+        self
     }
 }
 
@@ -197,7 +206,8 @@ pub enum Pattern {
     Seq(Vec<Pattern>),
 
     /// Ordered choice: try patterns left to right.
-    Choice(Vec<Pattern>),
+    /// Each (pattern, bool) tuple indicates if that alternative uses backtracking.
+    Choice(Vec<(Pattern, bool)>),
 
     /// Zero or more (greedy).
     Star(Box<Pattern>),
@@ -215,7 +225,8 @@ pub enum Pattern {
     Not(Box<Pattern>),
 
     /// Bind match result to a variable name.
-    Bind(Box<Pattern>, SmolStr),
+    /// The bool indicates if this is a choice point (digit:?x syntax).
+    Bind(Box<Pattern>, SmolStr, bool),
 
     /// Semantic predicate (evaluate expression, succeed if truthy).
     Predicate(Expr),
