@@ -8,6 +8,11 @@
 --
 -- Usage: cargo run -p fmpl-bootstrap -- lib/core/parser_generator.fmpl
 -- Output: Rust source code for the generated parser (stdout)
+--
+-- TODO: Apply grammar_optimizer.fmpl optimizations to the grammar IR
+-- before generating Rust code. This requires either:
+-- 1. Converting optimizer grammars to work on grammar IR, or
+-- 2. Implementing grammar inheritance (<:) to chain optimizations
 
 -- Load the grammar
 io::load("lib/core/fmpl_parser.fmpl")
