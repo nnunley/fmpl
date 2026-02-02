@@ -1,0 +1,266 @@
+-- IR to execution_tape Asm transpiler
+-- Transforms FMPL IR tagged values to execution_tape Asm builder calls
+-- Requires: lib/core/prelude.fmpl loaded first
+--
+-- This generates Rust source code that uses the execution_tape::asm::Asm API
+-- to build register-based bytecode for the execution_tape VM.
+--
+-- Flow: FMPL source → AST → IR (tagged) → this file → Rust source (Asm calls) → execution_tape VM
+
+-- Helper to sanitize identifiers for Rust
+let sanitize_ident = \name
+    if name == "type" then "r#type"
+    else if name == "match" then "r#match"
+    else if name == "loop" then "r#loop"
+    else if name == "move" then "r#move"
+    else if name == "ref" then "r#ref"
+    else if name == "fn" then "r#fn"
+    else if name == "let" then "r#let"
+    else if name == "if" then "r#if"
+    else if name == "else" then "r#else"
+    else if name == "return" then "r#return"
+    else name
+
+-- Convert symbol to string
+let sym_to_str = \s s @ { :name => name }
+
+-- Join list items with separator
+let join_with = lambda(sep, items)
+    reduce(\acc \item
+        if acc == "" then item
+        else acc ++ sep ++ item, "", items)
+
+-- State for register allocation
+-- Returns tuple: (next_register, code_string)
+let alloc_reg = \state
+    let next = state.next_reg
+    { next_reg: next + 1, code: "r" ++ int.to_string(next) }
+
+-- Compile IR to execution_tape Asm calls
+-- Input: IR tagged value
+-- Output: (state_with_result_register, rust_code_string)
+let ir_to_asm = \ir ir @ {
+    -- Literals - emit const instructions
+    :LoadNull() => {
+        let state = alloc_reg(ir.state)
+        let reg = state.code
+        {
+            state: { next_reg: state.next_reg, code: "" },
+            code: "a.const_unit(" ++ reg ++ ");\n"
+        }
+    }
+    :LoadBool(true) => {
+        let state = alloc_reg(ir.state)
+        let reg = state.code
+        {
+            state: { next_reg: state.next_reg, code: "" },
+            code: "a.const_bool(" ++ reg ++ ", true);\n"
+        }
+    }
+    :LoadBool(false) => {
+        let state = alloc_reg(ir.state)
+        let reg = state.code
+        {
+            state: { next_reg: state.next_reg, code: "" },
+            code: "a.const_bool(" ++ reg ++ ", false);\n"
+        }
+    }
+    :LoadInt(n) => {
+        let state = alloc_reg(ir.state)
+        let reg = state.code
+        {
+            state: { next_reg: state.next_reg, code: "" },
+            code: "a.const_i64(" ++ reg ++ ", " ++ int.to_string(n) ++ ");\n"
+        }
+    }
+    :LoadFloat(f) => {
+        let state = alloc_reg(ir.state)
+        let reg = state.code
+        {
+            state: { next_reg: state.next_reg, code: "" },
+            code: "a.const_f64(" ++ reg ++ ", " ++ float.to_string(f) ++ ");\n"
+        }
+    }
+    :LoadString(s) => {
+        let state = alloc_reg(ir.state)
+        let reg = state.code
+        {
+            state: { next_reg: state.next_reg, code: "" },
+            code: "a.const_string(" ++ reg ++ ", \"" ++ s ++ "\");\n"
+        }
+    }
+
+    -- Variables - load from environment (simplified: assume predefined)
+    :Var(name) => {
+        let state = alloc_reg(ir.state)
+        let reg = state.code
+        let var_name = sanitize_ident(symbol.to_string(name))
+        {
+            state: { next_reg: state.next_reg, code: "" },
+            code: "a.mov(" ++ reg ++ ", " ++ var_name ++ ");\n"
+        }
+    }
+
+    -- Binary operations - compile operands, then emit op
+    :Add(l, r) => {
+        let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
+        let right = ir_to_asm(r, left.state)
+        let result = alloc_reg(right.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: left.code ++ right.code ++ "a.i64_add(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
+        }
+    }
+    :Sub(l, r) => {
+        let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
+        let right = ir_to_asm(r, left.state)
+        let result = alloc_reg(right.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: left.code ++ right.code ++ "a.i64_sub(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
+        }
+    }
+    :Mul(l, r) => {
+        let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
+        let right = ir_to_asm(r, left.state)
+        let result = alloc_reg(right.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: left.code ++ right.code ++ "a.i64_mul(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
+        }
+    }
+    :Div(l, r) => {
+        let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
+        let right = ir_to_asm(r, left.state)
+        let result = alloc_reg(right.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: left.code ++ right.code ++ "a.i64_div(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
+        }
+    }
+
+    -- Comparison operations
+    :Eq(l, r) => {
+        let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
+        let right = ir_to_asm(r, left.state)
+        let result = alloc_reg(right.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: left.code ++ right.code ++ "a.eq(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
+        }
+    }
+    :Lt(l, r) => {
+        let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
+        let right = ir_to_asm(r, left.state)
+        let result = alloc_reg(right.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: left.code ++ right.code ++ "a.i64_lt(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
+        }
+    }
+    :Gt(l, r) => {
+        let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
+        let right = ir_to_asm(r, left.state)
+        let result = alloc_reg(right.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: left.code ++ right.code ++ "a.i64_gt(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
+        }
+    }
+
+    -- Unary operations
+    :Neg(e) => {
+        let operand = ir_to_asm(e, { next_reg: ir.state.next_reg, code: "" })
+        let result = alloc_reg(operand.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: operand.code ++ "a.i64_neg(" ++ result.code ++ ", " ++ operand.state.code ++ ");\n"
+        }
+    }
+    :Not(e) => {
+        let operand = ir_to_asm(e, { next_reg: ir.state.next_reg, code: "" })
+        let result = alloc_reg(operand.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: operand.code ++ "a.not(" ++ result.code ++ ", " ++ operand.state.code ++ ");\n"
+        }
+    }
+
+    -- Control flow (if-then-else)
+    :If(c, t, e) => {
+        -- Compile condition
+        let cond = ir_to_asm(c, { next_reg: ir.state.next_reg, code: "" })
+        -- Compile then branch
+        let then = ir_to_asm(t, { next_reg: cond.state.next_reg, code: "" })
+        -- Compile else branch
+        let else = ir_to_asm(e, { next_reg: then.state.next_reg, code: "" })
+        -- Allocate result register
+        let result = alloc_reg(else.state)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: cond.code ++ then.code ++ else.code ++ "a.select(" ++ result.code ++ ", " ++ cond.state.code ++ ", " ++ then.state.code ++ ", " ++ else.state.code ++ ");\n"
+        }
+    }
+
+    -- Lists
+    :MakeList(items) => {
+        -- Compile all elements
+        let compiled = reduce(\acc \item
+            let item_result = ir_to_asm(item, { next_reg: acc.next_reg, code: "" })
+            { next_reg: item_result.state.next_reg, code: acc.code ++ item_result.code, regs: acc.regs ++ [item_result.state.code] },
+            { next_reg: ir.state.next_reg, code: "", regs: [] },
+            items)
+        -- Allocate list register
+        let list_reg = "r" ++ int.to_string(compiled.next_reg)
+        {
+            state: { next_reg: compiled.next_reg + 1, code: "" },
+            code: compiled.code ++ "a.list_new(" ++ list_reg ++ ");\n"
+        }
+    }
+
+    -- Function calls (simplified)
+    :Call(func, args) => {
+        let func_result = ir_to_asm(func, { next_reg: ir.state.next_reg, code: "" })
+        let args_result = reduce(\acc \arg
+            let arg_result = ir_to_asm(arg, { next_reg: acc.next_reg, code: "" })
+            { next_reg: arg_result.state.next_reg, code: acc.code ++ arg_result.code, regs: acc.regs ++ [arg_result.state.code] },
+            { next_reg: func_result.state.next_reg, code: func_result.code, regs: [] },
+            args)
+        let result = alloc_reg(args_result)
+        {
+            state: { next_reg: result.next_reg, code: "" },
+            code: args_result.code ++ "a.call(" ++ result.code ++ ", " ++ func_result.state.code ++ ", [" ++ join_with(", ", args_result.regs) ++ "]);\n"
+        }
+    }
+}
+
+-- Top-level compilation: IR → complete Rust source
+let compile_to_execution_tape = \ir
+    let result = ir_to_asm(ir, { next_reg: 0, code: "" })
+    let reg_count = result.state.next_reg
+    let asm_code = result.code
+    let return_reg = result.state.code
+
+    -- Generate complete Rust source
+    "use execution_tape::asm::{Asm, FunctionSig};
+use execution_tape::program_builder::ProgramBuilder;
+
+fn compile() -> (Asm, FunctionSig) {
+    let mut a = Asm::new();
+"
+    ++ asm_code
+    ++ "    a.ret(0, &["
+    ++ return_reg
+    ++ "]);
+    (a, FunctionSig {
+        arg_types: vec![],
+        ret_types: vec![execution_tape::program::ValueType::I64],
+        reg_count: "
+    ++ int.to_string(reg_count)
+    ++ ",
+    })
+}
+"
+
+-- Export the compiler
+io::println("ir_to_execution_tape.fmpl loaded")

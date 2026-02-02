@@ -1,0 +1,173 @@
+-- AST to Indexed RPN IR transformer
+-- Transforms AST tagged values into FMPL Indexed RPN IR format
+-- Unlike ast_to_ir.fmpl which produces tree-structured IR, this produces
+-- the flat instruction format with index references that the FMPL VM uses.
+--
+-- Requires: lib/core/prelude.fmpl loaded first
+--
+-- IR Format: Each instruction compilation returns:
+--   { next_index: N, instructions: [instr, ...], result_index: i }
+-- where:
+--   - next_index: The next instruction index to use
+--   - instructions: List of Instruction tagged values emitted so far
+--   - result_index: The index where this instruction's result is stored
+
+-- Helper: Create an instruction state
+let make_state = \next_index instructions result_index
+    { next_index: next_index, instructions: instructions, result_index: result_index }
+
+-- Helper: Emit a new instruction
+let emit = \state instr
+    let idx = state.next_index
+    make_state(idx + 1, state.instructions ++ [instr], idx)
+
+-- Helper: Emit a literal instruction (LoadInt, LoadBool, etc.)
+let emit_literal = \state tag value
+    emit(state, [tag, value])
+
+-- Compile expression to Indexed RPN IR
+let compile_expr = \ast ast @ {
+    -- Literals
+    :Int(n) => emit_literal(compile_expr.state, :LoadInt, n)
+    :Bool(b) => emit_literal(compile_expr.state, :LoadBool, b)
+    :Null() => emit_literal(compile_expr.state, :LoadNull, [])
+    :String(s) => emit_literal(compile_expr.state, :LoadString, s)
+    :Symbol(s) => emit_literal(compile_expr.state, :LoadSymbol, s)
+
+    -- Variables
+    :Var(name) => emit(compile_expr.state, [:LoadVar, name])
+    :QualifiedName(parts) => emit(compile_expr.state, [:LoadVar, parts])
+
+    -- Binary operations - compile operands, then emit operation with index references
+    :Binary(:+, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:Add, left.result_index, right.result_index])
+    }
+    :Binary(:-, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:Sub, left.result_index, right.result_index])
+    }
+    :Binary(:*, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:Mul, left.result_index, right.result_index])
+    }
+    :Binary(:/, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:Div, left.result_index, right.result_index])
+    }
+    :Binary(:%, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:Mod, left.result_index, right.result_index])
+    }
+
+    -- Comparisons
+    :Binary(:==, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:Eq, left.result_index, right.result_index])
+    }
+    :Binary(:!=, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:NotEq, left.result_index, right.result_index])
+    }
+    :Binary(:<, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:Lt, left.result_index, right.result_index])
+    }
+    :Binary(:>, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:Gt, left.result_index, right.result_index])
+    }
+    :Binary(:<=, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:LtEq, left.result_index, right.result_index])
+    }
+    :Binary(:>=, expr:l, expr:r) => {
+        let left = compile_expr(l, make_state(0, [], 0))
+        let right = compile_expr(r, left)
+        emit(right, [:GtEq, left.result_index, right.result_index])
+    }
+
+    -- Unary operations
+    :Unary(:-, expr:e) => {
+        let operand = compile_expr(e, make_state(0, [], 0))
+        emit(operand, [:Neg, operand.result_index])
+    }
+    :Unary(:!, expr:e) => {
+        let operand = compile_expr(e, make_state(0, [], 0))
+        emit(operand, [:Not, operand.result_index])
+    }
+
+    -- If expressions (control flow with jumps)
+    :If(expr:c, expr:t, expr:e) => {
+        -- Compile condition
+        let cond = compile_expr(c, make_state(0, [], 0))
+        -- Emit JumpIfFalse (placeholder target for now)
+        let jump_false_idx = cond.next_index
+        let after_cond = emit(cond, [:JumpIfFalse, cond.result_index, :placeholder_target])
+        -- Compile then branch
+        let then = compile_expr(t, after_cond)
+        -- Emit Jump over else branch
+        let jump_end_idx = then.next_index
+        let after_then = emit(then, [:Jump, :placeholder_end])
+        -- Compile else branch
+        let else_result = compile_expr(e, after_then)
+        -- Note: In real implementation, we'd patch the jump targets here
+        -- For now, return the else result
+        else_result
+    }
+
+    -- Lists
+    :List(expr*:items) => {
+        let compiled = reduce(\acc \item
+            let item_result = compile_expr(item, acc)
+            make_state(
+                item_result.next_index,
+                item_result.instructions,
+                acc.result_indices ++ [item_result.result_index]
+            ),
+            make_state(0, [], { result_indices: [] }),
+            items)
+        emit({ next_index: compiled.next_index, instructions: compiled.instructions, result_index: 0 },
+             [:MakeList, compiled.result_indices])
+    }
+
+    -- Function calls
+    :Call(expr:func, expr*:args) => {
+        let func_result = compile_expr(func, make_state(0, [], 0))
+        let args_result = reduce(\acc \arg
+            let arg_result = compile_expr(arg, acc)
+            make_state(
+                arg_result.next_index,
+                arg_result.instructions,
+                acc.result_indices ++ [arg_result.result_index]
+            ),
+            make_state(func_result.next_index, func_result.instructions, { result_indices: [] }),
+            args)
+        emit({ next_index: args_result.next_index, instructions: args_result.instructions, result_index: 0 },
+             [:Call, func_result.result_index, args_result.result_indices])
+    }
+
+    -- Indexing
+    :Index(expr:coll, expr:key) => {
+        let coll_result = compile_expr(coll, make_state(0, [], 0))
+        let key_result = compile_expr(key, coll_result)
+        emit(key_result, [:Index, coll_result.result_index, key_result.result_index])
+    }
+}
+
+-- Entry point: Compile AST to Indexed RPN IR
+let compile = \ast
+    compile_expr(ast, make_state(0, [], 0))
+
+-- Export
+io::println("ast_to_ir_indexed.fmpl loaded")
