@@ -115,9 +115,9 @@ match input {
 
 ```fmpl
 grammar mud::parser <: base::parser {
-  verb    = word:v &{ valid_verb(v) } => { v }
-  noun    = word:w => { resolve(w) }
-  command = verb:v noun:n => %{verb: v, direct: n}
+  verb    = word:v &{ valid_verb(v) } => { v };
+  noun    = word:w => { resolve(w) };
+  command = word:v noun:n => %{verb: v, direct: n};
 }
 
 -- Apply grammar

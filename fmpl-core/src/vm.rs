@@ -3986,6 +3986,23 @@ impl Vm {
                         }
                         Value::List(Arc::new(new_list))
                     }
+                    "slice" => {
+                        // Method form for programmatic access; native syntax is list[start..end]
+                        let (start, end) =
+                            match args.as_slice() {
+                                [Value::Int(start), Value::Int(end)] => {
+                                    (*start as usize, *end as usize)
+                                }
+                                [Value::Int(start)] => (*start as usize, list.len()),
+                                _ => return Err(Error::Runtime(
+                                    "slice() requires (start) or (start, end) integer arguments"
+                                        .to_string(),
+                                )),
+                            };
+                        let end = end.min(list.len());
+                        let start = start.min(end);
+                        Value::List(Arc::new(list[start..end].to_vec()))
+                    }
                     // TODO: Implement fold, foldr, map, filter as VM-level constructs
                     // that compile to loops in Indexed RPN bytecode, similar to for..in
                     "fold" | "foldl" | "foldr" | "map" | "filter" => {
@@ -4005,6 +4022,55 @@ impl Vm {
                     "len" => Value::Int(s.len() as i64),
                     "upper" => Value::String(SmolStr::new(s.to_uppercase())),
                     "lower" => Value::String(SmolStr::new(s.to_lowercase())),
+                    "contains" => {
+                        let needle = match args.first() {
+                            Some(Value::String(needle)) => needle.as_str(),
+                            _ => {
+                                return Err(Error::Runtime(
+                                    "contains() requires string argument".to_string(),
+                                ));
+                            }
+                        };
+                        Value::Bool(s.contains(needle))
+                    }
+                    "starts_with" => {
+                        let prefix = match args.first() {
+                            Some(Value::String(prefix)) => prefix.as_str(),
+                            _ => {
+                                return Err(Error::Runtime(
+                                    "starts_with() requires string argument".to_string(),
+                                ));
+                            }
+                        };
+                        Value::Bool(s.starts_with(prefix))
+                    }
+                    "ends_with" => {
+                        let suffix = match args.first() {
+                            Some(Value::String(suffix)) => suffix.as_str(),
+                            _ => {
+                                return Err(Error::Runtime(
+                                    "ends_with() requires string argument".to_string(),
+                                ));
+                            }
+                        };
+                        Value::Bool(s.ends_with(suffix))
+                    }
+                    "slice" => {
+                        let (start, end) =
+                            match args.as_slice() {
+                                [Value::Int(start), Value::Int(end)] => {
+                                    (*start as usize, *end as usize)
+                                }
+                                [Value::Int(start)] => (*start as usize, s.len()),
+                                _ => return Err(Error::Runtime(
+                                    "slice() requires (start) or (start, end) integer arguments"
+                                        .to_string(),
+                                )),
+                            };
+                        let end = end.min(s.len());
+                        let start = start.min(end);
+                        Value::String(SmolStr::new(&s[start..end]))
+                    }
                     _ => return Err(Error::UndefinedMethod(name.to_string())),
                 };
                 let frame = self.frames.last_mut().unwrap();

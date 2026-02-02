@@ -9,7 +9,7 @@ The `lib/` directory contains FMPL standard library modules that provide common 
 | [llm-common.fmpl](#llm-commonfmpl) | Shared utilities for LLM integration (response parsing, agentic loops, tool calling) |
 | [anthropic.fmpl](#anthropicfmpl) | Anthropic Claude API client (chat completion, streaming, multi-turn conversations) |
 | [ollama.fmpl](#ollamafmpl) | Ollama local LLM client (localhost API, model management, streaming) |
-| [compaction.fmpl](#compactionfmpl) | Layer 2 auto-detection for off-track and circular conversation patterns |
+| [compaction.fmpl](#compactionfmpl) | Layer 2 auto-detection for off-track and circular conversation patterns (core logic in Rust) |
 | [rand](#rand-built-in) | Random number generation for jitter and stochastic behaviors |
 
 ## llm-common.fmpl
@@ -129,9 +129,11 @@ print(models)
 
 ## compaction.fmpl
 
-**Purpose**: Layer 2 auto-detection for identifying when an agent conversation has gone off-track or entered a circular pattern, triggering context compaction.
+**Purpose**: Layer 2 auto-detection and context compaction for identifying when an agent conversation has gone off-track or entered a circular pattern, and actually compacting the context to reduce token usage.
 
 **Exports**:
+
+### Detection Functions
 
 - `detect_off_track(msg)` — Detect off-track patterns (groveling, apologizing, condescending language)
   - Returns: `%{detected: bool, pattern: string, confidence: float, message: string}`
@@ -139,9 +141,30 @@ print(models)
   - Returns: `%{detected: bool, cycle_count: int, message: string}`
 - `should_compact(history, last_response)` — Combined detection check
   - Returns: `%{should_compact: bool, reason: string, confidence: float, detection_type: string}`
-- `message_similarity(msg1, msg2)` — Check if two messages are similar (Jaccard-like similarity)
-- `count_messages(history)` — Count messages by role
-- `get_last_n(history, n)` — Get last N messages from history
+
+### Compaction Functions
+
+- `compact_history(history, options)` — Main compaction function with full control
+  - `history`: Array of `%{role: string, content: string}` messages
+  - `options`: `%{keep_recent: int, max_tokens: int, summarize_old: bool, compact_tools: bool, remove_circular: bool}`
+  - Returns: `%{history: [...], original_tokens: int, compacted_tokens: int, messages_removed: int, messages_summarized: int, savings_percent: int}`
+- `quick_compact(history)` — Simplified compaction with sensible defaults
+  - Returns: Compacted history array
+- `summarize_message(msg, max_chars)` — Truncate a single message
+- `compact_tool_output(msg)` — Compress verbose tool output
+- `remove_circular(history)` — Remove duplicate/near-duplicate messages
+
+### Token Estimation
+
+- `estimate_tokens(text)` — Estimate token count for a string (~4 chars per token)
+- `estimate_history_tokens(history)` — Estimate total tokens in conversation
+
+### Utility Functions
+
+- `get_assistant_msgs(history)` — Filter messages to assistant responses only
+- `get_user_msgs(history)` — Filter messages to user messages only
+- `summarize_message(msg, max_chars)` — Truncate a single message content
+- `compact_tool_output(msg)` — Compress verbose tool output (code blocks > 500 chars)
 
 **Usage**:
 
@@ -153,9 +176,25 @@ let check = should_compact(conversation_history, last_response)
 
 if (check.should_compact)
   print("Compaction needed: " + check.reason)
-  # Trigger context compaction
+
+  # Perform compaction
+  let result = compact_history(conversation_history, %{
+    keep_recent: 5,      # Keep last 5 messages intact
+    max_tokens: 4000,    # Target token budget
+    summarize_old: true, # Summarize old messages
+    compact_tools: true  # Compress tool outputs
+  })
+
+  print("Saved " + result.savings_percent + "% tokens")
+  print("Removed " + result.messages_removed + " messages")
+
+  # Use compacted history for next LLM call
+  let new_history = result.history
 else
   print("Conversation healthy, confidence: " + check.confidence)
+
+# Quick compaction with defaults
+let compacted = quick_compact(conversation_history)
 
 # Detect off-track patterns
 let off_track = detect_off_track("You're absolutely right, I apologize...")

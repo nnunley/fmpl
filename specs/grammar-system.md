@@ -199,12 +199,42 @@ pub struct ParseDriver {
 
 ```fmpl
 grammar mud::commands <: base::parser {
-    verb = word:v &{ valid_verb(v) } => v
-    command = "take" spaces noun:obj => %{action: :take, target: obj}
+    verb = word:v &{ valid_verb(v) } => v;
+    command = "take" spaces noun:obj => %{action: :take, target: obj};
 }
 
 -- Apply grammar to input
 "take sword" @ mud::commands.command
+```
+
+### Syntax Conventions
+
+**Rule separators**: Named rules within a grammar are separated by `;` or `,`:
+
+```fmpl
+grammar example {
+    rule1 = pattern1;           -- semicolon separator
+    rule2 = pattern2,           -- comma also works
+    rule3 = pattern3;           -- last rule optionally terminated
+}
+```
+
+**Alternative separator**: Within a rule, alternatives use `|`:
+
+```fmpl
+grammar example {
+    -- | separates alternatives within a rule
+    value = string | number | boolean;
+}
+```
+
+**Binding syntax**: Bindings use `pattern:name` syntax (pattern first, then colon, then variable name):
+
+```fmpl
+grammar example {
+    int = digit+:value => %{type: :int, value: value};
+    pair = ident:key "=" expr:val => %{k: key, v: val};
+}
 ```
 
 ### Inheritance
@@ -261,7 +291,7 @@ base <: { rule = pattern }           -- extend base (no mutation)
 
 | Pattern | Rust Variant | Description |
 |---------|--------------|-------------|
-| `p:name` | `Bind(Box<Pattern>, SmolStr)` | Bind match to variable |
+| `pattern:name` | `Bind(Box<Pattern>, SmolStr)` | Bind match result to variable |
 | `&{ expr }` | `Predicate(Expr)` | Semantic predicate (succeed if truthy) |
 | `p => expr` | `Action(Box<Pattern>, Expr)` | Transform matched value |
 
@@ -514,8 +544,8 @@ grammar json <: base::parser {
 
 ```fmpl
 grammar png::header <: base::binary {
-    magic = byte(0x89) byte(0x50) byte(0x4E) byte(0x47)
-    chunk = uint32be:len uint32be:type bytes(len):data uint32be:crc
+    magic = byte(0x89) byte(0x50) byte(0x4E) byte(0x47);
+    chunk = uint32be:len uint32be:type bytes(len):data uint32be:crc;
 }
 ```
 
@@ -524,8 +554,8 @@ grammar png::header <: base::binary {
 ```fmpl
 grammar ast::optimizer <: base::tree {
     -- Constant folding: (+ 1 2) => 3
-    add = [:add const:a const:b] => a + b
-    const = :int(n) => n
+    add = [:add const:a const:b] => a + b;
+    const = :int(n) => n;
 }
 ```
 

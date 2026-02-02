@@ -23,6 +23,7 @@ pub mod json;
 pub mod lexer;
 pub mod object;
 pub mod parser;
+pub mod pattern;
 pub mod repr;
 pub mod stream;
 pub mod tuplespace;

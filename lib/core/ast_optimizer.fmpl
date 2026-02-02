@@ -1,0 +1,86 @@
+-- AST Optimizer for FMPL
+-- Demonstrates OMeta-style optimization pattern
+--
+-- Optimizations implemented:
+-- - Constant folding: evaluate constant expressions at compile time
+-- - Algebraic simplification: simplify expressions using algebraic identities
+--
+-- Usage:
+--   let optimized = expr @ optimizer.constant_fold.trans
+--   let optimized = expr @ optimizer.algebraic_simp.trans
+--   let optimized = optimizer.optimize(expr)
+
+-- =============================================================================
+-- Constant Folding Optimization
+-- =============================================================================
+-- Fold constant arithmetic operations
+let constant_fold = grammar constant_fold {
+    trans = [:Binary, :+, [:Int, a], [:Int, b]] => :Int(a + b)
+          | [:Binary, :-, [:Int, a], [:Int, b]] => :Int(a - b)
+          | [:Binary, :*, [:Int, a], [:Int, b]] => :Int(a * b)
+          | [:Binary, :/, [:Int, a], [:Int, b]] => :Int(a / b)
+          | [:Binary, :%, [:Int, a], [:Int, b]] => :Int(a % b)
+          | [:Binary, :<, [:Int, a], [:Int, b]] => :Bool(a < b)
+          | [:Binary, :>, [:Int, a], [:Int, b]] => :Bool(a > b)
+          | [:Binary, :<=, [:Int, a], [:Int, b]] => :Bool(a <= b)
+          | [:Binary, :>=, [:Int, a], [:Int, b]] => :Bool(a >= b)
+          | [:Binary, :==, [:Int, a], [:Int, b]] => :Bool(a == b)
+          | [:Binary, :!=, [:Int, a], [:Int, b]] => :Bool(a != b)
+          | [:Binary, :&&, [:Bool, a], [:Bool, b]] => :Bool(a && b)
+          | [:Binary, :||, [:Bool, a], [:Bool, b]] => :Bool(a || b)
+          | [:Unary, :-, [:Int, a]] => :Int(0 - a)
+          | [:Unary, :!, [:Bool, a]] => :Bool(!a)
+          | [:If, [:Bool, true], t, e] => t
+          | [:If, [:Bool, false], t, e] => e
+          | [:Binary, op, a, b] => :Binary(op, a @ trans.trans, b @ trans.trans)
+          | [:Unary, op, a] => :Unary(op, a @ trans.trans)
+          | [:If, cond, t, e] => :If(cond @ trans.trans, t @ trans.trans, e @ trans.trans)
+          | x => x
+};
+
+-- =============================================================================
+-- Algebraic Simplification Optimization
+-- =============================================================================
+let algebraic_simp = grammar algebraic_simp {
+    trans = [:Binary, :+, x, [:Int, 0]] => x
+          | [:Binary, :+, [:Int, 0], x] => x
+          | [:Binary, :*, x, [:Int, 1]] => x
+          | [:Binary, :*, [:Int, 1], x] => x
+          | [:Binary, :*, x, [:Int, 0]] => :Int(0)
+          | [:Binary, :*, [:Int, 0], x] => :Int(0)
+          | [:Binary, :-, x, [:Int, 0]] => x
+          | [:Binary, :/, x, [:Int, 1]] => x
+          | [:Binary, :&&, [:Bool, false], x] => :Bool(false)
+          | [:Binary, :&&, [:Bool, true], x] => x
+          | [:Binary, :||, [:Bool, true], x] => :Bool(true)
+          | [:Binary, :||, [:Bool, false], x] => x
+          | [:Unary, :-, [:Unary, :-, x]] => x
+          | [:Binary, op, a, b] => :Binary(op, a @ trans.trans, b @ trans.trans)
+          | [:Unary, op, a] => :Unary(op, a @ trans.trans)
+          | [:If, cond, t, e] => :If(cond @ trans.trans, t @ trans.trans, e @ trans.trans)
+          | x => x
+};
+
+-- =============================================================================
+-- Combined Optimizer
+-- =============================================================================
+let optimize_once = lambda(expr)
+    let (folded = expr @ constant_fold.trans)
+    folded @ algebraic_simp.trans
+;
+
+let optimize = lambda(expr)
+    let (result1 = optimize_once(expr))
+    let (result2 = optimize_once(result1))
+    let (result3 = optimize_once(result2))
+    result3
+;
+
+-- =============================================================================
+-- Export optimizer module
+-- =============================================================================
+%{
+    constant_fold: constant_fold,
+    algebraic_simp: algebraic_simp,
+    optimize: optimize
+}

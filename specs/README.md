@@ -16,6 +16,7 @@ Design documentation for FMPL, a streaming-first DSL for building AI agents with
 
 | Spec | Code | Purpose |
 | [grammar-system.md](./grammar-system.md) | [fmpl-core/src/grammar/](../fmpl-core/src/grammar/) | OMeta-style PEG grammars with inheritance and streaming support |
+| [grammar-optimizer.md](./grammar-optimizer.md) | `fmpl-core/src/grammar/optimizer.rs` (planned) | Prefix trie, skip-to-literal fusion, Aho-Corasick multi-pattern |
 | [object-system.md](./object-system.md) | [fmpl-core/src/object.rs](../fmpl-core/src/object.rs) | Goblins-inspired objects with spawn, facets |
 | [vm.md](./vm.md) | [fmpl-core/src/vm.rs](../fmpl-core/src/vm.rs) | Indexed RPN bytecode VM with async support |
 | [persistence.md](./persistence.md) | [fmpl-core/](../fmpl-core/), [fmpl-web/](../fmpl-web/) | Fjall-backed live image and memo persistence |
@@ -27,6 +28,12 @@ Design documentation for FMPL, a streaming-first DSL for building AI agents with
 | [language-guide.md](../docs/design/language-guide.md) | — | DSL syntax and concepts overview |
 | [async-streams.md](./async-streams.md) | [fmpl-core/src/stream.rs](../fmpl-core/src/stream.rs) | Async streams with pipe operator |
 | [pattern-matching.md](./pattern-matching.md) | [fmpl-core/src/vm.rs](../fmpl-core/src/vm.rs) | Pattern matching with `@` operator |
+
+## Agent Framework
+
+| Spec | Code | Purpose |
+|------|------|---------|
+| [12-factor-agents.md](./12-factor-agents.md) | Cross-cutting | 12-Factor Agents + RLM context management mapped to FMPL |
 
 ## Standard Library
 

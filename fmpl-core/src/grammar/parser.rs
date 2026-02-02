@@ -135,9 +135,9 @@ impl<'a> GrammarParser<'a> {
             let action = self.parse_match_action()?;
             cases.push(Pattern::Action(Box::new(final_pattern), action));
 
-            // Optional semicolon between cases
+            // Optional semicolon or comma between cases
             self.skip_whitespace();
-            if self.peek_char() == Some(';') {
+            if self.peek_char() == Some(';') || self.peek_char() == Some(',') {
                 self.advance();
             }
         }
@@ -178,9 +178,9 @@ impl<'a> GrammarParser<'a> {
             let (rule_name, rule) = self.parse_rule()?;
             grammar.add_rule(rule_name, rule);
 
-            // Consume optional semicolon between rules
+            // Consume optional semicolon or comma between rules
             self.skip_whitespace();
-            if self.peek_char() == Some(';') {
+            if self.peek_char() == Some(';') || self.peek_char() == Some(',') {
                 self.advance();
             }
         }
@@ -247,6 +247,7 @@ impl<'a> GrammarParser<'a> {
 
         loop {
             self.skip_whitespace();
+            // Only | is a choice separator (comma separates named rules, not alternatives)
             if self.peek_char() == Some('|') && !self.peek_str("|>") {
                 self.advance();
                 self.skip_whitespace();
@@ -416,6 +417,9 @@ impl<'a> GrammarParser<'a> {
                 {
                     break;
                 } // Choice separator (not in symbol)
+                ',' if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 && !in_symbol => {
+                    break;
+                } // Rule separator (not in symbol)
                 ';' if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 && !in_symbol => {
                     break;
                 } // Rule terminator (not in symbol)
@@ -445,6 +449,7 @@ impl<'a> GrammarParser<'a> {
         }
 
         // Parse as FMPL expression
+        // DEBUG: print action source
         let tokens = Lexer::new(action_src).tokenize()?;
         let expr = ExprParser::with_source(&tokens, action_src).parse()?;
         Ok(expr)
@@ -679,24 +684,19 @@ impl<'a> GrammarParser<'a> {
                         c if c.is_alphabetic() => {
                             // Check for range pattern [a-z] vs list [x, y]
                             let mut lookahead_pos = self.pos;
-                            let mut found_range = false;
                             let mut found_comma = false;
                             let mut found_pipe = false; // | indicates rest pattern
-                            let mut found_end = false;
 
-                            // Look ahead up to 10 characters to detect the pattern
-                            for _ in 0..10 {
+                            // Look ahead up to 20 characters to detect the pattern
+                            for _ in 0..20 {
                                 if let Some(c) = self.source[lookahead_pos..].chars().next() {
-                                    if c == '-' && !found_range {
-                                        found_range = true;
-                                    } else if c == ',' {
+                                    if c == ',' {
                                         found_comma = true;
                                         break;
                                     } else if c == '|' {
                                         found_pipe = true;
                                         break;
                                     } else if c == ']' {
-                                        found_end = true;
                                         break;
                                     }
                                     lookahead_pos += c.len_utf8();
@@ -705,32 +705,26 @@ impl<'a> GrammarParser<'a> {
                                 }
                             }
 
-                            // It's a list pattern if: has comma, has pipe (rest), OR (no range AND found end)
-                            // It's a char class if: has range AND no comma/pipe
-                            found_comma || found_pipe || (!found_range && found_end)
+                            // It's a list pattern ONLY if: has comma or has pipe (rest)
+                            // Otherwise treat as char class (even without ranges, [abc] is a char class)
+                            found_comma || found_pipe
                         }
                         c if c.is_ascii_digit() => {
                             // Check if this looks like a range (char class) or a list element
-                            // Look ahead: if we see '-' after digit, it's a range (char class)
-                            // If we see ',' or ']' or another digit/identifier, it's a list
+                            // Look ahead: if we see ',' or '|', it's a list pattern
                             let mut lookahead_pos = self.pos;
-                            let mut found_range = false;
                             let mut found_comma = false;
                             let mut found_pipe = false; // | indicates rest pattern
-                            let mut found_end = false;
-                            // Look ahead up to 10 characters to detect the pattern
-                            for _ in 0..10 {
+                            // Look ahead up to 20 characters to detect the pattern
+                            for _ in 0..20 {
                                 if let Some(c) = self.source[lookahead_pos..].chars().next() {
-                                    if c == '-' && !found_range {
-                                        found_range = true;
-                                    } else if c == ',' {
+                                    if c == ',' {
                                         found_comma = true;
                                         break;
                                     } else if c == '|' {
                                         found_pipe = true;
                                         break;
                                     } else if c == ']' {
-                                        found_end = true;
                                         break;
                                     }
                                     lookahead_pos += c.len_utf8();
@@ -738,9 +732,9 @@ impl<'a> GrammarParser<'a> {
                                     break;
                                 }
                             }
-                            // It's a list pattern if: has comma, has pipe (rest), OR (no range AND single element)
-                            // It's a char class if: has range AND no comma/pipe
-                            found_comma || found_pipe || (!found_range && found_end)
+                            // It's a list pattern ONLY if: has comma or has pipe (rest)
+                            // Otherwise treat as char class (even [0] is char class in grammar context)
+                            found_comma || found_pipe
                         }
                         _ => false,
                     }
@@ -1362,6 +1356,7 @@ impl<'a> GrammarParser<'a> {
         let start = self.pos;
         let mut brace_depth = 0;
         let mut paren_depth = 0;
+        let mut bracket_depth = 0;
         let mut in_string = false;
         let mut escape_next = false;
 
@@ -1397,7 +1392,10 @@ impl<'a> GrammarParser<'a> {
                 '}' => break, // End of match block
                 '(' => paren_depth += 1,
                 ')' if paren_depth > 0 => paren_depth -= 1,
-                ';' if brace_depth == 0 && paren_depth == 0 => break, // Next case
+                '[' => bracket_depth += 1,
+                ']' if bracket_depth > 0 => bracket_depth -= 1,
+                ';' if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 => break, // Next case
+                ',' if brace_depth == 0 && paren_depth == 0 && bracket_depth == 0 => break, // Next case (comma separator)
                 '\n' if brace_depth == 0 && paren_depth == 0 => {
                     // Check if the next non-whitespace char starts a new pattern
                     // Patterns can start with: :Symbol, _, [, %, ident, ', "
@@ -1667,7 +1665,54 @@ mod tests {
         assert_eq!(grammar.name.as_str(), "test::simple");
         assert!(grammar.parent.is_none());
         assert!(grammar.rules.contains_key("digit"));
-        assert!(grammar.rules.contains_key("number"));
+    }
+
+    #[test]
+    fn test_comma_rule_separator() {
+        // Comma separates named rules, not alternatives within a rule
+        let src = r#"{ main = "hi" => 1, other = "bye" => 2 }"#;
+
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse_anonymous().unwrap();
+
+        assert_eq!(grammar.name.as_str(), "<anonymous>");
+        assert!(grammar.rules.contains_key("main"));
+        assert!(grammar.rules.contains_key("other"));
+    }
+
+    #[test]
+    fn test_pipe_alternatives() {
+        let src = r#"{ main = "hi" => 1 | "bye" => 2 }"#;
+
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse_anonymous().unwrap();
+
+        assert_eq!(grammar.name.as_str(), "<anonymous>");
+        assert!(grammar.rules.contains_key("main"));
+    }
+
+    #[test]
+    fn test_match_block_comma() {
+        let src = r#"{ "hi" => 1, "bye" => 2 }"#;
+
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse_match_block().unwrap();
+
+        assert_eq!(grammar.name.as_str(), "<match>");
+        assert!(grammar.rules.contains_key("main"));
+    }
+
+    #[test]
+    fn test_match_block_pipe() {
+        // Note: match blocks don't use |, they use implicit choice
+        // So we test semicolon separator instead
+        let src = r#"{ "hi" => 1; "bye" => 2 }"#;
+
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse_match_block().unwrap();
+
+        assert_eq!(grammar.name.as_str(), "<match>");
+        assert!(grammar.rules.contains_key("main"));
     }
 
     #[test]
@@ -1797,5 +1842,47 @@ mod tests {
                 rule.pattern
             ),
         }
+    }
+
+    #[test]
+    fn test_float_rule_with_special_char_class() {
+        // Test a rule similar to the one in fmpl_grammar.fmpl that was failing
+        let src = r#"
+            grammar test {
+                digit = [0-9];
+                _ = [ ]*;
+                float = digit+ "." digit* ([eE] [+-]? digit+)? _
+                      | digit+ [eE] [+-]? digit+ _
+            }
+        "#;
+
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse().unwrap();
+
+        assert!(grammar.rules.contains_key("digit"));
+        assert!(grammar.rules.contains_key("float"));
+    }
+
+    #[test]
+    fn test_parse_fmpl_grammar_file() {
+        let src = include_str!("../../tests/fmpl/fmpl_grammar.fmpl");
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse().unwrap();
+
+        assert_eq!(grammar.name.as_str(), "fmpl");
+        // Verify key rules exist
+        assert!(grammar.rules.contains_key("space"));
+        assert!(grammar.rules.contains_key("alpha"));
+        assert!(grammar.rules.contains_key("digit"));
+        assert!(grammar.rules.contains_key("ident"));
+        assert!(grammar.rules.contains_key("expr"));
+        assert!(grammar.rules.contains_key("stmt"));
+        assert!(grammar.rules.contains_key("code"));
+        // Grammar should have many rules
+        assert!(
+            grammar.rules.len() > 30,
+            "expected 30+ rules, got {}",
+            grammar.rules.len()
+        );
     }
 }

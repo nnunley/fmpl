@@ -8,8 +8,8 @@
 --   => expr       - semantic action can reference bound variables
 --
 -- Examples:
---   int = value:digit+ _ => %{type: :int, value: value}
---   ident = name:ident => %{type: :ident, name: name}
+--   int = digit+:value _ => %{type: :int, value: value}
+--   ident = ident:name => %{type: :ident, name: name}
 --
 -- For parameterized rules, FMPL currently uses the @ operator:
 --   "hello" @ grammar.rule  - Apply grammar rule to input
@@ -49,7 +49,7 @@ grammar fmpl {
     -- LITERALS (with value capture)
     -- ============================================================
 
-    int = value:digit+ _ => %{type: :int, value: value};
+    int = digit+:value _ => %{type: :int, value: value};
     hex_int = "0" [xX] hex_digit+ _ => %{type: :hex};
     float = digit+ "." digit* ([eE] [+-]? digit+)? _
           | digit+ [eE] [+-]? digit+ _ => %{type: :float};
@@ -64,8 +64,8 @@ grammar fmpl {
     -- IDENTIFIERS (with name capture)
     -- ============================================================
 
-    simple_ident = name:ident => %{type: :ident, name: name};
-    qualified_name = first:ident rest:("::" _ ident)* => %{type: :qname};
+    simple_ident = ident:name => %{type: :ident, name: name};
+    qualified_name = ident:first ("::" _ ident)*:rest => %{type: :qname};
 
     -- ============================================================
     -- EXPRESSIONS (with AST construction)
@@ -162,7 +162,7 @@ grammar fmpl {
               | pattern "when" _ expr "=>" _ expr;
 
     pattern = "_" _ => %{type: :wildcard}
-            | name:ident => %{type: :var, name: name}
+            | ident:name => %{type: :var, name: name}
             | literal => %{type: :literal}
             | "[" _ pattern_list "]" _ => %{type: :list}
             | "%" "{" _ pattern_map "}" _ => %{type: :map}

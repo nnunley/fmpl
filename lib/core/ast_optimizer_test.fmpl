@@ -1,0 +1,202 @@
+-- Tests for AST Optimizer
+-- Loads test framework and runs optimizer test cases
+
+let test = io::load("lib/core/test.fmpl");
+let optimizer = io::load("lib/core/ast_optimizer.fmpl");
+
+-- =============================================================================
+-- Constant Folding Tests
+-- =============================================================================
+
+let test_const_fold_arith = test.case("Constant fold: 1 + 2 => 3",
+    lambda()
+        let (expr = [:Binary, :+, [:Int, 1], [:Int, 2]])
+        let (result = expr @ optimizer.constant_fold.trans)
+        result == [:Int, 3]
+);
+
+let test_const_fold_nested = test.case("Constant fold: (1 + 2) + (3 + 4) => 10",
+    lambda()
+        let (expr = [:Binary, :+,
+            [:Binary, :+, [:Int, 1], [:Int, 2]],
+            [:Binary, :+, [:Int, 3], [:Int, 4]]])
+        let (result = expr @ optimizer.constant_fold.trans)
+        result == [:Int, 10]
+);
+
+let test_const_fold_comparison = test.case("Constant fold: 5 < 10 => true",
+    lambda()
+        let (expr = [:Binary, :<, [:Int, 5], [:Int, 10]])
+        let (result = expr @ optimizer.constant_fold.trans)
+        result == [:Bool, true]
+);
+
+let test_const_fold_bool = test.case("Constant fold: true && false => false",
+    lambda()
+        let (expr = [:Binary, :&&, [:Bool, true], [:Bool, false]])
+        let (result = expr @ optimizer.constant_fold.trans)
+        result == [:Bool, false]
+);
+
+let test_const_fold_unary = test.case("Constant fold: -5 => -5",
+    lambda()
+        let (expr = [:Unary, :, [:Int, 5]])
+        let (result = expr @ optimizer.constant_fold.trans)
+        result == [:Int, -5]
+);
+
+let test_const_fold_if_true = test.case("Constant fold: if true then 1 else 0 => 1",
+    lambda()
+        let (expr = [:If, [:Bool, true], [:Int, 1], [:Int, 0]])
+        let (result = expr @ optimizer.constant_fold.trans)
+        result == [:Int, 1]
+);
+
+let test_const_fold_if_false = test.case("Constant fold: if false then 1 else 0 => 0",
+    lambda()
+        let (expr = [:If, [:Bool, false], [:Int, 1], [:Int, 0]])
+        let (result = expr @ optimizer.constant_fold.trans)
+        result == [:Int, 0]
+);
+
+-- =============================================================================
+-- Algebraic Simplification Tests
+-- =============================================================================
+
+let test_alg_add_zero = test.case("Algebraic: x + 0 => x",
+    lambda()
+        let (expr = [:Binary, :+, [:Ident, "x"], [:Int, 0]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Ident, "x"]
+);
+
+let test_alg_mul_one = test.case("Algebraic: x * 1 => x",
+    lambda()
+        let (expr = [:Binary, :*, [:Ident, "x"], [:Int, 1]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Ident, "x"]
+);
+
+let test_alg_mul_zero = test.case("Algebraic: x * 0 => 0",
+    lambda()
+        let (expr = [:Binary, :*, [:Ident, "x"], [:Int, 0]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Int, 0]
+);
+
+let test_alg_sub_zero = test.case("Algebraic: x - 0 => x",
+    lambda()
+        let (expr = [:Binary, :, [:Ident, "x"], [:Int, 0]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Ident, "x"]
+);
+
+let test_alg_div_one = test.case("Algebraic: x / 1 => x",
+    lambda()
+        let (expr = [:Binary, :/, [:Ident, "x"], [:Int, 1]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Ident, "x"]
+);
+
+let test_alg_and_false = test.case("Algebraic: false && x => false",
+    lambda()
+        let (expr = [:Binary, :&&, [:Bool, false], [:Ident, "x"]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Bool, false]
+);
+
+let test_alg_and_true = test.case("Algebraic: true && x => x",
+    lambda()
+        let (expr = [:Binary, :&&, [:Bool, true], [:Ident, "x"]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Ident, "x"]
+);
+
+let test_alg_or_true = test.case("Algebraic: true || x => true",
+    lambda()
+        let (expr = [:Binary, :||, [:Bool, true], [:Ident, "x"]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Bool, true]
+);
+
+let test_alg_or_false = test.case("Algebraic: false || x => x",
+    lambda()
+        let (expr = [:Binary, :||, [:Bool, false], [:Ident, "x"]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Ident, "x"]
+);
+
+let test_alg_double_neg = test.case("Algebraic: -(-x) => x",
+    lambda()
+        let (expr = [:Unary, :, [:Unary, :, [:Ident, "x"]]])
+        let (result = expr @ optimizer.algebraic_simp.trans)
+        result == [:Ident, "x"]
+);
+
+-- =============================================================================
+-- Combined Optimizer Tests
+-- =============================================================================
+
+let test_combined_fold_then_simp = test.case("Combined: (x + 0) * 1 => x",
+    lambda()
+        let (expr = [:Binary, :*, [:Binary, :+, [:Ident, "x"], [:Int, 0]], [:Int, 1]])
+        let (result = optimizer.optimize(expr))
+        result == [:Ident, "x"]
+);
+
+let test_nested_optimization = test.case("Combined: ((1 + 2) + 0) => 3",
+    lambda()
+        let (expr = [:Binary, :+, [:Binary, :+, [:Int, 1], [:Int, 2]], [:Int, 0]])
+        let (result = optimizer.optimize(expr))
+        result == [:Int, 3]
+);
+
+-- =============================================================================
+-- Run all tests
+-- =============================================================================
+
+let all_tests = [
+    test_const_fold_arith,
+    test_const_fold_nested,
+    test_const_fold_comparison,
+    test_const_fold_bool,
+    test_const_fold_unary,
+    test_const_fold_if_true,
+    test_const_fold_if_false,
+    test_alg_add_zero,
+    test_alg_mul_one,
+    test_alg_mul_zero,
+    test_alg_sub_zero,
+    test_alg_div_one,
+    test_alg_and_false,
+    test_alg_and_true,
+    test_alg_or_true,
+    test_alg_or_false,
+    test_alg_double_neg,
+    test_combined_fold_then_simp,
+    test_nested_optimization
+];
+
+let results = test.run("AST Optimizer", all_tests);
+
+-- Print summary
+io::println("=== AST Optimizer Test Results ===");
+io::println("Total: " ++ results["total"].to_string());
+io::println("Passed: " ++ results["passed"].to_string());
+io::println("Failed: " ++ results["failed"].to_string());
+
+-- Print failures if any
+if results["failed"] > 0 then {
+    io::println("");
+    io::println("Failures:");
+    fold \acc \r {
+        if !r["passed"] then {
+            io::println("  - " ++ r["name"])
+        } else {
+            acc
+        }
+    } 0 results["failures"]
+};
+
+-- Return success/failure
+results["ok"]

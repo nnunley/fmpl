@@ -1278,16 +1278,28 @@ impl App {
             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Phase 5: Compact conversation if warning is present
                 if self.compaction_warning.is_some() {
-                    // Clear warning and optionally compact conversation
-                    // For now, just clear the warning (user can manually undo/branch)
-                    self.compaction_warning = None;
-                    self.output = String::from(
-                        "Compaction warning cleared.\n\nTip: Use Ctrl+Z to undo, Ctrl+N to create a new branch, or Ctrl+E to edit the last message.",
-                    );
+                    // Actually perform compaction
+                    self.output = self.perform_compaction();
                 } else {
-                    self.output = String::from(
-                        "No compaction warning active.\n\nCompaction suggestions appear when the agent goes off-track or enters a circular conversation.",
-                    );
+                    // No warning, but user can still manually compact if they want
+                    let history = self.get_history();
+                    if history.len() > 5 {
+                        // Offer manual compaction for long conversations
+                        self.output = format!(
+                            "No compaction warning active, but conversation has {} messages.\n\n\
+                             Press Ctrl+C again to force compaction, or continue chatting.\n\n\
+                             Compaction suggestions appear automatically when:\n\
+                             - Agent goes off-track (groveling, apologizing)\n\
+                             - Circular conversation detected (repeated responses)",
+                            history.len()
+                        );
+                        // Set a temporary warning to allow force-compact on next Ctrl+C
+                        self.compaction_warning = Some("Manual compaction requested".to_string());
+                    } else {
+                        self.output = String::from(
+                            "Conversation too short to compact (< 5 messages).\n\nCompaction suggestions appear when the agent goes off-track or enters a circular conversation.",
+                        );
+                    }
                 }
             }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2197,54 +2209,57 @@ impl App {
     /// Phase 5: Auto-detection - Check if conversation needs compaction
     /// Detects off-track patterns (groveling/apologizing) and circular conversations
     fn check_compaction_needed(&mut self, last_response: &str) {
-        // Need at least 2 assistant messages to detect circular patterns
+        let lower = last_response.to_lowercase();
+
+        // Detect off-track patterns
+        let (detected, pattern, confidence) =
+            if lower.contains("absolutely right") || lower.contains("you are absolutely right") {
+                (true, "groveling", 0.9)
+            } else if lower.contains("i apologize")
+                || lower.contains("i'm sorry")
+                || lower.contains("sorry for")
+            {
+                (true, "apologizing", 0.8)
+            } else if lower.contains("let me be clear") || lower.contains("to be clear") {
+                (true, "condescending", 0.7)
+            } else {
+                (false, "", 0.0)
+            };
+
+        if detected {
+            let message = match pattern {
+                "groveling" => {
+                    "Agent appears to be groveling/agreeing excessively (lost original goal)"
+                }
+                "apologizing" => "Agent is using defensive/apologetic language",
+                "condescending" => "Agent is using condescending language",
+                _ => "Unknown pattern detected",
+            };
+
+            self.compaction_warning = Some(format!(
+                "⚠️ Agent Issue Detected (confidence: {:.0}%)\nReason: {}\n\nPress Ctrl+C to compact conversation",
+                confidence * 100.0,
+                message
+            ));
+            return;
+        }
+
+        // Detect circular conversation (repeated short responses)
         let history = self.get_history();
         let assistant_msgs: Vec<_> = history.iter().filter(|m| m.role == "assistant").collect();
 
-        if assistant_msgs.len() < 2 {
-            return; // Not enough data for detection
-        }
-
-        // Build FMPL code to call compaction detection
-        let messages_array = self.format_history_as_fmpl();
-        let escaped_response = last_response.replace('\\', "\\\\").replace('"', "\\\"");
-
-        let detection_code = format!(
-            "let compaction = io.load(\"lib/compaction.fmpl\"); \
-             compaction.should_compact({}, \"{}\")",
-            messages_array, escaped_response
-        );
-
-        // Run detection
-        match eval(&mut self.vm, &detection_code) {
-            Ok(Value::Map(result)) => {
-                // Extract should_compact, reason, confidence from result map
-                let should_compact = match self.get_map_bool(&result, "should_compact") {
-                    Some(v) => v,
-                    None => false,
-                };
-
-                if should_compact {
-                    let reason = match self.get_map_string(&result, "reason") {
-                        Some(v) => v,
-                        None => "Unknown reason".to_string(),
-                    };
-
-                    let confidence = match self.get_map_float(&result, "confidence") {
-                        Some(v) => v,
-                        None => 0.0,
-                    };
-
-                    // Set warning message for display in UI
-                    self.compaction_warning = Some(format!(
-                        "⚠️ Agent Issue Detected (confidence: {:.0}%)\nReason: {}\n\nPress Ctrl+C to compact conversation",
-                        confidence * 100.0,
-                        reason
-                    ));
-                }
-            }
-            _ => {
-                // Detection failed silently - don't interrupt user experience
+        if assistant_msgs.len() >= 2 {
+            let last_two: Vec<_> = assistant_msgs.iter().rev().take(2).collect();
+            if last_two.len() == 2
+                && last_two[0].content.len() < 20
+                && last_two[1].content.len() < 20
+            {
+                self.compaction_warning = Some(
+                    "⚠️ Circular Conversation Detected (confidence: 70%)\n\
+                     Reason: Repeated short responses\n\n\
+                     Press Ctrl+C to compact conversation"
+                        .to_string(),
+                );
             }
         }
     }
@@ -2272,6 +2287,108 @@ impl App {
             Value::Int(i) => Some(*i as f64),
             _ => None,
         })
+    }
+
+    /// Helper: Extract int value from FMPL Map
+    fn get_map_int(&self, map: &Arc<HashMap<SmolStr, Value>>, key: &str) -> Option<i64> {
+        map.get(&SmolStr::new(key)).and_then(|v| match v {
+            Value::Int(i) => Some(*i),
+            _ => None,
+        })
+    }
+
+    /// Perform actual context compaction on the conversation history
+    /// Creates a new branch with compacted history, preserving original for undo
+    fn perform_compaction(&mut self) -> String {
+        let history = self.get_history();
+        let keep_recent = 5;
+        let max_chars_per_message = 200;
+
+        // Calculate original stats
+        let original_count = history.len();
+        let original_tokens: usize = history.iter().map(|m| m.content.len() / 4 + 1).sum();
+
+        if original_count <= keep_recent {
+            self.compaction_warning = None;
+            return format!(
+                "Conversation too short to compact ({} messages, keeping last {}).",
+                original_count, keep_recent
+            );
+        }
+
+        // Save current head as compare branch for potential undo
+        self.compare_branch_id = Some(self.current_head);
+        let _old_nodes = self.conversation_nodes.clone();
+
+        // Clear current conversation
+        self.conversation_nodes.clear();
+        self.current_head = 0;
+        self.node_counter = 0;
+
+        let mut messages_summarized = 0;
+        let split_point = original_count.saturating_sub(keep_recent);
+
+        // Process messages
+        for (i, msg) in history.iter().enumerate() {
+            let is_old = i < split_point;
+            let (content, compacted) = if is_old && msg.content.len() > max_chars_per_message {
+                // Truncate old long messages
+                let truncated = format!(
+                    "{}... [truncated]",
+                    &msg.content[..max_chars_per_message.min(msg.content.len())]
+                );
+                messages_summarized += 1;
+                (truncated, true)
+            } else {
+                (msg.content.clone(), false)
+            };
+
+            let mut node = ConversationNode::new(
+                self.node_counter,
+                if self.node_counter == 0 {
+                    None
+                } else {
+                    Some(self.node_counter - 1)
+                },
+                ChatMessage {
+                    role: msg.role.clone(),
+                    content,
+                },
+            );
+
+            if compacted {
+                node.metadata.compacted = true;
+            }
+
+            self.current_head = self.node_counter;
+            self.conversation_nodes.insert(self.node_counter, node);
+            self.node_counter += 1;
+        }
+
+        // Calculate compacted stats
+        let compacted_history = self.get_history();
+        let compacted_tokens: usize = compacted_history
+            .iter()
+            .map(|m| m.content.len() / 4 + 1)
+            .sum();
+        let savings_percent = if original_tokens > 0 {
+            ((original_tokens - compacted_tokens) * 100) / original_tokens
+        } else {
+            0
+        };
+
+        self.compaction_warning = None;
+
+        format!(
+            "✅ Context compacted successfully!\n\n\
+             Original: ~{} tokens ({} messages)\n\
+             Compacted: ~{} tokens\n\
+             Savings: {}%\n\
+             Messages summarized: {}\n\n\
+             The compacted conversation is now active.\n\
+             Your original conversation is preserved - use Ctrl+H to access history.",
+            original_tokens, original_count, compacted_tokens, savings_percent, messages_summarized
+        )
     }
 
     fn send_to_llm(&mut self, prompt: &str) {

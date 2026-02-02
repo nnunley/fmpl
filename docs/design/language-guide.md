@@ -95,7 +95,44 @@ map.key                          -- access
 
 ---
 
-## 4. Pipe Operator
+## 4. Lists and Strings
+
+```fmpl
+[1, 2, 3]                        -- list literal
+[]                               -- empty list
+
+-- Indexing (0-based)
+list[0]                          -- first element
+list[list.len() - 1]             -- last element
+
+-- Slicing with ranges
+list[1..3]                       -- elements 1 and 2 (exclusive end)
+list[2..]                        -- from index 2 to end
+list[..3]                        -- first 3 elements
+
+-- String slicing works the same
+"hello world"[0..5]              -- "hello"
+"hello world"[6..]               -- "world"
+
+-- Methods
+list.len()                       -- length
+list.first()                     -- first element or null
+list.last()                      -- last element or null
+list.push(x)                     -- returns new list with x appended
+str.upper()                      -- uppercase
+str.lower()                      -- lowercase
+str.contains("sub")              -- true if contains substring
+str.starts_with("pre")           -- true if starts with prefix
+str.ends_with("suf")             -- true if ends with suffix
+
+-- Comprehensions
+[x * 2 for x in list]            -- map
+[x for x in list if x > 0]       -- filter
+```
+
+---
+
+## 5. Pipe Operator
 
 Chain transformations left-to-right:
 
@@ -114,7 +151,7 @@ llm_stream |> parser.tool_call |> execute_tool |> results
 
 ---
 
-## 5. Pattern Matching (`@`)
+## 6. Pattern Matching (`@`)
 
 Apply grammars or match patterns:
 
@@ -135,7 +172,7 @@ result @ {
 
 ---
 
-## 6. Grammars (OMeta-Style)
+## 7. Grammars (OMeta-Style)
 
 Declarative parsing with inheritance:
 
@@ -143,11 +180,11 @@ Declarative parsing with inheritance:
 grammar ToolParser <: base::tree {
   -- Parse tool calls from LLM output
   output =
-    | "TOOL:" name:word "(" args:json ")" => %{tool: name, args: args}
-    | chunk+                               => %{text: chunks}
+    | "TOOL:" word:name "(" json:args ")" => %{tool: name, args: args}
+    | chunk+                               => %{text: chunks};
 
   -- Semantic predicate: run code mid-match
-  command = verb:v &{ valid_verb(v) } noun:n => %{v: v, n: n}
+  command = word:v &{ valid_verb(v) } noun:n => %{v: v, n: n};
 }
 
 -- Apply to stream
@@ -157,15 +194,16 @@ llm_stream |> ToolParser.output |> handler
 ### Key Grammar Features
 
 - **Inheritance**: `grammar Child <: Parent { ... }`
-- **Alternatives**: `|` separates cases
-- **Binding**: `name:pattern` binds match to variable
+- **Alternatives**: `|` separates cases within a rule
+- **Rule separators**: `;` or `,` separates named rules
+- **Binding**: `pattern:name` binds match result to variable (e.g., `digit+:value`)
 - **Semantic predicates**: `&{ code }` runs code, must return truthy
 - **Super calls**: `<super.rule>` invokes parent rule
 - **Negation**: `!pattern` succeeds if pattern fails
 
 ---
 
-## 7. Async Streams
+## 8. Async Streams
 
 ```fmpl
 -- Create stream from async source
@@ -183,28 +221,28 @@ tasks |> map(|t| spawn(process, t)) |> await_all
 
 ---
 
-## 8. Agent as Grammar
+## 9. Agent as Grammar
 
 Agent control flow expressed as grammar rules:
 
 ```fmpl
 grammar TaskAgent <: base::tree {
   -- Main loop: process messages
-  turn = message:m => <- llm_complete(m) |> tool_output
+  turn = message:m => <- llm_complete(m) |> tool_output;
 
   -- Handle LLM output stream
   tool_output =
     | %{tool: t, args: a} => <- execute(t, a) |> turn   -- recurse
     | %{done: result}     => result                      -- done
-    | %{text: t}          => emit(t); <tool_output>      -- stream text
+    | %{text: t}          => emit(t); <tool_output>;     -- stream text
 
-  -- Human approval gate
+  -- Human approval gate (rule override)
   tool_output =
     | %{tool: t} &{ needs_approval(t) } => {
         let decision = <- human.approve(t)
         decision @ { %{approved: true} => ... }
       }
-    | <super.tool_output>
+    | <super.tool_output>;
 }
 ```
 
@@ -216,7 +254,7 @@ grammar TaskAgent <: base::tree {
 
 ---
 
-## 9. Durable Suspension
+## 10. Durable Suspension
 
 Agents can pause and resume across restarts:
 
@@ -233,7 +271,7 @@ resume_from(saved_checkpoint)
 
 ---
 
-## 10. Currying and Partials
+## 11. Currying and Partials
 
 ```fmpl
 add(a, b, c): a + b + c
@@ -256,6 +294,11 @@ add(_, 5, _)        -- partial: \a \c add(a, 5, c)
 | `x @ grammar.rule` | Apply grammar |
 | `x @ { pat => expr }` | Pattern match |
 | `%{k: v}` | Map literal |
+| `[a, b, c]` | List literal |
+| `list[i]` | Index access |
+| `list[a..b]` | Slice (elements a to b-1) |
+| `list[a..]` | Slice from a to end |
+| `list[..b]` | Slice from start to b-1 |
 | `&{ code }` | Semantic predicate |
 | `\x expr` | Lambda |
 | `obj.as(:facet)` | Get restricted view |
@@ -278,7 +321,7 @@ grammar CodeAgent <: ToolAgent {
       codebase: <- search_code(m.text)
     }
     <- llm_complete(m, context: ctx) |> tool_output
-  }
+  };
 
   -- Gate dangerous operations
   tool_output =
@@ -286,11 +329,11 @@ grammar CodeAgent <: ToolAgent {
         <- human.approve(%{tool: t, reason: "Dangerous operation"})
           |> approval_handler
       }
-    | <super.tool_output>
+    | <super.tool_output>;
 
   approval_handler =
     | %{approved: true}  => <super.tool_output>
-    | %{denied: reason}  => %{error: "Denied: " + reason}
+    | %{denied: reason}  => %{error: "Denied: " + reason};
 }
 
 -- Run: pipe user input through agent
