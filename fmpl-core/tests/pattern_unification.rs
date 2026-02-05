@@ -247,51 +247,8 @@ fn test_requires_full_mode() {
 }
 
 // ============================================================================
-// Migration tests: Verify unified pattern is accessible from ast and grammar
+// Crate root access tests
 // ============================================================================
-
-#[test]
-fn test_unified_pattern_accessible_from_ast() {
-    // Verify that UnifiedPattern is re-exported from ast module
-    use fmpl_core::ast::UnifiedPattern;
-
-    let p = UnifiedPattern::Var(SmolStr::new("x"));
-    assert!(matches!(p, UnifiedPattern::Var(name) if name == "x"));
-
-    // Verify it's the same type as pattern::Pattern
-    let p2: Pattern = UnifiedPattern::Any;
-    assert_eq!(p2, Pattern::Any);
-}
-
-#[test]
-fn test_unified_pattern_accessible_from_grammar() {
-    // Verify that UnifiedPattern is re-exported from grammar module
-    use fmpl_core::grammar::UnifiedPattern;
-
-    let p = UnifiedPattern::Var(SmolStr::new("y"));
-    assert!(matches!(p, UnifiedPattern::Var(name) if name == "y"));
-
-    // Verify it's the same type as pattern::Pattern
-    let p2: Pattern = UnifiedPattern::Any;
-    assert_eq!(p2, Pattern::Any);
-}
-
-#[test]
-fn test_ast_and_grammar_unified_patterns_are_same_type() {
-    use fmpl_core::ast::UnifiedPattern as AstUnified;
-    use fmpl_core::grammar::UnifiedPattern as GrammarUnified;
-
-    // Both re-exports should be the exact same type
-    let ast_p = AstUnified::Var(SmolStr::new("x"));
-    let grammar_p = GrammarUnified::Var(SmolStr::new("x"));
-
-    // These should be equal since they're the same type
-    assert_eq!(ast_p, grammar_p);
-
-    // Verify they can be assigned to pattern::Pattern
-    let _p1: Pattern = ast_p;
-    let _p2: Pattern = grammar_p;
-}
 
 #[test]
 fn test_unified_pattern_from_crate_root() {
@@ -307,27 +264,13 @@ fn test_unified_pattern_from_crate_root() {
 }
 
 #[test]
-fn test_pattern_unification_ast_grammar_same() {
-    // Test per spec: AstPattern and GrammarPattern should be the same type
-    use fmpl_core::ast::AstPattern;
-    use fmpl_core::grammar::GrammarPattern;
+fn test_map_pattern_mode() {
+    // Pattern that uses unified pattern type
+    use fmpl_core::Pattern;
 
-    let ast_p = AstPattern::Var(SmolStr::new("x"));
-    let grammar_p = GrammarPattern::Var(SmolStr::new("x"));
-
-    // They should be the same type and equal
-    assert_eq!(ast_p, grammar_p);
-}
-
-#[test]
-fn test_map_pattern_both_contexts() {
-    // Pattern that works in both ast and grammar context
-    use fmpl_core::ast::AstPattern;
-    use fmpl_core::pattern::PatternMode;
-
-    let p = AstPattern::Map(vec![
-        (SmolStr::new("type"), AstPattern::Var(SmolStr::new("t"))),
-        (SmolStr::new("value"), AstPattern::Var(SmolStr::new("v"))),
+    let p = Pattern::Map(vec![
+        (SmolStr::new("type"), Pattern::Var(SmolStr::new("t"))),
+        (SmolStr::new("value"), Pattern::Var(SmolStr::new("v"))),
     ]);
 
     // Should use fast mode (no guards/backtracking)
@@ -336,14 +279,11 @@ fn test_map_pattern_both_contexts() {
 
 #[test]
 fn test_guarded_pattern_requires_full() {
-    use fmpl_core::grammar::GrammarPattern;
-    use fmpl_core::pattern::{GuardPredicate, PatternMode};
-
-    // Pattern with guard only works in grammar context
-    let p = GrammarPattern::Guard {
-        pattern: Box::new(GrammarPattern::Map(vec![(
+    // Pattern with guard requires full mode
+    let p = Pattern::Guard {
+        pattern: Box::new(Pattern::Map(vec![(
             SmolStr::new("x"),
-            GrammarPattern::Var(SmolStr::new("v")),
+            Pattern::Var(SmolStr::new("v")),
         )])),
         predicate: GuardPredicate::Expr(SmolStr::new("v > 0")),
     };

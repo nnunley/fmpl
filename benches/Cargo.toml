@@ -13,9 +13,10 @@ fmpl-core = { path = "../fmpl-core" }
 [dependencies.execution_tape]
 path = "../../execution/execution_tape"
 
-[[bin]]
-name = "vm_comparison"
-path = "vm_comparison.rs"
+# Disabled: vm_comparison.rs has API compatibility issues with execution_tape
+# [[bin]]
+# name = "vm_comparison"
+# path = "vm_comparison.rs"
 
 [[bin]]
 name = "quick_comparison"
@@ -29,10 +30,18 @@ path = "fmpl_only.rs"
 name = "simple_comparison"
 path = "simple_comparison.rs"
 
-[[bin]]
-name = "cross_compile_bench"
-path = "cross_compile_bench.rs"
+# Disabled: cross_compile_bench.rs has API compatibility issues with execution_tape
+# [[bin]]
+# name = "cross_compile_bench"
+# path = "cross_compile_bench.rs"
 
-[[-bench]]
-name = "vm_comparison"
+# Disabled: vm_comparison.rs has API compatibility issues with execution_tape
+# [[bench]]
+# name = "vm_comparison"
+# path = "vm_comparison.rs"
+# harness = false
+
+[[bench]]
+name = "pattern_matching"
+path = "pattern_matching.rs"
 harness = false

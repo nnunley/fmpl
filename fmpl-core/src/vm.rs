@@ -1093,67 +1093,67 @@ impl Vm {
                     // Pattern matching placeholder
                 }
                 Instruction::ExtractMapKey { source, key } => {
-                    let map_val = frame.get(source);
-                    match map_val {
-                        Value::Map(m) => {
-                            let value = m.get(&key).cloned().ok_or_else(|| {
-                                Error::Runtime(format!("key '{}' not found in map", key))
-                            })?;
-                            let frame = self.frames.last_mut().unwrap();
-                            frame.set_current(value);
-                        }
+                    // Use get_ref to avoid cloning the entire map, only clone the extracted value
+                    let map_ref = frame.get_ref(source);
+                    let value = match map_ref {
+                        Value::Map(m) => m.get(&key).cloned().ok_or_else(|| {
+                            Error::Runtime(format!("key '{}' not found in map", key))
+                        })?,
                         _ => {
                             return Err(Error::Type {
                                 expected: "map".to_string(),
-                                got: map_val.type_name().to_string(),
+                                got: map_ref.type_name().to_string(),
                             });
                         }
-                    }
+                    };
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.set_current(value);
                 }
                 Instruction::ExtractListIndex { source, index } => {
-                    let list_val = frame.get(source);
-                    match list_val {
-                        Value::List(l) => {
-                            let value = l.get(index).cloned().ok_or_else(|| {
-                                Error::Runtime(format!("index {} out of bounds", index))
-                            })?;
-                            let frame = self.frames.last_mut().unwrap();
-                            frame.set_current(value);
-                        }
+                    // Use get_ref to avoid cloning the entire list, only clone the extracted value
+                    let list_ref = frame.get_ref(source);
+                    let value = match list_ref {
+                        Value::List(l) => l.get(index).cloned().ok_or_else(|| {
+                            Error::Runtime(format!("index {} out of bounds", index))
+                        })?,
                         _ => {
                             return Err(Error::Type {
                                 expected: "list".to_string(),
-                                got: list_val.type_name().to_string(),
+                                got: list_ref.type_name().to_string(),
                             });
                         }
-                    }
+                    };
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.set_current(value);
                 }
                 Instruction::ExtractTaggedChild { source, index } => {
-                    let tagged_val = frame.get(source);
-                    match tagged_val {
+                    // Use get_ref to avoid cloning the entire tagged value, only clone the extracted child
+                    let tagged_ref = frame.get_ref(source);
+                    let value = match tagged_ref {
                         Value::Tagged(_, children) => {
-                            let value = children.get(index).cloned().ok_or_else(|| {
+                            children.get(index).cloned().ok_or_else(|| {
                                 Error::Runtime(format!("child index {} out of bounds", index))
-                            })?;
-                            let frame = self.frames.last_mut().unwrap();
-                            frame.set_current(value);
+                            })?
                         }
                         _ => {
                             return Err(Error::Type {
                                 expected: "tagged".to_string(),
-                                got: tagged_val.type_name().to_string(),
+                                got: tagged_ref.type_name().to_string(),
                             });
                         }
-                    }
+                    };
+                    let frame = self.frames.last_mut().unwrap();
+                    frame.set_current(value);
                 }
                 Instruction::MatchTag {
                     value,
                     tag,
                     fail_target,
                 } => {
-                    let val = frame.get(value);
-                    let matches = match val {
-                        Value::Tagged(t, _) => t == tag,
+                    // Use get_ref to avoid cloning when just checking the tag
+                    let val_ref = frame.get_ref(value);
+                    let matches = match val_ref {
+                        Value::Tagged(t, _) => *t == tag,
                         _ => false,
                     };
                     if !matches {

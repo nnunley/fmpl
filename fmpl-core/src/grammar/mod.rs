@@ -94,10 +94,10 @@ use smol_str::SmolStr;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// Re-export unified pattern type for new code
-// Note: Old grammar::Pattern enum kept for backward compatibility (see Task 6.1 for removal)
-pub use crate::pattern::Pattern as UnifiedPattern;
-pub use crate::pattern::Pattern as GrammarPattern;
+// Note: The unified pattern type is in crate::pattern::Pattern
+// This module's Pattern enum is used for PEG grammar patterns (Char, CharClass, Seq, Choice, etc.).
+// The ast module has a separate Pattern enum for let-binding patterns.
+// Both are currently in active use and cannot be unified without significant refactoring.
 
 /// A grammar definition with rules and optional parent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -56,6 +56,13 @@ impl Frame {
         self.values[idx.0].clone()
     }
 
+    /// Get a reference to the value at the given instruction index.
+    /// Use this when you only need to read the value without modifying.
+    #[inline]
+    pub fn get_ref(&self, idx: InstrIndex) -> &Value {
+        &self.values[idx.0]
+    }
+
     /// Set the value at the current IP (before incrementing).
     #[inline]
     pub fn set_current(&mut self, value: Value) {

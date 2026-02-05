@@ -153,21 +153,73 @@ llm_stream |> parser.tool_call |> execute_tool |> results
 
 ## 6. Pattern Matching (`@`)
 
-Apply grammars or match patterns:
+FMPL provides unified pattern matching that works in both `let` bindings and the `@` operator.
+See the [Unified Pattern Matching](../pattern-matching-unified.md) guide for complete reference.
+
+### Let Bindings (Fast Mode)
+
+Direct destructuring with no backtracking:
 
 ```fmpl
--- Grammar application
+-- Map destructuring
+let %{name: n, age: a} = user
+-- n = "Alice", a = 30
+
+-- List destructuring
+let [first, second | rest] = items
+-- first = 1, second = 2, rest = [3, 4, 5]
+
+-- Tagged value destructuring
+let :Some(value) = result
+-- value = 42
+
+-- Nested patterns
+let %{config: %{db: %{host: h}}} = settings
+```
+
+### @ Operator (Full Mode)
+
+Apply grammars or match patterns with backtracking:
+
+```fmpl
+-- Named grammar application
 "take sword" @ mud::parser.command
 
--- Pattern matching on values
+-- Inline pattern block (anonymous grammar)
 result @ {
   %{tool: t, args: a} => execute(t, a)
   %{done: r}          => r
   %{error: e}         => handle(e)
+  _                   => continue()
 }
 
--- List destructuring
-[head | tail] => process(head, tail)
+-- With guards
+value @ {
+  n when n > 0 => "positive"
+  n when n < 0 => "negative"
+  _            => "zero"
+}
+```
+
+### Polymorphic Stream Coercion
+
+The `@` operator automatically coerces input to the appropriate stream type:
+
+| Input | Stream Behavior |
+|-------|-----------------|
+| String | Character stream (`"abc"` -> `['a', 'b', 'c']`) |
+| List | Element stream |
+| Map/Tagged | Single-element stream |
+
+```fmpl
+-- String becomes character stream
+"hello" @ { 'h' 'e' 'l' 'l' 'o' => "matched" }
+
+-- List becomes element stream
+[1, 2, 3] @ { 1 2 3 => "matched" }
+
+-- Map becomes single-element stream
+%{x: 1} @ { %{x: v} => v }
 ```
 
 ---

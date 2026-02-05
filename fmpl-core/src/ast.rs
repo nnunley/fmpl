@@ -4,10 +4,10 @@ use crate::grammar::Grammar;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
-// Re-export unified pattern type for new code
-// Note: Old ast::Pattern enum kept for backward compatibility (see Task 6.1 for removal)
-pub use crate::pattern::Pattern as UnifiedPattern;
-pub use crate::pattern::Pattern as AstPattern;
+// Note: The unified pattern type is in crate::pattern::Pattern
+// This module's Pattern enum is used for let-binding and match patterns in the AST.
+// The grammar module has a separate Pattern enum for PEG grammar patterns.
+// Both are currently in active use and cannot be unified without significant refactoring.
 
 /// A qualified name like `foo::bar::baz`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
