@@ -68,6 +68,41 @@ pub fn eval(vm: &mut Vm, source: &str) -> Result<Value> {
 /// Returns Ok(false) if more input is needed (e.g., unclosed brackets).
 /// Returns Err if there's a syntax error that can't be fixed by more input.
 pub fn is_complete(source: &str) -> Result<bool> {
+    match parser::generated_parse(source) {
+        Ok(_) => return Ok(true),
+        Err(Error::UnexpectedEof) => return Ok(false),
+        Err(Error::Parser { token, message })
+            if likely_incomplete_generated(source, token, &message) =>
+        {
+            return Ok(false);
+        }
+        Err(_) => {
+            // Fall back to legacy completeness detection for compatibility while
+            // generated parser parity is still in progress.
+        }
+    }
+
+    is_complete_legacy(source)
+}
+
+fn likely_incomplete_generated(source: &str, token: usize, message: &str) -> bool {
+    let at_or_near_end = token >= source.len().saturating_sub(1);
+    if !at_or_near_end {
+        return false;
+    }
+
+    let incomplete_markers = [
+        "unexpected input at position",
+        "expected",
+        "unterminated",
+        "unexpected eof",
+    ];
+    incomplete_markers
+        .iter()
+        .any(|marker| message.contains(marker))
+}
+
+fn is_complete_legacy(source: &str) -> Result<bool> {
     let tokens = match Lexer::new(source).tokenize() {
         Ok(t) => t,
         Err(e) => {

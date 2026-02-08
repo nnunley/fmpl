@@ -19,6 +19,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::time::SystemTime;
 
 fn main() {
     // Get directory paths
@@ -66,6 +67,12 @@ fn main() {
         return;
     }
 
+    // Fail stale parser checks in CI (or when explicitly enforced).
+    let enforce_freshness =
+        env::var("CI").is_ok() || env::var("FMPL_ENFORCE_PARSER_FRESHNESS").is_ok();
+    let enforce_determinism =
+        env::var("CI").is_ok() || env::var("FMPL_ENFORCE_PARSER_DETERMINISM").is_ok();
+
     // Look for a pre-built fmpl-bootstrap binary
     // This avoids the circular dependency by using an already-built binary
     let binary_path = if bootstrap_binary.exists() {
@@ -75,6 +82,15 @@ fn main() {
     } else {
         // No pre-built binary available
         // This happens on first build or clean build
+        let generated_parser_path = Path::new(&out_dir).join("generated_parser.rs");
+        let stale = should_regenerate(workspace_root, &fmpl_sources, &generated_parser_path);
+
+        if enforce_freshness && stale {
+            panic!(
+                "Parser is stale and fmpl-bootstrap is unavailable. Run 'FMPL_BOOTSTRAP_PHASE=1 cargo build -p fmpl-bootstrap' first."
+            );
+        }
+
         println!("cargo::warning=fmpl-bootstrap not found, using legacy parser");
         println!("cargo::warning=Run 'FMPL_BOOTSTRAP_PHASE=1 cargo build -p fmpl-bootstrap' first");
         write_fallback_parser(&out_dir);
@@ -86,6 +102,9 @@ fn main() {
 
     // Check if generator exists
     if !generator_path.exists() {
+        if enforce_freshness {
+            panic!("Parser generator not found at {}", generator_path.display());
+        }
         println!(
             "cargo::warning=Parser generator not found at {}, using legacy parser",
             generator_path.display()
@@ -97,38 +116,9 @@ fn main() {
     // Get the modification time of the bootstrap binary
     // If the binary is newer than the generated parser, regenerate
     let generated_parser_path = Path::new(&out_dir).join("generated_parser.rs");
-    let should_regenerate = if generated_parser_path.exists() {
-        // Check if any source file is newer than the generated parser
-        let generated_time = fs::metadata(&generated_parser_path)
-            .and_then(|m| m.modified())
-            .ok();
-
-        let binary_time = fs::metadata(&binary_path).and_then(|m| m.modified()).ok();
-
-        // Check if any FMPL source is newer
-        let source_newer = fmpl_sources.iter().any(|source| {
-            let source_path = workspace_root.join(source);
-            if let Ok(source_meta) = fs::metadata(&source_path) {
-                if let Ok(source_time) = source_meta.modified() {
-                    if let Some(gen_time) = generated_time {
-                        return source_time > gen_time;
-                    }
-                }
-            }
-            false
-        });
-
-        // Also check if binary is newer (means fmpl-bootstrap was rebuilt)
-        let binary_newer = if let (Some(bin_time), Some(gen_time)) = (binary_time, generated_time) {
-            bin_time > gen_time
-        } else {
-            true // Can't determine, so regenerate
-        };
-
-        source_newer || binary_newer
-    } else {
-        true // Generated parser doesn't exist
-    };
+    let should_regenerate =
+        should_regenerate(workspace_root, &fmpl_sources, &generated_parser_path)
+            || is_newer_than(&binary_path, &generated_parser_path);
 
     if !should_regenerate {
         // Parser is up to date, skip generation
@@ -136,13 +126,27 @@ fn main() {
     }
 
     // Run the parser generator with the pre-built binary
-    let output = Command::new(&binary_path)
-        .arg(&generator_path)
-        .current_dir(workspace_root)
-        .output();
+    let output = run_generator(&binary_path, &generator_path, workspace_root);
 
     match output {
         Ok(output) if output.status.success() => {
+            if enforce_determinism {
+                let second = run_generator(&binary_path, &generator_path, workspace_root)
+                    .expect("Failed to rerun parser generation for determinism check");
+
+                if !second.status.success() {
+                    panic!(
+                        "Determinism check failed: second parser generation run returned non-zero status"
+                    );
+                }
+
+                if output.stdout != second.stdout {
+                    panic!(
+                        "Determinism check failed: repeated parser regeneration produced different bytes"
+                    );
+                }
+            }
+
             let rust_code =
                 String::from_utf8(output.stdout).expect("Generated code is not valid UTF-8");
 
@@ -156,16 +160,75 @@ fn main() {
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if enforce_freshness {
+                panic!(
+                    "Parser generation failed while freshness is enforced: {}",
+                    stderr
+                );
+            }
             println!("cargo::warning=Parser generation failed: {}", stderr);
             println!("cargo::warning=Using legacy parser as fallback");
             write_fallback_parser(&out_dir);
         }
         Err(e) => {
+            if enforce_freshness {
+                panic!(
+                    "Failed to run fmpl-bootstrap while freshness is enforced: {}",
+                    e
+                );
+            }
             println!("cargo::warning=Failed to run fmpl-bootstrap: {}", e);
             println!("cargo::warning=Using legacy parser as fallback");
             write_fallback_parser(&out_dir);
         }
     }
+}
+
+fn should_regenerate(
+    workspace_root: &Path,
+    fmpl_sources: &[&str],
+    generated_parser_path: &Path,
+) -> bool {
+    let Some(generated_time) = modified_time(generated_parser_path) else {
+        return true;
+    };
+
+    for source in fmpl_sources {
+        let source_path = workspace_root.join(source);
+        let Some(source_time) = modified_time(&source_path) else {
+            continue;
+        };
+        if source_time > generated_time {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn is_newer_than(lhs: &Path, rhs: &Path) -> bool {
+    let Some(lhs_time) = modified_time(lhs) else {
+        return true;
+    };
+    let Some(rhs_time) = modified_time(rhs) else {
+        return true;
+    };
+    lhs_time > rhs_time
+}
+
+fn modified_time(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+fn run_generator(
+    binary_path: &Path,
+    generator_path: &Path,
+    workspace_root: &Path,
+) -> std::io::Result<std::process::Output> {
+    Command::new(binary_path)
+        .arg(generator_path)
+        .current_dir(workspace_root)
+        .output()
 }
 
 /// Write a fallback parser that delegates to the legacy parser
