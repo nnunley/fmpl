@@ -252,6 +252,17 @@ impl Vm {
                 .unwrap()
                 .get_property(*id, name.as_str())
                 .ok_or_else(|| Error::UndefinedProperty(name.to_string())),
+            Value::Facet(id, facet_name) => {
+                let db = self.objects.lock().unwrap();
+                if !db.facet_allows(*id, facet_name, name.as_str()) {
+                    return Err(Error::Runtime(format!(
+                        "facet :{} does not expose property '{}'",
+                        facet_name, name
+                    )));
+                }
+                db.get_property(*id, name.as_str())
+                    .ok_or_else(|| Error::UndefinedProperty(name.to_string()))
+            }
             Value::Map(map) => map
                 .get(name)
                 .cloned()
@@ -642,6 +653,12 @@ impl Vm {
                                 val.clone(),
                             )?;
                         }
+                        Value::Facet(_, ref facet_name) => {
+                            return Err(Error::Runtime(format!(
+                                "cannot set properties through facet :{}",
+                                facet_name
+                            )));
+                        }
                         _ => {
                             return Err(Error::Type {
                                 expected: "object".to_string(),
@@ -665,10 +682,21 @@ impl Vm {
                         Value::Object(id) => {
                             if self.objects.lock().unwrap().get_facet(id, &name).is_some() {
                                 let frame = self.frames.last_mut().unwrap();
-                                frame.set_current(Value::Object(id));
+                                frame.set_current(Value::Facet(id, name.clone()));
                             } else {
                                 return Err(Error::Runtime(format!("undefined facet: {}", name)));
                             }
+                        }
+                        Value::Facet(_, ref current_facet) => {
+                            // Facet-on-facet composition requires intersection semantics
+                            // (see specs/object-system/facets.md). Deny for now to
+                            // prevent privilege widening.
+                            return Err(Error::Runtime(format!(
+                                "facet-on-facet composition not yet implemented \
+                                 (current: :{}, requested: :{}); use the underlying \
+                                 object to request a different facet",
+                                current_facet, name
+                            )));
                         }
                         _ => {
                             return Err(Error::Type {
@@ -4025,6 +4053,30 @@ impl Vm {
                     frame.this = Some(id);
 
                     // Bind arguments
+                    for (i, val) in args.into_iter().enumerate() {
+                        if i < method.params.len() {
+                            frame.locals.insert(method.params[i].clone(), val);
+                        }
+                    }
+
+                    self.frames.push(frame);
+                } else {
+                    return Err(Error::UndefinedMethod(name.to_string()));
+                }
+            }
+            Value::Facet(id, ref facet_name) => {
+                let db = self.objects.lock().unwrap();
+                if !db.facet_allows(id, facet_name, name) {
+                    return Err(Error::Runtime(format!(
+                        "facet :{} does not expose method '{}'",
+                        facet_name, name
+                    )));
+                }
+                if let Some(method) = db.get_method(id, name).cloned() {
+                    drop(db);
+                    let mut frame = Frame::new(method.code);
+                    frame.this = Some(id);
+
                     for (i, val) in args.into_iter().enumerate() {
                         if i < method.params.len() {
                             frame.locals.insert(method.params[i].clone(), val);

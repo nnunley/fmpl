@@ -512,7 +512,7 @@ impl<'a> Parser<'a> {
                 self.advance();
 
                 // Check for .as(:facet)
-                if self.check_ident("as") {
+                if self.check(&Token::As) {
                     self.advance();
                     self.expect(&Token::LParen)?;
                     let facet = self.expect_symbol()?;
@@ -1914,10 +1914,6 @@ impl<'a> Parser<'a> {
 
     fn check(&self, token: &Token) -> bool {
         self.peek_token() == Some(token)
-    }
-
-    fn check_ident(&self, name: &str) -> bool {
-        matches!(self.peek_token(), Some(Token::Ident(s)) if s == name)
     }
 
     /// Check if the next token is ColonColon (for module qualification like stream::foo)

@@ -755,6 +755,7 @@ impl SourceRepr for Value {
             Value::Stream(s) => s.source_repr(),
             // Objects require ObjectDb access - return a placeholder that can be filled in
             Value::Object(id) => format!("<object #{}>", id),
+            Value::Facet(id, name) => format!("<facet :{} of object #{}>", name, id),
             Value::AsyncStream(s) => format!("<async_stream #{}>", s.lock().unwrap().id()),
             Value::Sink(s) => format!("<sink #{}>", s.id()),
             Value::SuspendedStream(source) => format!("<suspended_stream {:?}>", source),

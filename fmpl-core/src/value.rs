@@ -23,6 +23,9 @@ pub enum Value {
     List(Arc<Vec<Value>>),
     Map(Arc<HashMap<SmolStr, Value>>),
     Object(ObjectId),
+    /// Facet-restricted view of an object (sealed capability).
+    #[serde(skip)]
+    Facet(ObjectId, SmolStr),
     Lambda(Arc<Lambda>),
     /// Partially applied function.
     Partial(Arc<Partial>),
@@ -263,6 +266,7 @@ impl Value {
             Value::List(_) => "list",
             Value::Map(_) => "map",
             Value::Object(_) => "object",
+            Value::Facet(_, _) => "facet",
             Value::Lambda(_) => "lambda",
             Value::Partial(_) => "partial",
             Value::Grammar(_) => "grammar",
@@ -404,6 +408,7 @@ impl Value {
             (Value::String(a), Value::String(b)) => a == b,
             (Value::Symbol(a), Value::Symbol(b)) => a == b,
             (Value::Object(a), Value::Object(b)) => a == b,
+            (Value::Facet(a, an), Value::Facet(b, bn)) => a == b && an == bn,
             (Value::List(a), Value::List(b)) => {
                 a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y))
             }
@@ -613,6 +618,7 @@ impl fmt::Display for Value {
                 write!(f, "}}")
             }
             Value::Object(id) => write!(f, "<object #{}>", id),
+            Value::Facet(id, name) => write!(f, "<facet :{} of object #{}>", name, id),
             Value::Lambda(_) => write!(f, "<lambda>"),
             Value::Partial(_) => write!(f, "<partial>"),
             Value::Grammar(g) => write!(f, "<grammar {}>", g.name),
