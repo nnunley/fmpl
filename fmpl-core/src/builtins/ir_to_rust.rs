@@ -158,6 +158,72 @@ fn fold_binary(first: Value, rest: Value) -> Value {
     }
 }
 
+/// Get the length of a list
+fn length(list: Value) -> Value {
+    match list {
+        Value::List(items) => Value::Int(items.len() as i64),
+        Value::String(s) => Value::Int(s.len() as i64),
+        _ => Value::Int(0),
+    }
+}
+
+/// Fold pipe and @ operations: fold_pipe_at(first, ops)
+/// ops is a list of [op_type, ...args] pairs
+fn fold_pipe_at(first: Value, ops: Value) -> Value {
+    match ops {
+        Value::List(items) if items.is_empty() => first,
+        Value::List(items) => {
+            let mut result = first;
+            for op in items.as_ref() {
+                if let Value::List(op_items) = op {
+                    if !op_items.is_empty() {
+                        match &op_items[0] {
+                            Value::Symbol(s) if s.as_str() == "pipe" => {
+                                if op_items.len() >= 2 {
+                                    result = Value::Tagged(
+                                        SmolStr::new("Binary"),
+                                        Arc::new(vec![Value::Symbol(SmolStr::new("|>")), result, op_items[1].clone()]),
+                                    );
+                                }
+                            }
+                            Value::Symbol(s) if s.as_str() == "at_inline" => {
+                                if op_items.len() >= 2 {
+                                    result = Value::Tagged(
+                                        SmolStr::new("AtInlineBlock"),
+                                        Arc::new(vec![result, Value::Tagged(
+                                            SmolStr::new("InlinePatternBlock"),
+                                            Arc::new(vec![op_items[1].clone()]),
+                                        )]),
+                                    );
+                                }
+                            }
+                            Value::Symbol(s) if s.as_str() == "at_grammar" => {
+                                if op_items.len() >= 3 {
+                                    result = Value::Tagged(
+                                        SmolStr::new("AtGrammarApply"),
+                                        Arc::new(vec![result, op_items[1].clone(), op_items[2].clone()]),
+                                    );
+                                }
+                            }
+                            Value::Symbol(s) if s.as_str() == "extend" => {
+                                if op_items.len() >= 2 {
+                                    result = Value::Tagged(
+                                        SmolStr::new("GrammarExtend"),
+                                        Arc::new(vec![result, op_items[1].clone()]),
+                                    );
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            result
+        }
+        _ => first,
+    }
+}
+
 /// Fold postfix operations: fold_postfix(base, [[:index, idx], [:call, args], ...])
 fn fold_postfix(base: Value, ops: Value) -> Value {
     match ops {
@@ -735,7 +801,7 @@ impl IrToRust {
             "Index" => {
                 let collection = self.transpile_ir(&children[0])?;
                 let key = self.transpile_ir(&children[1])?;
-                Ok(format!("({}).index(&({}))", collection, key))
+                Ok(format!("({}).index(&({})).unwrap_or(Value::Null)", collection, key))
             }
 
             "Call" => {
@@ -786,6 +852,12 @@ impl IrToRust {
                                 }
                                 "float_parse" if arg_strs.len() == 1 => {
                                     return Ok(format!("float_parse({})", arg_strs[0]));
+                                }
+                                "length" if arg_strs.len() == 1 => {
+                                    return Ok(format!("length({})", arg_strs[0]));
+                                }
+                                "fold_pipe_at" if arg_strs.len() == 2 => {
+                                    return Ok(format!("fold_pipe_at({}, {})", arg_strs[0], arg_strs[1]));
                                 }
                                 "reduce" | "fold" if args.len() == 3 => {
                                     // For fold/reduce, if the first arg is a Lambda, generate a native Rust closure
@@ -1302,6 +1374,8 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
                         ">=" => BinOp::GtEq,
                         "&&" => BinOp::And,
                         "||" => BinOp::Or,
+                        "|>" => BinOp::Pipe,
+                        "in" => BinOp::In,
                         _ => return Err(Error::Runtime(format!("Unknown binary operator: {}", s))),
                     }
                 } else {
@@ -1375,6 +1449,76 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
                 Err(Error::Runtime("Invalid Let node".to_string()))
             }
         }
+        "LetSimple" => {
+            if !children.is_empty() {
+                let (tag, parts) = match &children[0] {
+                    Value::Tagged(tag, children) => (tag.clone(), (**children).clone()),
+                    _ => return Err(Error::Runtime("Invalid LetSimple binding".to_string())),
+                };
+                if tag.as_str() == "Binding" && parts.len() >= 2 {
+                    if let Value::Symbol(name) = &parts[0] {
+                        let value = value_to_expr(&parts[1])?;
+                        Ok(Expr::LetStmt(name.clone(), Box::new(value)))
+                    } else {
+                        Err(Error::Runtime("Invalid LetSimple binding name".to_string()))
+                    }
+                } else {
+                    Err(Error::Runtime("Invalid LetSimple binding format".to_string()))
+                }
+            } else {
+                Err(Error::Runtime("Invalid LetSimple node".to_string()))
+            }
+        }
+        "Do" => {
+            if let Some(Value::List(stmts)) = children.first() {
+                let mut exprs = Vec::new();
+                for stmt in stmts.iter() {
+                    let (tag, children) = match stmt {
+                        Value::Tagged(tag, children) => (tag.as_str(), &**children),
+                        _ => {
+                            exprs.push(value_to_expr(&stmt)?);
+                            continue;
+                        }
+                    };
+                    if tag == "LetSimple" {
+                        if !children.is_empty() {
+                            let (btag, parts) = match &children[0] {
+                                Value::Tagged(tag, children) => (tag.as_str(), &**children),
+                                _ => {
+                                    exprs.push(value_to_expr(&stmt)?);
+                                    continue;
+                                }
+                            };
+                            if btag == "Binding" && parts.len() >= 2 {
+                                if let Value::Symbol(name) = &parts[0] {
+                                    let value = value_to_expr(&parts[1])?;
+                                    exprs.push(Expr::LetStmt(name.clone(), Box::new(value)));
+                                    continue;
+                                }
+                            }
+                        }
+                        exprs.push(value_to_expr(&stmt)?);
+                    } else {
+                        exprs.push(value_to_expr(&stmt)?);
+                    }
+                }
+                if exprs.len() == 1 {
+                    Ok(exprs.pop().unwrap())
+                } else {
+                    Ok(Expr::Sequence(exprs))
+                }
+            } else {
+                Err(Error::Runtime("Invalid Do node".to_string()))
+            }
+        }
+        "Yield" => {
+            if !children.is_empty() {
+                let value = value_to_expr(&children[0])?;
+                Ok(Expr::Yield(Box::new(value)))
+            } else {
+                Err(Error::Runtime("Invalid Yield node".to_string()))
+            }
+        }
         "Tagged" => {
             if children.len() >= 2 {
                 if let Value::String(tag) = &children[0] {
@@ -1401,7 +1545,7 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
                 Err(Error::Runtime("Invalid QualifiedName node".to_string()))
             }
         }
-        "Call" | "Index" | "MethodCall" | "PropAccess" => {
+        "Call" | "Index" | "Slice" | "MethodCall" | "PropAccess" => {
             // These are generated by fold_postfix - need to handle them
             match tag.as_str() {
                 "Call" if children.len() >= 2 => {
@@ -1409,6 +1553,12 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
                     if let Value::List(args) = &children[1] {
                         let arg_exprs: Result<Vec<Expr>> = args.iter().map(value_to_expr).collect();
                         let args: Vec<Arg> = arg_exprs?.into_iter().map(Arg::Expr).collect();
+                        // Merge Call(Spawn(x, []), args) → Spawn(x, args)
+                        if let Expr::Spawn(ref constructor, ref spawn_args) = func {
+                            if spawn_args.is_empty() {
+                                return Ok(Expr::Spawn(constructor.clone(), args));
+                            }
+                        }
                         Ok(Expr::Call(Box::new(func), args))
                     } else {
                         Err(Error::Runtime("Invalid Call args".to_string()))
@@ -1418,6 +1568,18 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
                     let obj = value_to_expr(&children[0])?;
                     let idx = value_to_expr(&children[1])?;
                     Ok(Expr::Index(Box::new(obj), Box::new(idx)))
+                }
+                "Slice" if children.len() >= 3 => {
+                    let obj = value_to_expr(&children[0])?;
+                    let start = match &children[1] {
+                        Value::Null => None,
+                        v => Some(Box::new(value_to_expr(v)?)),
+                    };
+                    let end = match &children[2] {
+                        Value::Null => None,
+                        v => Some(Box::new(value_to_expr(v)?)),
+                    };
+                    Ok(Expr::Slice(Box::new(obj), start, end))
                 }
                 "PropAccess" if children.len() >= 2 => {
                     let obj = value_to_expr(&children[0])?;
@@ -1444,7 +1606,427 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
                 _ => Err(Error::Runtime(format!("Invalid {} node", tag))),
             }
         }
+        "Try" => {
+            if children.len() >= 3 {
+                let body = value_to_expr(&children[0])?;
+                let binding = if let Value::Symbol(s) = &children[1] {
+                    s.clone()
+                } else {
+                    return Err(Error::Runtime("Invalid Try binding".to_string()));
+                };
+                let catch_body = value_to_expr(&children[2])?;
+                Ok(Expr::TryCatch {
+                    body: Box::new(body),
+                    error_binding: binding,
+                    catch_body: Box::new(catch_body),
+                })
+            } else {
+                Err(Error::Runtime("Invalid Try node".to_string()))
+            }
+        }
+        "While" => {
+            if children.len() >= 2 {
+                let cond = value_to_expr(&children[0])?;
+                let body = value_to_expr(&children[1])?;
+                Ok(Expr::While(Box::new(cond), Box::new(body)))
+            } else {
+                Err(Error::Runtime("Invalid While node".to_string()))
+            }
+        }
+        "DoWhile" => {
+            if children.len() >= 2 {
+                let body = value_to_expr(&children[0])?;
+                let cond = value_to_expr(&children[1])?;
+                Ok(Expr::DoWhile(Box::new(body), Box::new(cond)))
+            } else {
+                Err(Error::Runtime("Invalid DoWhile node".to_string()))
+            }
+        }
+        "For" => {
+            if children.len() >= 3 {
+                let pattern = value_to_pattern(&children[0])?;
+                let iterable = value_to_expr(&children[1])?;
+                let body = value_to_expr(&children[2])?;
+                Ok(Expr::For(pattern, Box::new(iterable), Box::new(body)))
+            } else {
+                Err(Error::Runtime("Invalid For node".to_string()))
+            }
+        }
+        "Match" => {
+            if children.len() >= 2 {
+                let scrutinee = value_to_expr(&children[0])?;
+                if let Value::List(cases) = &children[1] {
+                    let match_cases = cases.iter().map(|c| {
+                        let (tag, cs) = match c {
+                            Value::Tagged(tag, children) => (tag.as_str(), &**children),
+                            _ => return Err(Error::Runtime("Invalid MatchCase".to_string())),
+                        };
+                        if tag != "MatchCase" || cs.len() < 3 {
+                            return Err(Error::Runtime("Invalid MatchCase".to_string()));
+                        }
+                        let pattern = value_to_pattern(&cs[0])?;
+                        let guard = match &cs[1] {
+                            Value::Null => None,
+                            other => Some(Box::new(value_to_expr(other)?)),
+                        };
+                        let body = value_to_expr(&cs[2])?;
+                        Ok(MatchCase { pattern, guard, body: Box::new(body) })
+                    }).collect::<Result<Vec<_>>>()?;
+                    Ok(Expr::Match(Box::new(scrutinee), match_cases))
+                } else {
+                    Err(Error::Runtime("Invalid Match cases".to_string()))
+                }
+            } else {
+                Err(Error::Runtime("Invalid Match node".to_string()))
+            }
+        }
+        "Return" => {
+            if !children.is_empty() {
+                let value = value_to_expr(&children[0])?;
+                Ok(Expr::Return(Some(Box::new(value))))
+            } else {
+                Ok(Expr::Return(None))
+            }
+        }
+        "Throw" => {
+            if !children.is_empty() {
+                let value = value_to_expr(&children[0])?;
+                Ok(Expr::Throw(Box::new(value)))
+            } else {
+                Err(Error::Runtime("Invalid Throw node".to_string()))
+            }
+        }
+        "Assign" => {
+            if children.len() >= 2 {
+                let target = value_to_expr(&children[0])?;
+                let value = value_to_expr(&children[1])?;
+                Ok(Expr::Assignment(Box::new(target), Box::new(value)))
+            } else {
+                Err(Error::Runtime("Invalid Assign node".to_string()))
+            }
+        }
+        "Sequence" => {
+            if let Some(Value::List(items)) = children.first() {
+                let exprs: Result<Vec<Expr>> = items.iter().map(value_to_expr).collect();
+                Ok(Expr::Sequence(exprs?))
+            } else {
+                Err(Error::Runtime("Invalid Sequence node".to_string()))
+            }
+        }
+        "AsyncCall" => {
+            if !children.is_empty() {
+                let expr = value_to_expr(&children[0])?;
+                Ok(Expr::AsyncCall(Box::new(expr)))
+            } else {
+                Err(Error::Runtime("Invalid AsyncCall node".to_string()))
+            }
+        }
+        "ListCons" => {
+            if children.len() >= 2 {
+                let head = value_to_expr(&children[0])?;
+                let tail = value_to_expr(&children[1])?;
+                Ok(Expr::ListCons(Box::new(head), Box::new(tail)))
+            } else {
+                Err(Error::Runtime("Invalid ListCons node".to_string()))
+            }
+        }
+        "Placeholder" => Ok(Expr::Placeholder),
+        "Self" => Ok(Expr::Self_),
+        "Parent" => Ok(Expr::Parent),
+        "Caller" => Ok(Expr::Caller),
+        "User" => Ok(Expr::User),
+        "Args" => Ok(Expr::Args),
+        "ObjTag" => {
+            if let Some(Value::String(name)) = children.first() {
+                Ok(Expr::ObjTag(name.clone()))
+            } else {
+                Err(Error::Runtime("Invalid ObjTag node".to_string()))
+            }
+        }
+        "Spawn" => {
+            if !children.is_empty() {
+                let constructor = value_to_expr(&children[0])?;
+                Ok(Expr::Spawn(Box::new(constructor), Vec::new()))
+            } else {
+                Err(Error::Runtime("Invalid Spawn node".to_string()))
+            }
+        }
+        "FacetAccess" => {
+            if children.len() >= 2 {
+                let obj = value_to_expr(&children[0])?;
+                let facet = match &children[1] {
+                    Value::Symbol(s) => s.clone(),
+                    Value::Tagged(tag, inner) if tag.as_str() == "Symbol" => {
+                        if let Some(Value::String(s)) = inner.first() {
+                            SmolStr::new(s.as_str())
+                        } else if let Some(Value::Symbol(s)) = inner.first() {
+                            s.clone()
+                        } else {
+                            return Err(Error::Runtime("Invalid FacetAccess facet name".to_string()));
+                        }
+                    }
+                    _ => return Err(Error::Runtime("Invalid FacetAccess facet".to_string())),
+                };
+                Ok(Expr::FacetAccess(Box::new(obj), facet))
+            } else {
+                Err(Error::Runtime("Invalid FacetAccess node".to_string()))
+            }
+        }
+        "MapEach" if children.len() >= 2 => {
+            let func = value_to_expr(&children[0])?;
+            let iterable = value_to_expr(&children[1])?;
+            Ok(Expr::MapEach {
+                elem_var: SmolStr::new("_elem"),
+                iterable: Box::new(iterable),
+                body: Box::new(func),
+            })
+        }
+        "FilterExpr" if children.len() >= 2 => {
+            let pred = value_to_expr(&children[0])?;
+            let iterable = value_to_expr(&children[1])?;
+            Ok(Expr::Filter {
+                elem_var: SmolStr::new("_elem"),
+                iterable: Box::new(iterable),
+                body: Box::new(pred),
+            })
+        }
+        "Fold" if children.len() >= 3 => {
+            let func = value_to_expr(&children[0])?;
+            let initial = value_to_expr(&children[1])?;
+            let iterable = value_to_expr(&children[2])?;
+            Ok(Expr::Fold {
+                initial: Box::new(initial),
+                acc_var: SmolStr::new("_acc"),
+                iterable: Box::new(iterable),
+                body: Box::new(func),
+            })
+        }
+        "Foldr" if children.len() >= 3 => {
+            let func = value_to_expr(&children[0])?;
+            let initial = value_to_expr(&children[1])?;
+            let iterable = value_to_expr(&children[2])?;
+            Ok(Expr::Foldr {
+                initial: Box::new(initial),
+                acc_var: SmolStr::new("_acc"),
+                iterable: Box::new(iterable),
+                body: Box::new(func),
+            })
+        }
+        "AtInlineBlock" if children.len() >= 2 => {
+            // AtInlineBlock needs pattern conversion which requires value_to_pattern_cases
+            // For now, delegate to the standalone value_to_ast module at runtime
+            Err(Error::Runtime("AtInlineBlock in generated parser template not yet supported - use standalone value_to_ast".to_string()))
+        }
+        "AtGrammarApply" if children.len() >= 3 => {
+            let input = value_to_expr(&children[0])?;
+            let grammar = value_to_expr(&children[1])?;
+            let rule = if let Value::Symbol(s) = &children[2] {
+                s.clone()
+            } else {
+                return Err(Error::Runtime("Invalid AtGrammarApply rule".to_string()));
+            };
+            Ok(Expr::GrammarApply {
+                input: Box::new(input),
+                grammar: Box::new(grammar),
+                rule,
+            })
+        }
+        "Object" if children.len() >= 2 => {
+            let name = match &children[0] {
+                Value::String(s) => QualifiedName::simple(SmolStr::new(s.as_str())),
+                _ => return Err(Error::Runtime("Invalid Object name".to_string())),
+            };
+            let content = match &children[1] {
+                Value::List(items) => items,
+                _ => return Err(Error::Runtime("Invalid Object content".to_string())),
+            };
+            let mut bindings = Vec::new();
+            let mut facets = Vec::new();
+            for item in content.iter() {
+                match item {
+                    Value::Tagged(tag, cs) => match tag.as_str() {
+                        "Section" if cs.len() >= 2 => {
+                            let vis = match &cs[0] {
+                                Value::Symbol(s) => match s.as_str() {
+                                    "public" => Visibility::Public,
+                                    "protected" => Visibility::Protected,
+                                    _ => Visibility::Private,
+                                },
+                                _ => Visibility::Private,
+                            };
+                            if let Value::List(items) = &cs[1] {
+                                for b in items.iter() {
+                                    if let Value::Tagged(btag, bc) = b {
+                                        if btag.as_str() == "ObjBinding" && bc.len() >= 4 {
+                                            let bname = match &bc[0] {
+                                                Value::String(s) => SmolStr::new(s.as_str()),
+                                                _ => continue,
+                                            };
+                                            let params: Vec<SmolStr> = match &bc[1] {
+                                                Value::List(ps) => ps.iter().filter_map(|p| {
+                                                    if let Value::Symbol(s) = p { Some(s.clone()) } else { None }
+                                                }).collect(),
+                                                _ => Vec::new(),
+                                            };
+                                            let has_params = matches!(&bc[3], Value::Bool(true));
+                                            let value = value_to_expr(&bc[2])?;
+                                            bindings.push(Binding { name: bname, params, has_params, value, visibility: vis });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "FacetSection" if !cs.is_empty() => {
+                            if let Value::List(items) = &cs[0] {
+                                for f in items.iter() {
+                                    if let Value::Tagged(ftag, fc) = f {
+                                        if ftag.as_str() == "FacetDef" && fc.len() >= 3 {
+                                            let fname = match &fc[0] {
+                                                Value::String(s) => SmolStr::new(s.as_str()),
+                                                _ => continue,
+                                            };
+                                            let members: Vec<SmolStr> = match &fc[1] {
+                                                Value::List(ms) => ms.iter().filter_map(|m| {
+                                                    if let Value::String(s) = m { Some(SmolStr::new(s.as_str())) } else { None }
+                                                }).collect(),
+                                                _ => Vec::new(),
+                                            };
+                                            let terminal = matches!(&fc[2], Value::Bool(true));
+                                            facets.push(FacetDef { name: fname, members, terminal });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        "ObjBinding" if cs.len() >= 4 => {
+                            let bname = match &cs[0] {
+                                Value::String(s) => SmolStr::new(s.as_str()),
+                                _ => continue,
+                            };
+                            let params: Vec<SmolStr> = match &cs[1] {
+                                Value::List(ps) => ps.iter().filter_map(|p| {
+                                    if let Value::Symbol(s) = p { Some(s.clone()) } else { None }
+                                }).collect(),
+                                _ => Vec::new(),
+                            };
+                            let has_params = matches!(&cs[3], Value::Bool(true));
+                            let value = value_to_expr(&cs[2])?;
+                            bindings.push(Binding { name: bname, params, has_params, value, visibility: Visibility::Private });
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            Ok(Expr::ObjectDef(ObjectDef {
+                name,
+                params: Vec::new(),
+                parents: Vec::new(),
+                bindings,
+                facets,
+            }))
+        }
         _ => Err(Error::Runtime(format!("Unknown AST node type: {}", tag))),
+    }
+}
+
+fn value_to_pattern(value: &Value) -> Result<Pattern> {
+    let (tag, children) = match value {
+        Value::Tagged(tag, children) => (tag.clone(), (**children).clone()),
+        _ => return Err(Error::Runtime(format!("Expected pattern, got {:?}", value))),
+    };
+    match tag.as_str() {
+        "PatternWildcard" => Ok(Pattern::Wildcard),
+        "PatternVar" if !children.is_empty() => {
+            if let Value::Symbol(name) = &children[0] {
+                Ok(Pattern::Var(name.clone()))
+            } else {
+                Err(Error::Runtime("Invalid PatternVar name".to_string()))
+            }
+        }
+        "PatternLiteral" if !children.is_empty() => {
+            value_to_literal_pattern(&children[0])
+        }
+        "PatternTagged" if children.len() >= 2 => {
+            let tag_name = if let Value::String(s) = &children[0] {
+                s.clone()
+            } else {
+                return Err(Error::Runtime("Invalid PatternTagged tag".to_string()));
+            };
+            let sub_patterns = if let Value::List(pats) = &children[1] {
+                pats.iter().map(value_to_pattern).collect::<Result<Vec<_>>>()?
+            } else {
+                Vec::new()
+            };
+            Ok(Pattern::Constructor(tag_name, sub_patterns))
+        }
+        "PatternList" if !children.is_empty() => {
+            if let Value::List(items) = &children[0] {
+                let patterns = items.iter().map(value_to_pattern).collect::<Result<Vec<_>>>()?;
+                Ok(Pattern::List(patterns, None))
+            } else {
+                Ok(Pattern::List(Vec::new(), None))
+            }
+        }
+        "PatternMap" if !children.is_empty() => {
+            if let Value::List(entries) = &children[0] {
+                let mut map_patterns = Vec::new();
+                for entry in entries.iter() {
+                    if let Value::List(pair) = entry {
+                        if pair.len() >= 2 {
+                            let key = if let Value::String(s) = &pair[0] {
+                                s.clone()
+                            } else {
+                                return Err(Error::Runtime("Invalid PatternMap key".to_string()));
+                            };
+                            let val = value_to_pattern(&pair[1])?;
+                            map_patterns.push((key, val));
+                        }
+                    }
+                }
+                Ok(Pattern::Map(map_patterns))
+            } else {
+                Ok(Pattern::Map(Vec::new()))
+            }
+        }
+        _ => Err(Error::Runtime(format!("Unknown pattern type: {}", tag))),
+    }
+}
+
+fn value_to_literal_pattern(value: &Value) -> Result<Pattern> {
+    let (tag, children) = match value {
+        Value::Tagged(tag, children) => (tag.clone(), (**children).clone()),
+        _ => return Err(Error::Runtime(format!("Expected literal, got {:?}", value))),
+    };
+    match tag.as_str() {
+        "Int" if !children.is_empty() => {
+            if let Value::Int(n) = &children[0] {
+                Ok(Pattern::Int(*n))
+            } else {
+                Err(Error::Runtime("Invalid Int literal".to_string()))
+            }
+        }
+        "Bool" if !children.is_empty() => {
+            if let Value::Bool(b) = &children[0] {
+                Ok(Pattern::Int(if *b { 1 } else { 0 }))
+            } else {
+                Err(Error::Runtime("Invalid Bool literal".to_string()))
+            }
+        }
+        "Null" => Ok(Pattern::Wildcard),
+        "String" if !children.is_empty() => {
+            match &children[0] {
+                Value::String(s) => Ok(Pattern::String(s.clone())),
+                Value::List(chars) => {
+                    let s: String = chars.iter().filter_map(|v| {
+                        if let Value::String(s) = v { Some(s.as_str()) } else { None }
+                    }).collect();
+                    Ok(Pattern::String(SmolStr::new(&s)))
+                }
+                _ => Err(Error::Runtime("Invalid String literal".to_string()))
+            }
+        }
+        _ => Err(Error::Runtime(format!("Unknown literal pattern type: {}", tag))),
     }
 }
 "#);

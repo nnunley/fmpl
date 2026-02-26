@@ -91,6 +91,45 @@ const TEST_CASES: &[&str] = &[
     "let (f = \\x x * 2) f(21)",
     // NOTE: "[1, 2, 3].map(\x x * 2)" removed - 'map' is a keyword in legacy parser
     "if list.length(xs) > 0 then xs[0] else null",
+    // Batch 1: Statements & Sequences
+    "let x = 42",
+    "let x = 1 + 2",
+    "return 42",
+    "return",
+    r#"throw "error""#,
+    "yield 42",
+    "{1; 2; 3}",
+    "{let x = 1; x + 1}",
+    // Batch 2: Control Flow
+    "try { 42 } catch e { 0 }",
+    "try { 1 + 2 } catch err { err }",
+    "while true do 1",
+    "do 1 while true",
+    "match x { _ => 0 }",
+    // Batch 3: Operators & Collections
+    r#"let (f = \x x + 1) 1 |> f"#,
+    "_",
+    "[1 | [2, 3]]",
+    "<- x",
+    // Batch 4: Object System Keywords
+    "self",
+    "parent",
+    "caller",
+    "user",
+    "args",
+    "^mytag",
+    // Batch 5: Object Definitions
+    "object foo { x: 1 }",
+    "object bar { greet(): 42 }",
+    "object baz { get(x): x }",
+    // Batch 6: Grammar Definitions
+    r#"grammar G { digit = [0-9] }"#,
+    r#"let g = grammar G { digit = [0-9] }"#,
+    // Batch 7: Advanced Iteration
+    r#"fold \acc \x acc + x, 0, [1, 2, 3]"#,
+    r#"foldr \acc \x acc + x, 0, [1, 2, 3]"#,
+    r#"map \x x * 2, [1, 2, 3]"#,
+    r#"filter \x x > 1, [1, 2, 3]"#,
 ];
 
 #[test]

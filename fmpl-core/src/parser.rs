@@ -457,7 +457,12 @@ impl<'a> Parser<'a> {
                 BinOp::Mul
             } else if self.check(&Token::Slash) {
                 BinOp::Div
-            } else if self.check(&Token::Percent) {
+            } else if self.check(&Token::Percent)
+                && !self
+                    .peek_ahead(1)
+                    .map_or(false, |t| matches!(t.token, Token::LBrace))
+            {
+                // Guard: %{ is a map literal, not modulo followed by block
                 BinOp::Mod
             } else {
                 break;
@@ -1066,22 +1071,22 @@ impl<'a> Parser<'a> {
                 false
             }
 
-            // _ (wildcard): For backward compatibility with existing grammar tests,
-            // always use grammar parsing for `_ =>`. The grammar `_` pattern works
-            // correctly via PEG runtime, while Match compilation has a bug that
-            // returns null instead of the case body result.
-            // When Match compilation is fixed (Task 3.2 or later), this can be
-            // changed to trigger inline pattern parsing.
-            Token::Underscore => false,
-
-            // :Symbol patterns:
-            // - `:Symbol =>` is inline pattern (symbol match)
-            // - `:Symbol(...)` is constructor pattern - complex, use grammar for now
-            // Constructor pattern compilation isn't implemented in Match yet.
-            Token::Symbol(_) => self
+            // _ (wildcard): inline pattern — compile_match handles Wildcard directly
+            Token::Underscore => self
                 .peek_ahead(2)
                 .map(|t| matches!(t.token, Token::Arrow | Token::When))
                 .unwrap_or(false),
+
+            // :Symbol patterns:
+            // - `:Symbol =>` or `:Symbol when` is inline pattern (symbol match)
+            // - `:Symbol(...)` is constructor pattern — compile_match handles recursively
+            Token::Symbol(_) => {
+                if let Some(t2) = self.peek_ahead(2) {
+                    matches!(t2.token, Token::Arrow | Token::When | Token::LParen)
+                } else {
+                    false
+                }
+            }
 
             // Identifier is inline if followed by => or when
             Token::Ident(_) => self

@@ -1177,11 +1177,16 @@ impl Vm {
                     value,
                     tag,
                     fail_target,
+                    expected_arity,
                 } => {
                     // Use get_ref to avoid cloning when just checking the tag
                     let val_ref = frame.get_ref(value);
                     let matches = match val_ref {
-                        Value::Tagged(t, _) => *t == tag,
+                        Value::Tagged(t, children) => {
+                            *t == tag && expected_arity.map_or(true, |n| children.len() == n)
+                        }
+                        // Also match bare Value::Symbol when pattern is a bare symbol (no arity check)
+                        Value::Symbol(s) => *s == tag && expected_arity.map_or(true, |n| n == 0),
                         _ => false,
                     };
                     if !matches {

@@ -194,6 +194,7 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
                         ">=" => BinOp::GtEq,
                         "&&" => BinOp::And,
                         "||" => BinOp::Or,
+                        "|>" => BinOp::Pipe,
                         "in" => BinOp::In,
                         _ => return Err(Error::Runtime(format!("Unknown binary operator: {}", s))),
                     }
@@ -393,6 +394,12 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
                     if let Value::List(args) = &children[1] {
                         let arg_exprs: Result<Vec<Expr>> = args.iter().map(value_to_expr).collect();
                         let args: Vec<Arg> = arg_exprs?.into_iter().map(Arg::Expr).collect();
+                        // Merge Call(Spawn(x, []), args) → Spawn(x, args)
+                        if let Expr::Spawn(ref constructor, ref spawn_args) = func {
+                            if spawn_args.is_empty() {
+                                return Ok(Expr::Spawn(constructor.clone(), args));
+                            }
+                        }
                         Ok(Expr::Call(Box::new(func), args))
                     } else {
                         Err(Error::Runtime("Invalid Call args".to_string()))
@@ -405,13 +412,15 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
                 }
                 "Slice" if children.len() >= 3 => {
                     let obj = value_to_expr(&children[0])?;
-                    let start = value_to_expr(&children[1])?;
-                    let end = value_to_expr(&children[2])?;
-                    Ok(Expr::Slice(
-                        Box::new(obj),
-                        Some(Box::new(start)),
-                        Some(Box::new(end)),
-                    ))
+                    let start = match &children[1] {
+                        Value::Null => None,
+                        v => Some(Box::new(value_to_expr(v)?)),
+                    };
+                    let end = match &children[2] {
+                        Value::Null => None,
+                        v => Some(Box::new(value_to_expr(v)?)),
+                    };
+                    Ok(Expr::Slice(Box::new(obj), start, end))
                 }
                 "PropAccess" if children.len() >= 2 => {
                     let obj = value_to_expr(&children[0])?;
@@ -439,6 +448,250 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
                 _ => Err(Error::Runtime(format!("Invalid {} node", tag))),
             }
         }
+        "Return" => {
+            if !children.is_empty() {
+                let value = value_to_expr(&children[0])?;
+                Ok(Expr::Return(Some(Box::new(value))))
+            } else {
+                Ok(Expr::Return(None))
+            }
+        }
+        "Throw" => {
+            if !children.is_empty() {
+                let value = value_to_expr(&children[0])?;
+                Ok(Expr::Throw(Box::new(value)))
+            } else {
+                Err(Error::Runtime("Invalid Throw node".to_string()))
+            }
+        }
+        "Assign" => {
+            if children.len() >= 2 {
+                let target = value_to_expr(&children[0])?;
+                let value = value_to_expr(&children[1])?;
+                Ok(Expr::Assignment(Box::new(target), Box::new(value)))
+            } else {
+                Err(Error::Runtime("Invalid Assign node".to_string()))
+            }
+        }
+        "Sequence" => {
+            if let Some(Value::List(items)) = children.first() {
+                let exprs: Result<Vec<Expr>> = items.iter().map(value_to_expr).collect();
+                Ok(Expr::Sequence(exprs?))
+            } else {
+                Err(Error::Runtime("Invalid Sequence node".to_string()))
+            }
+        }
+        "Try" => {
+            if children.len() >= 3 {
+                let body = value_to_expr(&children[0])?;
+                let binding = if let Value::Symbol(s) = &children[1] {
+                    s.clone()
+                } else {
+                    return Err(Error::Runtime("Invalid Try binding".to_string()));
+                };
+                let catch_body = value_to_expr(&children[2])?;
+                Ok(Expr::TryCatch {
+                    body: Box::new(body),
+                    error_binding: binding,
+                    catch_body: Box::new(catch_body),
+                })
+            } else {
+                Err(Error::Runtime("Invalid Try node".to_string()))
+            }
+        }
+        "While" => {
+            if children.len() >= 2 {
+                let cond = value_to_expr(&children[0])?;
+                let body = value_to_expr(&children[1])?;
+                Ok(Expr::While(Box::new(cond), Box::new(body)))
+            } else {
+                Err(Error::Runtime("Invalid While node".to_string()))
+            }
+        }
+        "DoWhile" => {
+            if children.len() >= 2 {
+                let body = value_to_expr(&children[0])?;
+                let cond = value_to_expr(&children[1])?;
+                Ok(Expr::DoWhile(Box::new(body), Box::new(cond)))
+            } else {
+                Err(Error::Runtime("Invalid DoWhile node".to_string()))
+            }
+        }
+        "For" => {
+            if children.len() >= 3 {
+                let pattern = value_to_pattern(&children[0])?;
+                let iterable = value_to_expr(&children[1])?;
+                let body = value_to_expr(&children[2])?;
+                Ok(Expr::For(pattern, Box::new(iterable), Box::new(body)))
+            } else {
+                Err(Error::Runtime("Invalid For node".to_string()))
+            }
+        }
+        "Match" => {
+            if children.len() >= 2 {
+                let scrutinee = value_to_expr(&children[0])?;
+                if let Value::List(cases) = &children[1] {
+                    let match_cases = cases
+                        .iter()
+                        .map(|c| {
+                            let (tag, cs) = match c {
+                                Value::Tagged(tag, children) => (tag.as_str(), &**children),
+                                _ => return Err(Error::Runtime("Invalid MatchCase".to_string())),
+                            };
+                            if tag != "MatchCase" || cs.len() < 3 {
+                                return Err(Error::Runtime("Invalid MatchCase".to_string()));
+                            }
+                            let pattern = value_to_pattern(&cs[0])?;
+                            let guard = match &cs[1] {
+                                Value::Null => None,
+                                other => Some(Box::new(value_to_expr(other)?)),
+                            };
+                            let body = value_to_expr(&cs[2])?;
+                            Ok(MatchCase {
+                                pattern,
+                                guard,
+                                body: Box::new(body),
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+                    Ok(Expr::Match(Box::new(scrutinee), match_cases))
+                } else {
+                    Err(Error::Runtime("Invalid Match cases".to_string()))
+                }
+            } else {
+                Err(Error::Runtime("Invalid Match node".to_string()))
+            }
+        }
+        "PatternAs" => Err(Error::Runtime(
+            "PatternAs cannot be used as expression".to_string(),
+        )),
+        "AsyncCall" => {
+            if !children.is_empty() {
+                let expr = value_to_expr(&children[0])?;
+                Ok(Expr::AsyncCall(Box::new(expr)))
+            } else {
+                Err(Error::Runtime("Invalid AsyncCall node".to_string()))
+            }
+        }
+        "ListCons" => {
+            if children.len() >= 2 {
+                let head = value_to_expr(&children[0])?;
+                let tail = value_to_expr(&children[1])?;
+                Ok(Expr::ListCons(Box::new(head), Box::new(tail)))
+            } else {
+                Err(Error::Runtime("Invalid ListCons node".to_string()))
+            }
+        }
+        "Placeholder" => Ok(Expr::Placeholder),
+        "Self" => Ok(Expr::Self_),
+        "Parent" => Ok(Expr::Parent),
+        "Caller" => Ok(Expr::Caller),
+        "User" => Ok(Expr::User),
+        "Args" => Ok(Expr::Args),
+        "ObjTag" => {
+            if let Some(Value::String(name)) = children.first() {
+                Ok(Expr::ObjTag(name.clone()))
+            } else {
+                Err(Error::Runtime("Invalid ObjTag node".to_string()))
+            }
+        }
+        "Spawn" => {
+            if !children.is_empty() {
+                let constructor = value_to_expr(&children[0])?;
+                Ok(Expr::Spawn(Box::new(constructor), Vec::new()))
+            } else {
+                Err(Error::Runtime("Invalid Spawn node".to_string()))
+            }
+        }
+        "FacetAccess" => {
+            if children.len() >= 2 {
+                let obj = value_to_expr(&children[0])?;
+                // The facet is a :Symbol(name) tagged value
+                let facet = match &children[1] {
+                    Value::Symbol(s) => s.clone(),
+                    Value::Tagged(tag, inner) if tag.as_str() == "Symbol" => {
+                        if let Some(Value::String(s)) = inner.first() {
+                            SmolStr::new(s.as_str())
+                        } else if let Some(Value::Symbol(s)) = inner.first() {
+                            s.clone()
+                        } else {
+                            return Err(Error::Runtime(
+                                "Invalid FacetAccess facet name".to_string(),
+                            ));
+                        }
+                    }
+                    _ => return Err(Error::Runtime("Invalid FacetAccess facet".to_string())),
+                };
+                Ok(Expr::FacetAccess(Box::new(obj), facet))
+            } else {
+                Err(Error::Runtime("Invalid FacetAccess node".to_string()))
+            }
+        }
+        // Object(name, content_items) -> Expr::ObjectDef
+        "Object" if children.len() >= 2 => {
+            let name = match &children[0] {
+                Value::String(s) => QualifiedName::simple(SmolStr::new(s.as_str())),
+                _ => return Err(Error::Runtime("Invalid Object name".to_string())),
+            };
+
+            let content = match &children[1] {
+                Value::List(items) => items,
+                _ => return Err(Error::Runtime("Invalid Object content".to_string())),
+            };
+
+            let mut bindings = Vec::new();
+            let mut facets = Vec::new();
+
+            for item in content.iter() {
+                match item {
+                    Value::Tagged(tag, cs) => match tag.as_str() {
+                        "Section" if cs.len() >= 2 => {
+                            let vis = match &cs[0] {
+                                Value::Symbol(s) => match s.as_str() {
+                                    "public" => Visibility::Public,
+                                    "protected" => Visibility::Protected,
+                                    _ => Visibility::Private,
+                                },
+                                _ => Visibility::Private,
+                            };
+                            if let Value::List(items) = &cs[1] {
+                                for b in items.iter() {
+                                    if let Some(binding) = value_to_obj_binding(b, vis)? {
+                                        bindings.push(binding);
+                                    }
+                                }
+                            }
+                        }
+                        "FacetSection" if !cs.is_empty() => {
+                            if let Value::List(items) = &cs[0] {
+                                for f in items.iter() {
+                                    if let Some(facet) = value_to_facet_def(f)? {
+                                        facets.push(facet);
+                                    }
+                                }
+                            }
+                        }
+                        "ObjBinding" => {
+                            // Top-level binding (no visibility section) defaults to Private
+                            if let Some(binding) = value_to_obj_binding(item, Visibility::Private)?
+                            {
+                                bindings.push(binding);
+                            }
+                        }
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+
+            Ok(Expr::ObjectDef(ObjectDef {
+                name,
+                params: Vec::new(),
+                parents: Vec::new(),
+                bindings,
+                facets,
+            }))
+        }
         // AtInlineBlock(input, InlinePatternBlock(cases)) -> Expr::InlinePatternBlock
         "AtInlineBlock" if children.len() >= 2 => {
             let input = value_to_expr(&children[0])?;
@@ -461,6 +714,61 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
                 input: Box::new(input),
                 grammar: Box::new(grammar),
                 rule,
+            })
+        }
+        // MapEach(func, iterable) -> Expr::MapEach
+        "MapEach" if children.len() >= 2 => {
+            let func = value_to_expr(&children[0])?;
+            let iterable = value_to_expr(&children[1])?;
+            Ok(Expr::MapEach {
+                elem_var: SmolStr::new("_elem"),
+                iterable: Box::new(iterable),
+                body: Box::new(func),
+            })
+        }
+        // FilterExpr(pred, iterable) -> Expr::Filter
+        "FilterExpr" if children.len() >= 2 => {
+            let pred = value_to_expr(&children[0])?;
+            let iterable = value_to_expr(&children[1])?;
+            Ok(Expr::Filter {
+                elem_var: SmolStr::new("_elem"),
+                iterable: Box::new(iterable),
+                body: Box::new(pred),
+            })
+        }
+        // GrammarExtend(base, rules) -> Expr::GrammarExtend
+        "GrammarExtend" if children.len() >= 2 => {
+            let base = value_to_expr(&children[0])?;
+            let mut grammar = Grammar::new(SmolStr::new(""));
+            if let Value::List(rules) = &children[1] {
+                for rule_val in rules.iter() {
+                    if let Value::Tagged(tag, rule_children) = rule_val {
+                        if tag.as_str() == "Rule" && rule_children.len() >= 2 {
+                            let rule_name = match &rule_children[0] {
+                                Value::String(s) => SmolStr::new(s.as_str()),
+                                _ => continue,
+                            };
+                            let pattern = value_to_grammar_pattern(&rule_children[1])?;
+                            let backtracking = if rule_children.len() > 2 {
+                                matches!(&rule_children[2], Value::Bool(true))
+                            } else {
+                                false
+                            };
+                            grammar.add_rule(
+                                rule_name,
+                                Rule {
+                                    pattern,
+                                    backtracking,
+                                    ..Default::default()
+                                },
+                            );
+                        }
+                    }
+                }
+            }
+            Ok(Expr::GrammarExtend {
+                base: Box::new(base),
+                rules: grammar,
             })
         }
         // GrammarDef(name, parent, rules) -> Expr::GrammarLiteral
@@ -1095,4 +1403,92 @@ fn transform_do_to_nested_lets(stmts: &[Value]) -> Result<Expr> {
     } else {
         Ok(Expr::Sequence(exprs))
     }
+}
+
+/// Convert an :ObjBinding tagged value to a Binding
+fn value_to_obj_binding(value: &Value, visibility: Visibility) -> Result<Option<Binding>> {
+    let (tag, children) = match value {
+        Value::Tagged(tag, children) => (tag.as_str(), &**children),
+        _ => return Ok(None),
+    };
+
+    if tag != "ObjBinding" || children.len() < 4 {
+        return Ok(None);
+    }
+
+    let name = match &children[0] {
+        Value::String(s) => SmolStr::new(s.as_str()),
+        _ => return Err(Error::Runtime("Invalid ObjBinding name".to_string())),
+    };
+
+    let params = match &children[1] {
+        Value::List(ps) => ps
+            .iter()
+            .filter_map(|p| {
+                if let Value::Symbol(s) = p {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+
+    let has_params = match &children[3] {
+        Value::Bool(b) => *b,
+        _ => false,
+    };
+
+    let value_expr = value_to_expr(&children[2])?;
+
+    Ok(Some(Binding {
+        name,
+        params,
+        has_params,
+        value: value_expr,
+        visibility,
+    }))
+}
+
+/// Convert a :FacetDef tagged value to a FacetDef
+fn value_to_facet_def(value: &Value) -> Result<Option<FacetDef>> {
+    let (tag, children) = match value {
+        Value::Tagged(tag, children) => (tag.as_str(), &**children),
+        _ => return Ok(None),
+    };
+
+    if tag != "FacetDef" || children.len() < 3 {
+        return Ok(None);
+    }
+
+    let name = match &children[0] {
+        Value::String(s) => SmolStr::new(s.as_str()),
+        _ => return Err(Error::Runtime("Invalid FacetDef name".to_string())),
+    };
+
+    let members = match &children[1] {
+        Value::List(ms) => ms
+            .iter()
+            .filter_map(|m| {
+                if let Value::String(s) = m {
+                    Some(SmolStr::new(s.as_str()))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+
+    let terminal = match &children[2] {
+        Value::Bool(b) => *b,
+        _ => false,
+    };
+
+    Ok(Some(FacetDef {
+        name,
+        members,
+        terminal,
+    }))
 }

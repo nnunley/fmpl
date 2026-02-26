@@ -40,16 +40,33 @@ let fold_index = lambda(base, indices)
 
 -- Fold postfix operations into nested AST nodes
 -- Supported operations:
---   [:index, idx]      => :Index(acc, idx)
---   [:call, args]      => :Call(acc, args)
---   [:prop, name]      => :Prop(acc, name)
+--   [:index, idx]         => :Index(acc, idx)
+--   [:call, args]         => :Call(acc, args)
+--   [:prop, name]         => :Prop(acc, name)
 --   [:method, name, args] => :MethodCall(acc, name, args)
+--   [:slice, start, end]  => :Slice(acc, start, end)
+--   [:facet, facet_sym]   => :FacetAccess(acc, facet_sym)
 let fold_postfix = lambda(base, ops)
     reduce(\acc \op
         if op[0] == :index then :Index(acc, op[1])
         else if op[0] == :call then :Call(acc, op[1])
         else if op[0] == :prop then :Prop(acc, op[1])
+        else if op[0] == :slice then :Slice(acc, op[1], op[2])
+        else if op[0] == :facet then :FacetAccess(acc, op[1])
         else :MethodCall(acc, op[1], op[2]), base, ops)
+
+-- Fold pipe and @ operations into AST nodes
+-- Supported operations:
+--   [:pipe, right]                  => :Binary("|>", acc, right)
+--   [:at_inline, cases]             => :AtInlineBlock(acc, :InlinePatternBlock(cases))
+--   [:at_grammar, grammar, rule]    => :AtGrammarApply(acc, grammar, rule)
+--   [:extend, rules]                => :GrammarExtend(acc, rules)
+let fold_pipe_at = lambda(first, ops)
+    reduce(\acc \op
+        if op[0] == :pipe then :Binary(string.to_symbol("|>"), acc, op[1])
+        else if op[0] == :at_inline then :AtInlineBlock(acc, :InlinePatternBlock(op[1]))
+        else if op[0] == :extend then :GrammarExtend(acc, op[1])
+        else :AtGrammarApply(acc, op[1], op[2]), first, ops)
 
 -- Transform a binary operator symbol to its IR node constructor
 -- binary_op_to_ir(:+, l_ir, r_ir) => :Add(l_ir, r_ir)

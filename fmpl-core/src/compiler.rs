@@ -363,11 +363,13 @@ pub enum Instruction {
         source: InstrIndex,
         index: usize,
     },
-    /// Check if value is a Tagged with expected tag, jump to fail_target if not
+    /// Check if value is a Tagged with expected tag, jump to fail_target if not.
+    /// If expected_arity is Some(n), also check that the tagged value has exactly n children.
     MatchTag {
         value: InstrIndex,
         tag: SmolStr,
         fail_target: InstrIndex,
+        expected_arity: Option<usize>,
     },
 
     // === Grammar Pattern Instructions (for PEG pattern matching) ===
@@ -639,6 +641,7 @@ impl CompiledCode {
             Instruction::JumpIfTrue { target: t, .. } => *t = target,
             Instruction::JumpIfNull { target: t, .. } => *t = target,
             Instruction::MatchPattern { fail_target: t, .. } => *t = target,
+            Instruction::MatchTag { fail_target: t, .. } => *t = target,
             Instruction::PushHandler { catch_target: t } => *t = target,
             _ => panic!("not a jump instruction at index {}", idx.0),
         }
@@ -2405,26 +2408,45 @@ impl Compiler {
         let mut end_jumps = Vec::new();
 
         for case in cases {
-            // TODO: proper pattern compilation with failure jumps
-            // For now, just support simple variable patterns
-            match &case.pattern {
-                Pattern::Var(name) => {
-                    self.code.emit(Instruction::PushScope);
-                    self.bound_vars.insert(name.clone());
-                    self.code.emit(Instruction::Bind {
-                        name: name.clone(),
+            // Emit pattern check before PushScope so failed matches don't need PopScope.
+            // match_tag_jump holds the MatchTag instruction index to patch later.
+            let match_tag_jump = match &case.pattern {
+                Pattern::Symbol(tag) => {
+                    // Bare symbol: :Tag matches any Tagged with that tag name
+                    Some(self.code.emit(Instruction::MatchTag {
                         value: scrutinee_idx,
-                    });
+                        tag: tag.clone(),
+                        fail_target: InstrIndex(0), // placeholder — patched to next case
+                        expected_arity: None,
+                    }))
                 }
-                Pattern::Wildcard => {
-                    self.code.emit(Instruction::PushScope);
+                Pattern::Constructor(tag, children) => {
+                    // Constructor: :Tag(a, b) matches Tagged with exact arity
+                    Some(self.code.emit(Instruction::MatchTag {
+                        value: scrutinee_idx,
+                        tag: tag.clone(),
+                        fail_target: InstrIndex(0), // placeholder — patched to next case
+                        expected_arity: Some(children.len()),
+                    }))
                 }
+                // Var and Wildcard always match — no check needed
+                Pattern::Var(_) | Pattern::Wildcard => None,
                 _ => {
-                    return Err(Error::Compiler(
-                        "complex patterns not yet implemented".to_string(),
-                    ));
+                    return Err(Error::Compiler(format!(
+                        "unsupported pattern in match expression: {:?}",
+                        case.pattern
+                    )));
                 }
-            }
+            };
+
+            // Now push scope and bind variables
+            self.code.emit(Instruction::PushScope);
+
+            // Emit bindings and nested pattern checks for this case.
+            // fail_jumps collects all MatchTag instructions that need patching
+            // to the next case's start address on failure.
+            let mut fail_jumps: Vec<InstrIndex> = Vec::new();
+            self.compile_match_bindings(scrutinee_idx, &case.pattern, &mut fail_jumps)?;
 
             // Compile guard condition if present
             let skip_jump = if let Some(guard) = &case.guard {
@@ -2450,12 +2472,21 @@ impl Compiler {
                 target: InstrIndex(0), // placeholder
             }));
 
-            // Patch guard jump to skip to after the jump (next case or end)
+            // Patch guard jump: on guard failure, pop scope and fall through to next case
             if let Some(skip) = skip_jump {
                 let skip_target = self.code.next_index();
                 self.code.patch_jump_target(skip, skip_target);
                 // Need to pop scope for the failed guard case too
                 self.code.emit(Instruction::PopScope);
+            }
+
+            // Patch all fail jumps (top-level MatchTag + nested) to the next case start
+            if let Some(tag_jump) = match_tag_jump {
+                fail_jumps.insert(0, tag_jump);
+            }
+            let next_case_target = self.code.next_index();
+            for fj in &fail_jumps {
+                self.code.patch_jump_target(*fj, next_case_target);
             }
         }
 
@@ -2473,6 +2504,70 @@ impl Compiler {
 
         // Load the result from temp var - this is the match expression's value
         Ok(self.code.emit(Instruction::LoadVar(result_var)))
+    }
+
+    /// Emit bindings for a match case pattern, recursively handling constructors.
+    /// `source` is the InstrIndex of the value being matched against this pattern.
+    /// `fail_jumps` collects MatchTag instructions that should jump to the next case on failure.
+    fn compile_match_bindings(
+        &mut self,
+        source: InstrIndex,
+        pattern: &Pattern,
+        fail_jumps: &mut Vec<InstrIndex>,
+    ) -> Result<()> {
+        match pattern {
+            Pattern::Var(name) => {
+                self.bound_vars.insert(name.clone());
+                self.code.emit(Instruction::Bind {
+                    name: name.clone(),
+                    value: source,
+                });
+            }
+            Pattern::Wildcard | Pattern::Symbol(_) => {
+                // No bindings needed (Symbol check already done by MatchTag)
+            }
+            Pattern::Constructor(_, children) => {
+                for (i, child) in children.iter().enumerate() {
+                    let extracted = self
+                        .code
+                        .emit(Instruction::ExtractTaggedChild { source, index: i });
+                    match child {
+                        Pattern::Constructor(tag, grandchildren) => {
+                            // Nested constructor: emit MatchTag check, then recurse
+                            let nested_check = self.code.emit(Instruction::MatchTag {
+                                value: extracted,
+                                tag: tag.clone(),
+                                fail_target: InstrIndex(0), // patched by caller
+                                expected_arity: Some(grandchildren.len()),
+                            });
+                            fail_jumps.push(nested_check);
+                            self.compile_match_bindings(extracted, child, fail_jumps)?;
+                        }
+                        Pattern::Symbol(tag) => {
+                            // Nested bare symbol: emit MatchTag check
+                            let nested_check = self.code.emit(Instruction::MatchTag {
+                                value: extracted,
+                                tag: tag.clone(),
+                                fail_target: InstrIndex(0), // patched by caller
+                                expected_arity: None,
+                            });
+                            fail_jumps.push(nested_check);
+                        }
+                        _ => {
+                            // Var, Wildcard, etc. — recurse for uniform handling
+                            self.compile_match_bindings(extracted, child, fail_jumps)?;
+                        }
+                    }
+                }
+            }
+            _ => {
+                return Err(Error::Compiler(format!(
+                    "unsupported pattern in match binding: {:?}",
+                    pattern
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Compile try-catch.

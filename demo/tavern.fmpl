@@ -1,0 +1,74 @@
+// ============================================================================
+// The Rusty Flagon — an FMPL end-to-end demo
+//
+// Demonstrates: objects, facets, grammars, pattern matching, tuple space,
+//               multi-principal interaction
+//
+// Load from REPL:  io::load("demo/tavern.fmpl")
+// ============================================================================
+
+// --- 1. Tuple space: room state -------------------------------------------
+
+let world = tuplespace.new();
+world.out(:room, %{name: "The Rusty Flagon", desc: "A cozy tavern with a roaring fire"});
+world.out(:menu, %{ale: 3, mead: 5, stew: 7})
+
+// --- 2. Objects with facets -----------------------------------------------
+
+object barkeep {
+  .#facets
+    customer: [greet, menu, order]
+    staff:    [restock, stock_count]
+  .#public
+  init(): self.stock = 10
+
+  greet(name): "Welcome to The Rusty Flagon, " + name + "!"
+  menu(): "We serve: ale (3g), mead (5g), stew (7g)"
+  order(item): "Here is your " + item + ". Enjoy!"
+  restock(n): self.stock = self.stock + n
+  stock_count(): self.stock
+  stock: 10
+}
+
+// --- 3. Grammar: parse player commands ------------------------------------
+
+let cmd_grammar = grammar CmdGrammar {
+  command = look | talk | order
+  look    = "look" => :Look
+  talk    = "talk to " name:n => :Talk(n)
+  order   = "order " item:i => :Order(i)
+  name    = [a-zA-Z ]+:cs => cs
+  item    = [a-z]+:cs => cs
+}
+
+// --- 4. Pattern dispatch: route parsed commands ---------------------------
+
+let dispatch = \cmd cmd @ {
+  :Look          => world.rd(:room).data.desc
+  :Talk(npc)     => barkeep.as(:customer).greet(npc)
+  :Order(item)   => barkeep.as(:customer).order(item)
+  _              => "You can't do that."
+}
+
+// --- 5. Parse commands, then dispatch them ---------------------------------
+
+let look_cmd  = "look" @ cmd_grammar.command
+let talk_cmd  = "talk to Traveler" @ cmd_grammar.command
+let order_cmd = "order ale" @ cmd_grammar.command
+
+let look_result  = dispatch(look_cmd)
+let talk_result  = dispatch(talk_cmd)
+let order_result = dispatch(order_cmd)
+let menu_result  = barkeep.as(:customer).menu()
+
+// Facet denial is tested in fmpl-core/tests/tavern_demo.rs
+
+// --- 6. Return summary map ------------------------------------------------
+
+let result = %{
+  room:    look_result,
+  greet:   talk_result,
+  order:   order_result,
+  menu:    menu_result
+}
+result

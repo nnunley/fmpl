@@ -58,7 +58,11 @@ let fmpl_parser = grammar fmpl_parser {
 
     -- Keywords that cannot be used as identifiers
     -- Use negative lookahead (~) to prevent matching keywords
-    keyword = ("if" | "then" | "else" | "let" | "true" | "false" | "null" | "lambda") ~ident_rest
+    keyword = ("if" | "then" | "else" | "let" | "true" | "false" | "null" | "lambda"
+              | "return" | "yield" | "throw" | "try" | "catch" | "while" | "do" | "for" | "in"
+              | "match" | "when" | "as" | "spawn" | "object" | "grammar" | "stream"
+              | "self" | "parent" | "caller" | "user" | "args"
+              | "fold" | "foldr" | "map" | "filter") ~ident_rest
 
     -- ident returns a string (used for map keys, etc.)
     -- Exclude keywords using negative lookahead
@@ -89,8 +93,9 @@ let fmpl_parser = grammar fmpl_parser {
     list_item_rest = "," sp expr:e => e
     list_items = expr:first list_item_rest*:rest => prepend(first, rest)
     list_empty = "[" sp "]" sp => :List([])
+    list_cons = "[" sp expr:head "|" ~">" sp expr:tail "]" sp => :ListCons(head, tail)
     list_nonempty = "[" sp list_items:items "]" sp => :List(items)
-    list_lit = list_empty | list_nonempty
+    list_lit = list_empty | list_cons | list_nonempty
 
     arrow_sep = "=" ">"
     map_entry_colon = ident:k ":" sp expr:v => [k, v]
@@ -107,12 +112,78 @@ let fmpl_parser = grammar fmpl_parser {
     param_list_rest = "," sp sym_ident:p => p
     param_list = sym_ident:first param_list_rest*:rest => prepend(first, rest)
     short_lambda = "\\" sp sym_ident:param short_lambda:body => :ShortLambda(param, body)
-                 | "\\" sp sym_ident:param or_expr:body => :ShortLambda(param, body)
+                 | "\\" sp sym_ident:param expr:body => :ShortLambda(param, body)
     full_lambda = "lambda" sp "(" sp param_list:params ")" sp expr:body => :Lambda(params, body)
                 | "lambda" sp "(" sp ")" sp expr:body => :Lambda([], body)
 
-    primary = paren | list_lit | map_lit | float_lit | int | bool | null_lit | string_lit | tagged | symbol | var
+    placeholder = "_" ~ident_rest sp => :Placeholder()
 
+    -- Object system keywords
+    self_expr = "self" ~ident_rest sp => :Self()
+    parent_expr = "parent" ~ident_rest sp => :Parent()
+    caller_expr = "caller" ~ident_rest sp => :Caller()
+    user_expr = "user" ~ident_rest sp => :User()
+    args_expr = "args" ~ident_rest sp => :Args()
+
+    -- Object tag: ^name
+    obj_tag = "^" ident:name sp => :ObjTag(name)
+
+    -- Spawn: spawn expr (args)
+    spawn_expr = "spawn" ~ident_rest sp primary:constructor => :Spawn(constructor)
+
+    -- Object definitions
+    -- Visibility markers: .#public, .#private, .#protected, .#facets
+    vis_private = "." "#" "p" "r" "i" "v" "a" "t" "e" sp
+    vis_public = "." "#" "p" "u" "b" "l" "i" "c" sp
+    vis_protected = "." "#" "p" "r" "o" "t" "e" "c" "t" "e" "d" sp
+    vis_facets = "." "#" "f" "a" "c" "e" "t" "s" sp
+
+    -- Object binding: name(params): expr or name: expr
+    obj_param_rest = "," sp sym_ident:p => p
+    obj_params = sym_ident:first obj_param_rest*:rest => prepend(first, rest)
+    obj_binding_with_params = ident:name "(" sp obj_params:params ")" sp ":" sp expr:value
+                            => :ObjBinding(name, params, value, true)
+                            | ident:name "(" sp ")" sp ":" sp expr:value
+                            => :ObjBinding(name, [], value, true)
+    obj_binding_simple = ident:name ":" sp expr:value
+                       => :ObjBinding(name, [], value, false)
+    obj_binding = obj_binding_with_params | obj_binding_simple
+
+    -- Facet definition: name: [member1, member2] or name!: [member1, member2]
+    facet_member_rest = "," sp ident:m => m
+    facet_members = ident:first facet_member_rest*:rest => prepend(first, rest)
+    facet_terminal = "!" => true | => false
+    facet_def = ident:name facet_terminal:term ":" sp "[" sp facet_members:members "]" sp
+              => :FacetDef(name, members, term)
+
+    -- Object body items: visibility sections and bindings
+    obj_body_sep = (";" sp | sp)
+    obj_binding_sep = obj_binding:b obj_body_sep => b
+    facet_def_sep = facet_def:f obj_body_sep => f
+    obj_section_private = vis_private obj_binding_sep*:items => :Section(:private, items)
+    obj_section_public = vis_public obj_binding_sep*:items => :Section(:public, items)
+    obj_section_protected = vis_protected obj_binding_sep*:items => :Section(:protected, items)
+    obj_section_facets = vis_facets facet_def_sep*:items => :FacetSection(items)
+    obj_body_item = obj_section_private | obj_section_public | obj_section_protected | obj_section_facets | obj_binding
+    obj_body_item_sep = obj_body_item:i obj_body_sep => i
+    obj_body = obj_body_item_sep*:items => items
+
+    -- Object name: ident or ^tag
+    obj_name = "^" ident:name sp => name | ident:name sp => name
+
+    -- Complete object definition
+    obj_def = "object" ~ident_rest sp obj_name:name "{" sp obj_body:content "}" sp
+            => :Object(name, content)
+
+    primary = paren | sequence | list_lit | map_lit | float_lit | int | bool | null_lit | string_lit | tagged | symbol
+            | self_expr | parent_expr | caller_expr | user_expr | args_expr | obj_tag | spawn_expr
+            | named_grammar | grammar_literal | placeholder | var
+
+    -- Slice: [start..end], [..end], [start..], [..] — try before plain index
+    slice_suffix = "[" sp "." "." sp expr:end "]" sp => [:slice, null, end]
+                 | "[" sp "." "." sp "]" sp => [:slice, null, null]
+                 | "[" sp expr:start "." "." sp expr:end "]" sp => [:slice, start, end]
+                 | "[" sp expr:start "." "." sp "]" sp => [:slice, start, null]
     index_suffix = "[" sp expr:idx "]" sp => [:index, idx]
 
     call_arg_rest = "," sp expr:e => e
@@ -124,16 +195,19 @@ let fmpl_parser = grammar fmpl_parser {
     sym_prop_name = ident_start:first ident_rest*:rest => symbol(join(prepend(first, rest)))
     method_suffix = "." sym_prop_name:name "(" sp call_args:a ")" sp => [:method, name, a]
                   | "." sym_prop_name:name "(" sp ")" sp => [:method, name, []]
+    -- Facet access: .as(:facet)
+    facet_suffix = "." "a" "s" sp "(" sp symbol:facet ")" sp => [:facet, facet]
     prop_suffix = "." sym_prop_name:name sp => [:prop, name]
 
-    postfix_op = index_suffix | call_suffix | method_suffix | prop_suffix
+    postfix_op = slice_suffix | index_suffix | call_suffix | facet_suffix | method_suffix | prop_suffix
     postfix = primary:base postfix_op*:ops => fold_postfix(base, ops)
 
     unary = "-" sp unary:e => :Unary(:-, e)
           | "!" sp unary:e => :Unary(:!, e)
+          | "<" "-" sp unary:e => :AsyncCall(e)
           | postfix
 
-    mult_op = "*" sp => :* | "/" sp =>:/ | "%" sp => :%
+    mult_op = "*" sp => :* | "/" sp =>:/ | "%" ~"{" sp => :%
     add_op = "+" sp => :+ | "-" sp => :-
 
     mult = unary:first (mult_op unary)*:rest => fold_binary(first, rest)
@@ -143,7 +217,7 @@ let fmpl_parser = grammar fmpl_parser {
            | "!=" sp => :!=
            | "<=" sp => :<=
            | ">=" sp => :>=
-           | "<" sp => :<
+           | "<" ~"-" sp => :<
            | ">" sp => :>
     cmp = add:first (cmp_op add)*:rest => fold_binary(first, rest)
 
@@ -153,15 +227,179 @@ let fmpl_parser = grammar fmpl_parser {
     or_op = "||" sp => :||
     or_expr = and_expr:first (or_op and_expr)*:rest => fold_binary(first, rest)
 
-    if_expr = "if" sp or_expr:cond "then" sp or_expr:then_branch "else" sp or_expr:else_branch
+    -- Pipe operator: |> (lower precedence than or_expr)
+    pipe_op = "|" ">" sp => symbol("|>")
+    -- @ operator: grammar apply or inline pattern block
+    at_grammar_suffix = "@" sp or_expr:grammar "." ident:rule sp => [:at_grammar, grammar, symbol(rule)]
+    at_inline_suffix = "@" sp "{" sp match_cases:cases "}" sp => [:at_inline, cases]
+    -- Grammar extension: <: { rules }
+    grammar_extend_suffix = "<" ":" sp "{" sp grammar_rules:rules "}" sp => [:extend, rules]
+    pipe_at_suffix = pipe_op or_expr:right => [:pipe, right]
+                   | at_inline_suffix
+                   | at_grammar_suffix
+                   | grammar_extend_suffix
+    pipe_expr = or_expr:first pipe_at_suffix*:ops => fold_pipe_at(first, ops)
+
+    if_expr = "if" sp pipe_expr:cond "then" sp expr:then_branch "else" sp expr:else_branch
             => :If(cond, then_branch, else_branch)
 
-    binding = sym_ident:name "=" sp or_expr:value => :Binding(name, value)
+    binding = sym_ident:name "=" sp expr:value => :Binding(name, value)
     binding_rest = "," sp binding:b => b
     bindings = binding:first binding_rest*:rest => prepend(first, rest)
-    let_expr = "let" sp "(" sp bindings:bs ")" sp or_expr:body => :Let(bs, body)
+    let_expr = "let" sp "(" sp bindings:bs ")" sp expr:body => :Let(bs, body)
 
-    -- Expression is the top level that includes if/let/lambdas
-    expr = if_expr | let_expr | short_lambda | full_lambda | or_expr
-    code = sp expr:e sp => e
+    -- Statement-level let: let name = expr (no parens, no body)
+    let_stmt = "let" sp ~"(" sym_ident:name "=" sp expr:value => :LetSimple(:Binding(name, value))
+
+    -- Return, yield, throw
+    return_void = "return" ~ident_rest sp ~"(" ~ident_start ~digit_char ~"\"" ~"[" ~"%" ~"\\" ~"!" ~"-" => :Return()
+    return_with_value = "return" sp expr:value => :Return(value)
+    return_expr = return_void | return_with_value
+    yield_expr = "yield" sp expr:value => :Yield(value)
+    throw_expr = "throw" sp expr:value => :Throw(value)
+
+    -- Sequence block: { expr; expr; ... }
+    seq_semi = ";" sp
+    seq_item = expr
+    seq_rest = seq_semi seq_item:e => e
+    sequence = "{" sp seq_item:first seq_rest*:rest "}" sp => :Sequence(prepend(first, rest))
+             | "{" sp "}" sp => :Sequence([])
+
+    -- Try/catch
+    try_body_item = expr
+    try_body_rest = seq_semi try_body_item:e => e
+    try_body = try_body_item:first try_body_rest*:rest => if length(rest) == 0 then first else :Sequence(prepend(first, rest))
+    catch_body = try_body
+    try_catch = "try" sp "{" sp try_body:body "}" sp "catch" sp sym_ident:binding "{" sp catch_body:handler "}" sp
+              => :Try(body, binding, handler)
+
+    -- While loop
+    while_loop = "while" sp expr:cond "do" ~ident_rest sp expr:body => :While(cond, body)
+
+    -- Do-while loop
+    do_while = "do" sp expr:body "while" ~ident_rest sp expr:cond => :DoWhile(body, cond)
+
+    -- For loop
+    for_loop = "for" sp pattern:pat "in" ~ident_rest sp expr:iter "do" ~ident_rest sp expr:body => :For(pat, iter, body)
+             | "for" sp pattern:pat "in" ~ident_rest sp expr:iter "{" sp expr:body "}" sp => :For(pat, iter, body)
+
+    -- Patterns for match/for/let destructuring
+    pat_wildcard = "_" ~ident_rest sp => :PatternWildcard()
+    pat_var = ~keyword sym_ident:name => :PatternVar(name)
+    pat_int = digit_val+:ds ~ident_rest sp => :PatternLiteral(:Int(reduce(\acc \d acc * 10 + d, 0, ds)))
+    pat_neg_int = "-" sp digit_val+:ds ~ident_rest sp => :PatternLiteral(:Int(0 - reduce(\acc \d acc * 10 + d, 0, ds)))
+    pat_string = "\"" string_char*:cs "\"" sp => :PatternLiteral(:String(cs))
+    pat_constructor = ":" tag_name:tag "(" sp pat_args:pats ")" sp => :PatternTagged(tag, pats)
+    pat_symbol = ":" sym_name:name sp => :PatternLiteral(:Symbol(name))
+    pat_arg_rest = "," sp pattern:p => p
+    pat_args = pattern:first pat_arg_rest*:rest => prepend(first, rest)
+             | => []
+    pat_list = "[" sp pat_args:pats "]" sp => :PatternList(pats)
+    pat_map_entry = ident:k ":" sp pattern:v => [k, v]
+    pat_map_entry_rest = "," sp pat_map_entry:e => e
+    pat_map_entries = pat_map_entry:first pat_map_entry_rest*:rest => prepend(first, rest)
+    pat_map = "%" "{" sp pat_map_entries:entries "}" sp => :PatternMap(entries)
+            | "%" "{" sp "}" sp => :PatternMap([])
+    pat_primary = pat_wildcard | pat_constructor | pat_symbol | pat_neg_int | pat_int | pat_string | pat_list | pat_map | pat_var
+    pat_as = pat_primary:p "as" ~ident_rest sp sym_ident:name => :PatternAs(p, name)
+    pattern = pat_as | pat_primary
+
+    -- Match expression
+    match_case_guard = "when" sp or_expr:guard => guard
+    match_case = pattern:pat match_case_guard?:guard "=>" sp expr:body => :MatchCase(pat, guard, body)
+    match_case_sep = seq_semi | sp
+    match_case_rest = match_case_sep match_case:c => c
+    match_cases = match_case:first match_case_rest*:rest => prepend(first, rest)
+    match_expr = "match" sp expr:scrutinee "{" sp match_cases:cases "}" sp => :Match(scrutinee, cases)
+
+    -- Advanced iteration: fold, foldr, map, filter
+    -- fold func, init, iter
+    fold_expr = "fold" ~ident_rest sp expr:func "," sp expr:init "," sp expr:iter => :Fold(func, init, iter)
+    -- foldr func, init, iter
+    foldr_expr = "foldr" ~ident_rest sp expr:func "," sp expr:init "," sp expr:iter => :Foldr(func, init, iter)
+    -- map func, iter  OR  map func in iter
+    map_sep = "," sp | "in" ~ident_rest sp
+    map_expr = "map" ~ident_rest sp expr:func map_sep expr:iter => :MapEach(func, iter)
+    -- filter pred, iter  OR  filter pred in iter
+    filter_expr = "filter" ~ident_rest sp expr:pred map_sep expr:iter => :FilterExpr(pred, iter)
+
+    -- PEG meta-grammar: rules for parsing grammar definitions within FMPL source
+    -- These produce tagged values that value_to_grammar_pattern() converts to GrammarPattern
+
+    -- PEG string literal: "hello"
+    peg_string_char = "\\" escape_char:c => c | [^"\\]:c => c
+    peg_string = "\"" peg_string_char*:cs "\"" sp => :StringLit(join(cs))
+
+    -- PEG character class: [a-z], [^0-9], [a-zA-Z_]
+    peg_char_range = [^\\\]]:from "-" [^\\\]]:to => :Range(from, to)
+                   | "\\" .:c => :Char(c)
+                   | [^\\\]]:c => :Char(c)
+    peg_char_class = "[" "^" peg_char_range*:ranges "]" sp => :NegatedClass(ranges)
+                   | "[" peg_char_range*:ranges "]" sp => :Class(ranges)
+
+    -- PEG rule reference and any
+    peg_rule_ref = ~keyword ident:name sp => :RuleRef(name)
+    peg_any = "." sp => :Any()
+
+    -- PEG primary: string, char class, any, grouping, rule ref
+    peg_primary = peg_string | peg_char_class | peg_any
+                | "(" sp peg_choice:p ")" sp => p
+                | peg_rule_ref
+
+    -- PEG suffix: repetition (*, +, ?)
+    peg_suffix = peg_primary:p "*" sp => :Star(p)
+               | peg_primary:p "+" sp => :Plus(p)
+               | peg_primary:p "?" sp => :Optional(p)
+               | peg_primary
+
+    -- PEG prefix: negative lookahead (~), positive lookahead (&)
+    peg_prefix = "~" sp peg_suffix:p => :Not(p)
+               | "&" sp peg_suffix:p => :Lookahead(p)
+               | peg_suffix
+
+    -- PEG bind: pattern:name or pattern:?name (choice point binding)
+    peg_bind = peg_prefix:p ":" "?" sym_ident:name sp => :BindChoice(p, name)
+             | peg_prefix:p ":" sym_ident:name sp => :Bind(p, name)
+             | peg_prefix
+
+    -- PEG sequence: space-separated patterns
+    peg_seq_item = peg_bind
+    peg_seq = peg_seq_item:first peg_seq_item+:rest => :Seq(prepend(first, rest))
+            | peg_seq_item
+
+    -- PEG action: pattern => expr (reuse FMPL expr for action)
+    peg_action = peg_seq:p "=" ">" sp expr:action => :Action(p, action)
+               | peg_seq
+
+    -- PEG choice: alternatives separated by |
+    peg_choice_rest = "|" sp peg_action:alt => alt
+    peg_choice = peg_action:first peg_choice_rest+:rest => :Choice(prepend(first, rest))
+               | peg_action
+
+    -- Grammar rule: name = pattern
+    grammar_rule = ident:name sp "=" sp peg_choice:pat sp => :Rule(name, pat, false)
+
+    -- Grammar body: list of rules
+    grammar_rules = (grammar_rule)*:rules => rules
+
+    -- Named grammar: grammar Name { rules }
+    named_grammar = "grammar" ~ident_rest sp ident:name sp "{" sp grammar_rules:rules "}" sp
+                  => :GrammarDef(name, null, rules)
+
+    -- Anonymous grammar: grammar { rules }
+    grammar_literal = "grammar" ~ident_rest sp "{" sp grammar_rules:rules "}" sp
+                    => :GrammarDef("", null, rules)
+
+    -- Expression is the top level that includes if/let/lambdas/statements
+    expr = obj_def | if_expr | let_expr | let_stmt | short_lambda | full_lambda
+         | return_expr | yield_expr | throw_expr
+         | try_catch | while_loop | do_while | for_loop | match_expr
+         | fold_expr | foldr_expr | map_expr | filter_expr
+         | pipe_expr
+
+    -- Top-level code: semicolon-separated statements
+    stmt = expr
+    stmt_rest = ";" sp stmt:s => s
+    stmts = stmt:first stmt_rest*:rest => prepend(first, rest)
+    code = sp stmts:ss sp => if length(ss) == 1 then ss[0] else :Do(ss)
 }
