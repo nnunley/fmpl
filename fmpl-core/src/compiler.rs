@@ -1411,7 +1411,11 @@ impl Compiler {
                         || method == "observe"
                         || method == "fail"
                         || method == "match_char"
-                        || method == "match_class")
+                        || method == "match_class"
+                        || method == "choice"
+                        || method == "star"
+                        || method == "plus"
+                        || method == "seq")
                 {
                     let builtin_idx = self
                         .code

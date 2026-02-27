@@ -3259,18 +3259,34 @@ impl Vm {
     /// lambdas during method dispatch.
     fn call_value_and_wait(&mut self, func: Value, args: Vec<Value>) -> Result<Value> {
         let base_depth = self.frames.len();
+        // Temporarily save and clear exception handlers so that errors inside
+        // the called lambda propagate to the caller (e.g., seq/choice/star/plus)
+        // rather than being caught by outer try/catch blocks.
+        let saved_handlers = std::mem::take(&mut self.exception_handlers);
         self.call_value(func, args)?;
-        self.execute_with_depth(base_depth)?;
-
-        if self.frames.len() > base_depth {
-            // Frame still on stack (no explicit Return instruction) — pop and get result
-            let result = self.frames.last().unwrap().result();
-            self.frames.pop();
-            Ok(result)
-        } else {
-            // Frame was popped by Return instruction; result was set on caller frame
-            let frame = self.frames.last().unwrap();
-            Ok(frame.result())
+        let result = self.execute_with_depth(base_depth);
+        // Restore exception handlers
+        self.exception_handlers = saved_handlers;
+        match result {
+            Ok(()) => {
+                if self.frames.len() > base_depth {
+                    // Frame still on stack (no explicit Return instruction) — pop and get result
+                    let result = self.frames.last().unwrap().result();
+                    self.frames.pop();
+                    Ok(result)
+                } else {
+                    // Frame was popped by Return instruction; result was set on caller frame
+                    let frame = self.frames.last().unwrap();
+                    Ok(frame.result())
+                }
+            }
+            Err(e) => {
+                // Clean up any orphaned frames from the failed call
+                while self.frames.len() > base_depth {
+                    self.frames.pop();
+                }
+                Err(e)
+            }
         }
     }
 
@@ -3769,6 +3785,175 @@ impl Vm {
                         });
                     }
                 }
+            }
+            ("__builtin_stream", "choice") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime(
+                        "choice requires (stream, alternatives)".into(),
+                    ));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => return Err(Error::Runtime("choice: first arg must be a stream".into())),
+                };
+                let alternatives = match &args[1] {
+                    Value::List(items) => (**items).clone(),
+                    _ => return Err(Error::Runtime("choice: second arg must be a list".into())),
+                };
+
+                let start_pos = {
+                    let stream = ps.lock().unwrap();
+                    stream.position()
+                };
+
+                for alt in &alternatives {
+                    // Restore to start before each attempt
+                    {
+                        let mut stream = ps.lock().unwrap();
+                        stream.restore(&crate::parse_stream::Checkpoint {
+                            position: start_pos,
+                        });
+                    }
+                    let stream_val = Value::ParseStream(ps.clone());
+                    match self.call_value_and_wait(alt.clone(), vec![stream_val]) {
+                        Ok(result) => return Ok(result),
+                        Err(Error::ParseFailed { .. }) => continue,
+                        Err(e) => return Err(e),
+                    }
+                }
+
+                // All alternatives failed — restore and fail
+                {
+                    let mut stream = ps.lock().unwrap();
+                    stream.restore(&crate::parse_stream::Checkpoint {
+                        position: start_pos,
+                    });
+                }
+                Err(Error::ParseFailed {
+                    position: start_pos,
+                    message: "all alternatives failed".into(),
+                })
+            }
+            ("__builtin_stream", "star") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime("star requires (stream, rule)".into()));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => return Err(Error::Runtime("star: first arg must be a stream".into())),
+                };
+                let rule = args[1].clone();
+
+                let mut results = Vec::new();
+                loop {
+                    let position = {
+                        let stream = ps.lock().unwrap();
+                        stream.position()
+                    };
+                    let stream_val = Value::ParseStream(ps.clone());
+                    match self.call_value_and_wait(rule.clone(), vec![stream_val]) {
+                        Ok(result) => {
+                            let new_pos = {
+                                let stream = ps.lock().unwrap();
+                                stream.position()
+                            };
+                            results.push(result);
+                            if new_pos == position {
+                                break; // Zero-length match, prevent infinite loop
+                            }
+                        }
+                        Err(Error::ParseFailed { .. }) => {
+                            let mut stream = ps.lock().unwrap();
+                            stream.restore(&crate::parse_stream::Checkpoint { position });
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(Value::List(Arc::new(results)))
+            }
+            ("__builtin_stream", "plus") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime("plus requires (stream, rule)".into()));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => return Err(Error::Runtime("plus: first arg must be a stream".into())),
+                };
+                let rule = args[1].clone();
+
+                let mut results = Vec::new();
+                loop {
+                    let position = {
+                        let stream = ps.lock().unwrap();
+                        stream.position()
+                    };
+                    let stream_val = Value::ParseStream(ps.clone());
+                    match self.call_value_and_wait(rule.clone(), vec![stream_val]) {
+                        Ok(result) => {
+                            let new_pos = {
+                                let stream = ps.lock().unwrap();
+                                stream.position()
+                            };
+                            results.push(result);
+                            if new_pos == position {
+                                break;
+                            }
+                        }
+                        Err(Error::ParseFailed { .. }) => {
+                            let mut stream = ps.lock().unwrap();
+                            stream.restore(&crate::parse_stream::Checkpoint { position });
+                            break;
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                if results.is_empty() {
+                    let pos = {
+                        let stream = ps.lock().unwrap();
+                        stream.position()
+                    };
+                    return Err(Error::ParseFailed {
+                        position: pos,
+                        message: "plus: expected at least one match".into(),
+                    });
+                }
+                Ok(Value::List(Arc::new(results)))
+            }
+            ("__builtin_stream", "seq") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime("seq requires (stream, rules)".into()));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => return Err(Error::Runtime("seq: first arg must be a stream".into())),
+                };
+                let rules = match &args[1] {
+                    Value::List(items) => (**items).clone(),
+                    _ => return Err(Error::Runtime("seq: second arg must be a list".into())),
+                };
+
+                let start_pos = {
+                    let stream = ps.lock().unwrap();
+                    stream.position()
+                };
+
+                let mut results = Vec::new();
+                for rule in &rules {
+                    let stream_val = Value::ParseStream(ps.clone());
+                    match self.call_value_and_wait(rule.clone(), vec![stream_val]) {
+                        Ok(result) => results.push(result),
+                        Err(Error::ParseFailed { position, message }) => {
+                            let mut stream = ps.lock().unwrap();
+                            stream.restore(&crate::parse_stream::Checkpoint {
+                                position: start_pos,
+                            });
+                            return Err(Error::ParseFailed { position, message });
+                        }
+                        Err(e) => return Err(e),
+                    }
+                }
+                Ok(Value::List(Arc::new(results)))
             }
             ("__builtin_stream", "observe") => {
                 // observe(collection_or_stream_or_cursor, branch_id?) -> Cursor

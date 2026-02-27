@@ -279,3 +279,212 @@ fn parse_stream_apply_memoizes_position() {
     // After memo hit, position should be at 1 (where the rule left off)
     assert_eq!(result, Value::Int(1));
 }
+
+// ── Task 8: choice combinator ──────────────────────────────────────────
+
+#[test]
+fn choice_first_matches() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        let r1 = \s { stream::match_char(s, "a") }
+        let r2 = \s { stream::match_char(s, "b") }
+        stream::choice(s, [r1, r2])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("a".into()));
+}
+
+#[test]
+fn choice_second_matches() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("bcd")
+        let r1 = \s { stream::match_char(s, "a") }
+        let r2 = \s { stream::match_char(s, "b") }
+        stream::choice(s, [r1, r2])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("b".into()));
+}
+
+#[test]
+fn choice_restores_on_failure() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("bcd")
+        let r1 = \s { stream::match_char(s, "a"); stream::match_char(s, "b") }
+        let r2 = \s { stream::match_char(s, "b") }
+        stream::choice(s, [r1, r2])
+        s.position()
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::Int(1));
+}
+
+#[test]
+fn choice_all_fail() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("xyz")
+        let r1 = \s { stream::match_char(s, "a") }
+        let r2 = \s { stream::match_char(s, "b") }
+        try { stream::choice(s, [r1, r2]) } catch e { "all failed" }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("all failed".into()));
+}
+
+// ── Task 9: star and plus combinators ──────────────────────────────────
+
+#[test]
+fn star_zero_matches() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        let digit = \s { stream::match_class(s, "0-9") }
+        stream::star(s, digit)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::List(std::sync::Arc::new(vec![])));
+}
+
+#[test]
+fn star_multiple_matches() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("123abc")
+        let digit = \s { stream::match_class(s, "0-9") }
+        stream::star(s, digit)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        Value::List(std::sync::Arc::new(vec![
+            Value::String("1".into()),
+            Value::String("2".into()),
+            Value::String("3".into()),
+        ]))
+    );
+}
+
+#[test]
+fn plus_requires_one() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        let digit = \s { stream::match_class(s, "0-9") }
+        try { stream::plus(s, digit) } catch e { "need at least one" }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("need at least one".into()));
+}
+
+#[test]
+fn plus_multiple_matches() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("123abc")
+        let digit = \s { stream::match_class(s, "0-9") }
+        stream::plus(s, digit)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        Value::List(std::sync::Arc::new(vec![
+            Value::String("1".into()),
+            Value::String("2".into()),
+            Value::String("3".into()),
+        ]))
+    );
+}
+
+// ── Task 10: seq combinator and full parse ─────────────────────────────
+
+#[test]
+fn seq_all_match() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        let ra = \s { stream::match_char(s, "a") }
+        let rb = \s { stream::match_char(s, "b") }
+        let rc = \s { stream::match_char(s, "c") }
+        stream::seq(s, [ra, rb, rc])
+    "#,
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        Value::List(std::sync::Arc::new(vec![
+            Value::String("a".into()),
+            Value::String("b".into()),
+            Value::String("c".into()),
+        ]))
+    );
+}
+
+#[test]
+fn seq_partial_fails_and_restores() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        let ra = \s { stream::match_char(s, "a") }
+        let rx = \s { stream::match_char(s, "x") }
+        try { stream::seq(s, [ra, rx]) } catch e { s.position() }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::Int(0));
+}
+
+#[test]
+fn full_parse_with_semantic_action() {
+    let mut vm = Vm::new();
+    // Semantic action: wrap each digit in a tagged value
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("123")
+        let digit = \s { stream::match_class(s, "0-9") }
+        let digits = stream::plus(s, digit)
+        digits
+    "#,
+    )
+    .unwrap();
+    assert_eq!(
+        result,
+        Value::List(std::sync::Arc::new(vec![
+            Value::String("1".into()),
+            Value::String("2".into()),
+            Value::String("3".into()),
+        ]))
+    );
+}
