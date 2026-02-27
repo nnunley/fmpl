@@ -22,3 +22,57 @@ fn parse_stream_from_string_position() {
     let result = eval(&mut vm, r#"let s = stream::new("hello"); s.position()"#).unwrap();
     assert_eq!(result, Value::Int(0));
 }
+
+#[test]
+fn parse_stream_advance_then_head() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("hello")
+        s.advance(1)
+        s.head()
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("e".into()));
+}
+
+#[test]
+fn parse_stream_checkpoint_restore() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("hello")
+        s.advance(2)
+        let cp = s.checkpoint()
+        s.advance(2)
+        s.restore(cp)
+        s.head()
+    "#,
+    )
+    .unwrap();
+    // After advance(2), position is at 'l' (index 2)
+    // checkpoint saves position 2
+    // advance(2) moves to 'o' (index 4)
+    // restore goes back to position 2
+    // head() returns 'l'
+    assert_eq!(result, Value::String("l".into()));
+}
+
+#[test]
+fn parse_stream_is_at_end() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("hi")
+        s.advance(2)
+        s.head()
+    "#,
+    )
+    .unwrap();
+    // At end of input, head() returns null
+    assert_eq!(result, Value::Null);
+}

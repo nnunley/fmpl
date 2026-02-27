@@ -4213,6 +4213,33 @@ impl Vm {
                         let stream = ps.lock().unwrap();
                         Value::Int(stream.position() as i64)
                     }
+                    "advance" => {
+                        let n = match args.first() {
+                            Some(Value::Int(n)) => *n as usize,
+                            _ => 1,
+                        };
+                        let mut stream = ps.lock().unwrap();
+                        stream.advance(n);
+                        Value::Null
+                    }
+                    "checkpoint" => {
+                        let stream = ps.lock().unwrap();
+                        let cp = stream.checkpoint();
+                        Value::Int(cp.position as i64)
+                    }
+                    "restore" => {
+                        let pos = match args.first() {
+                            Some(Value::Int(pos)) => *pos as usize,
+                            _ => {
+                                return Err(Error::Runtime(
+                                    "restore() requires a checkpoint value".into(),
+                                ));
+                            }
+                        };
+                        let mut stream = ps.lock().unwrap();
+                        stream.restore(&crate::parse_stream::Checkpoint { position: pos });
+                        Value::Null
+                    }
                     _ => return Err(Error::UndefinedMethod(name.to_string())),
                 };
                 let frame = self.frames.last_mut().unwrap();
