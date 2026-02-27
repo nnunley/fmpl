@@ -3664,6 +3664,89 @@ impl Vm {
                     message: msg,
                 });
             }
+            ("__builtin_stream", "match_char") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime("match_char requires (stream, char)".into()));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => {
+                        return Err(Error::Runtime(
+                            "match_char: first arg must be a stream".into(),
+                        ));
+                    }
+                };
+                let expected = match &args[1] {
+                    Value::String(s) => s.clone(),
+                    _ => {
+                        return Err(Error::Runtime(
+                            "match_char: second arg must be a string".into(),
+                        ));
+                    }
+                };
+                let mut stream = ps.lock().unwrap();
+                let head = stream.head();
+                match head {
+                    Value::String(ref c) if *c == expected => {
+                        stream.advance(1);
+                        return Ok(Value::String(expected));
+                    }
+                    _ => {
+                        let pos = stream.position();
+                        return Err(Error::ParseFailed {
+                            position: pos,
+                            message: format!("expected '{}', got {:?}", expected, head),
+                        });
+                    }
+                }
+            }
+            ("__builtin_stream", "match_class") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime(
+                        "match_class requires (stream, class)".into(),
+                    ));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => {
+                        return Err(Error::Runtime(
+                            "match_class: first arg must be a stream".into(),
+                        ));
+                    }
+                };
+                let class = match &args[1] {
+                    Value::String(s) => s.clone(),
+                    _ => {
+                        return Err(Error::Runtime(
+                            "match_class: second arg must be a string".into(),
+                        ));
+                    }
+                };
+                let mut stream = ps.lock().unwrap();
+                let head = stream.head();
+                match head {
+                    Value::String(ref c) => {
+                        let ch = c.chars().next().unwrap_or('\0');
+                        if crate::parse_stream::char_in_class(ch, &class) {
+                            stream.advance(1);
+                            return Ok(Value::String(c.clone()));
+                        } else {
+                            let pos = stream.position();
+                            return Err(Error::ParseFailed {
+                                position: pos,
+                                message: format!("expected [{}], got '{}'", class, c),
+                            });
+                        }
+                    }
+                    _ => {
+                        let pos = stream.position();
+                        return Err(Error::ParseFailed {
+                            position: pos,
+                            message: format!("expected [{}], got {:?}", class, head),
+                        });
+                    }
+                }
+            }
             ("__builtin_stream", "observe") => {
                 // observe(collection_or_stream_or_cursor, branch_id?) -> Cursor
                 // Creates a cursor reference to any collection, stream, or existing cursor

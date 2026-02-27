@@ -1407,7 +1407,11 @@ impl Compiler {
 
                 // Convert stream::new(args), stream::observe(args) to __builtin_stream.method(args)
                 if module == "stream"
-                    && (method == "new" || method == "observe" || method == "fail")
+                    && (method == "new"
+                        || method == "observe"
+                        || method == "fail"
+                        || method == "match_char"
+                        || method == "match_class")
                 {
                     let builtin_idx = self
                         .code

@@ -138,3 +138,88 @@ fn parse_stream_fail_is_catchable() {
     .unwrap();
     assert!(matches!(result, Value::String(_)));
 }
+
+#[test]
+fn match_char_success() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        stream::match_char(s, "a")
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("a".into()));
+}
+
+#[test]
+fn match_char_failure() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        try { stream::match_char(s, "x") } catch e { "fail" }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("fail".into()));
+}
+
+#[test]
+fn match_char_advances_position() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        stream::match_char(s, "a")
+        s.head()
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("b".into()));
+}
+
+#[test]
+fn match_class_digit() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("3abc")
+        stream::match_class(s, "0-9")
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("3".into()));
+}
+
+#[test]
+fn match_class_letter() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        stream::match_class(s, "a-z")
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("a".into()));
+}
+
+#[test]
+fn match_class_failure() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        try { stream::match_class(s, "0-9") } catch e { "fail" }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("fail".into()));
+}

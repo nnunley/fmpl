@@ -114,3 +114,28 @@ impl ParseStream {
         }
     }
 }
+
+/// Check if a character matches a class specification like "0-9", "a-zA-Z", etc.
+///
+/// Supports ranges (e.g., "a-z") and single characters (e.g., "abc").
+/// Multiple ranges and characters can be combined: "a-zA-Z0-9_".
+pub fn char_in_class(ch: char, class: &str) -> bool {
+    let chars: Vec<char> = class.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if i + 2 < chars.len() && chars[i + 1] == '-' {
+            // Range: a-z
+            if ch >= chars[i] && ch <= chars[i + 2] {
+                return true;
+            }
+            i += 3;
+        } else {
+            // Single char
+            if ch == chars[i] {
+                return true;
+            }
+            i += 1;
+        }
+    }
+    false
+}
