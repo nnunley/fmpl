@@ -3955,6 +3955,105 @@ impl Vm {
                 }
                 Ok(Value::List(Arc::new(results)))
             }
+            ("__builtin_stream", "not") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime("not requires (stream, rule)".into()));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => return Err(Error::Runtime("not: first arg must be a stream".into())),
+                };
+                let rule = args[1].clone();
+
+                let position = {
+                    let stream = ps.lock().unwrap();
+                    stream.position()
+                };
+
+                let stream_val = Value::ParseStream(ps.clone());
+                match self.call_value_and_wait(rule, vec![stream_val]) {
+                    Ok(_) => {
+                        // Rule succeeded — not fails, restore position
+                        let mut stream = ps.lock().unwrap();
+                        stream.restore(&crate::parse_stream::Checkpoint { position });
+                        Err(Error::ParseFailed {
+                            position,
+                            message: "negative lookahead matched".into(),
+                        })
+                    }
+                    Err(Error::ParseFailed { .. }) => {
+                        // Rule failed — not succeeds, restore position
+                        let mut stream = ps.lock().unwrap();
+                        stream.restore(&crate::parse_stream::Checkpoint { position });
+                        Ok(Value::Null)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            ("__builtin_stream", "lookahead") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime("lookahead requires (stream, rule)".into()));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => {
+                        return Err(Error::Runtime(
+                            "lookahead: first arg must be a stream".into(),
+                        ));
+                    }
+                };
+                let rule = args[1].clone();
+
+                let position = {
+                    let stream = ps.lock().unwrap();
+                    stream.position()
+                };
+
+                let stream_val = Value::ParseStream(ps.clone());
+                match self.call_value_and_wait(rule, vec![stream_val]) {
+                    Ok(result) => {
+                        // Succeeded — restore position (lookahead doesn't consume)
+                        let mut stream = ps.lock().unwrap();
+                        stream.restore(&crate::parse_stream::Checkpoint { position });
+                        Ok(result)
+                    }
+                    Err(e) => {
+                        let mut stream = ps.lock().unwrap();
+                        stream.restore(&crate::parse_stream::Checkpoint { position });
+                        Err(e)
+                    }
+                }
+            }
+            ("__builtin_stream", "optional") => {
+                if args.len() != 2 {
+                    return Err(Error::Runtime("optional requires (stream, rule)".into()));
+                }
+                let ps = match &args[0] {
+                    Value::ParseStream(ps) => ps.clone(),
+                    _ => {
+                        return Err(Error::Runtime(
+                            "optional: first arg must be a stream".into(),
+                        ));
+                    }
+                };
+                let rule = args[1].clone();
+
+                let position = {
+                    let stream = ps.lock().unwrap();
+                    stream.position()
+                };
+
+                let stream_val = Value::ParseStream(ps.clone());
+                match self.call_value_and_wait(rule, vec![stream_val]) {
+                    Ok(result) => Ok(result),
+                    Err(Error::ParseFailed { .. }) => {
+                        let mut stream = ps.lock().unwrap();
+                        stream.restore(&crate::parse_stream::Checkpoint { position });
+                        Ok(Value::Null)
+                    }
+                    Err(e) => Err(e),
+                }
+            }
             ("__builtin_stream", "observe") => {
                 // observe(collection_or_stream_or_cursor, branch_id?) -> Cursor
                 // Creates a cursor reference to any collection, stream, or existing cursor

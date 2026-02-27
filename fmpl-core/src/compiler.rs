@@ -1415,7 +1415,10 @@ impl Compiler {
                         || method == "choice"
                         || method == "star"
                         || method == "plus"
-                        || method == "seq")
+                        || method == "seq"
+                        || method == "not"
+                        || method == "lookahead"
+                        || method == "optional")
                 {
                     let builtin_idx = self
                         .code

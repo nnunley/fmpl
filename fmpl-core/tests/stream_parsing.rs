@@ -488,3 +488,84 @@ fn full_parse_with_semantic_action() {
         ]))
     );
 }
+
+// ── Task 11: not, lookahead, optional combinators ───────────────────────
+
+#[test]
+fn not_succeeds_when_rule_fails() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        let digit = \s { stream::match_class(s, "0-9") }
+        stream::not(s, digit)
+        s.position()
+    "#,
+    )
+    .unwrap();
+    // not doesn't consume input
+    assert_eq!(result, Value::Int(0));
+}
+
+#[test]
+fn not_fails_when_rule_succeeds() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("123")
+        let digit = \s { stream::match_class(s, "0-9") }
+        try { stream::not(s, digit) } catch e { "matched" }
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("matched".into()));
+}
+
+#[test]
+fn lookahead_succeeds_without_consuming() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        let letter = \s { stream::match_class(s, "a-z") }
+        stream::lookahead(s, letter)
+        s.position()
+    "#,
+    )
+    .unwrap();
+    // lookahead doesn't consume input
+    assert_eq!(result, Value::Int(0));
+}
+
+#[test]
+fn optional_returns_null_on_failure() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("abc")
+        let digit = \s { stream::match_class(s, "0-9") }
+        stream::optional(s, digit)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::Null);
+}
+
+#[test]
+fn optional_returns_value_on_success() {
+    let mut vm = Vm::new();
+    let result = eval(
+        &mut vm,
+        r#"
+        let s = stream::new("123")
+        let digit = \s { stream::match_class(s, "0-9") }
+        stream::optional(s, digit)
+    "#,
+    )
+    .unwrap();
+    assert_eq!(result, Value::String("1".into()));
+}
