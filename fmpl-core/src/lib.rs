@@ -51,15 +51,15 @@ pub use vm::Vm;
 /// Set the environment variable `FMPL_USE_LEGACY_PARSER=1` to use the
 /// legacy hand-written recursive descent parser.
 pub fn eval(vm: &mut Vm, source: &str) -> Result<Value> {
-    let use_generated = std::env::var("FMPL_USE_GENERATED_PARSER")
+    let use_legacy = std::env::var("FMPL_USE_LEGACY_PARSER")
         .map(|v| v == "1" || v == "true")
         .unwrap_or(false);
 
-    let ast = if use_generated {
-        parser::generated_parse(source)?
-    } else {
+    let ast = if use_legacy {
         let tokens = Lexer::new(source).tokenize()?;
         Parser::with_source(&tokens, source).parse()?
+    } else {
+        parser::generated_parse(source)?
     };
     let code = Compiler::new().compile(&ast)?;
     vm.run(&code)

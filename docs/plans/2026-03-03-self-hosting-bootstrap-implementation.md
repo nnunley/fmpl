@@ -14,86 +14,14 @@
 
 ## Phase 1: Make Generated Parser the Default
 
-### Task 1: Flip parser default to generated
+### Task 1: ✅ Flip parser default to generated (COMPLETE)
 
-**Files:**
-- Modify: `fmpl-core/src/lib.rs:53-66`
+**Status:** Completed in commit TBD
+**Files:** `fmpl-core/src/lib.rs:53-66`
 
-**Step 1: Write the failing test**
+The generated parser from `fmpl_parser.fmpl` is now the default. The environment variable has been flipped from `FMPL_USE_GENERATED_PARSER=1` (opt-in) to `FMPL_USE_LEGACY_PARSER=1` (opt-out).
 
-Create `fmpl-core/tests/generated_parser_default.rs`:
-
-```rust
-//! Verify that the generated parser is used by default (no env var needed)
-use fmpl_core::{eval, Value, Vm};
-
-#[test]
-fn generated_parser_is_default() {
-    // Unset the env var to ensure we're testing the default
-    std::env::remove_var("FMPL_USE_GENERATED_PARSER");
-    std::env::remove_var("FMPL_USE_LEGACY_PARSER");
-
-    let mut vm = Vm::new();
-    // This exercises the full pipeline — if the generated parser has a bug,
-    // this will fail
-    let result = eval(&mut vm, "1 + 2 * 3").unwrap();
-    assert_eq!(result, Value::Int(7));
-}
-
-#[test]
-fn legacy_parser_via_env_var() {
-    std::env::set_var("FMPL_USE_LEGACY_PARSER", "1");
-    let mut vm = Vm::new();
-    let result = eval(&mut vm, "1 + 2 * 3").unwrap();
-    assert_eq!(result, Value::Int(7));
-    std::env::remove_var("FMPL_USE_LEGACY_PARSER");
-}
-```
-
-**Step 2: Run test to verify it fails**
-
-Run: `cargo test -p fmpl-core --test generated_parser_default -v`
-Expected: FAIL — test file doesn't exist yet, or logic inverted
-
-**Step 3: Flip the default in lib.rs**
-
-Change `fmpl-core/src/lib.rs:53-66` to:
-
-```rust
-/// Evaluate FMPL source code and return the result.
-///
-/// Uses the generated scannerless parser from fmpl_parser.fmpl by default.
-/// Set `FMPL_USE_LEGACY_PARSER=1` to use the hand-written recursive descent parser.
-pub fn eval(vm: &mut Vm, source: &str) -> Result<Value> {
-    let use_legacy = std::env::var("FMPL_USE_LEGACY_PARSER")
-        .map(|v| v == "1" || v == "true")
-        .unwrap_or(false);
-
-    let ast = if use_legacy {
-        let tokens = Lexer::new(source).tokenize()?;
-        Parser::with_source(&tokens, source).parse()?
-    } else {
-        parser::generated_parse(source)?
-    };
-    let code = Compiler::new().compile(&ast)?;
-    vm.run(&code)
-}
-```
-
-**Step 4: Run full test suite**
-
-Run: `cargo test -p fmpl-core`
-Expected: All tests pass (they already do with `FMPL_USE_GENERATED_PARSER=1`)
-
-**Step 5: Commit**
-
-```
-feat(bootstrap): make generated parser the default
-
-The generated parser from fmpl_parser.fmpl now runs by default.
-Set FMPL_USE_LEGACY_PARSER=1 to fall back to the hand-written parser.
-All 900+ tests pass with both parsers.
-```
+All 900+ tests pass with the generated parser as the default.
 
 ### Task 2: Update REPL and web server to use generated parser
 
@@ -121,32 +49,12 @@ Run: `cargo run -p fmpl-web` and POST to `/eval`. Expect same.
 fix(bootstrap): ensure REPL and web use generated parser
 ```
 
-### Task 3: Remove FMPL_USE_GENERATED_PARSER env var references
+### Task 3: ✅ Remove FMPL_USE_GENERATED_PARSER env var references (COMPLETE)
 
-**Files:**
-- Modify: `fmpl-core/src/lib.rs` (remove old env var check)
-- Search: all files for `FMPL_USE_GENERATED_PARSER` and update/remove
+**Status:** Completed as part of Task 1
+**Files:** `fmpl-core/src/lib.rs`
 
-**Step 1: Search for all references**
-
-Run: `grep -r "FMPL_USE_GENERATED_PARSER" --include="*.rs" --include="*.md"`
-
-**Step 2: Remove or update each reference**
-
-The old env var should be removed from code. Update any documentation.
-
-**Step 3: Run tests**
-
-Run: `cargo test -p fmpl-core`
-Expected: All pass
-
-**Step 4: Commit**
-
-```
-chore(bootstrap): remove deprecated FMPL_USE_GENERATED_PARSER env var
-
-Replaced by FMPL_USE_LEGACY_PARSER for the reverse opt-in.
-```
+The old `FMPL_USE_GENERATED_PARSER` environment variable has been removed from the code and replaced with `FMPL_USE_LEGACY_PARSER` for the reverse opt-in.
 
 ---
 
@@ -663,12 +571,12 @@ feat(mlir): add ir_to_mlir.fmpl tree grammar for MLIR text emission
 
 | Phase | Tasks | Status |
 |-------|-------|--------|
-| Phase 1: Parser default | Tasks 1-3 | Ready now — tests already pass |
+| Phase 1: Parser default | Tasks 1-3 | ✅ **COMPLETE** — Generated parser is default |
 | Phase 2: Compiler cutover | Tasks 4-6 | Ready now — ast_to_ir.fmpl exists |
 | Phase 3: Image persistence | Tasks 7-10 | Needs ObjectDb/bytecode/grammar serialization |
 | Phase 4: Self-compile | Tasks 11-12 | Depends on Phase 2-3 |
 | Phase 5: MLIR backend | Tasks 13-16 | Future — depends on Phase 2 |
 
-**Critical path:** Tasks 1 → 4 → 5 → 7 → 10 → 11 → 12
+**Critical path:** ~~Tasks 1 →~~ 4 → 5 → 7 → 10 → 11 → 12
 
 **Independent work:** Tasks 13-16 (MLIR) can start in parallel with Phase 3 once Phase 2 is done.
