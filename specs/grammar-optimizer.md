@@ -626,24 +626,125 @@ These preserve memoization:
 ## 8. Implementation Plan
 
 ### Phase 1: Infrastructure
-- [ ] Add `PatternAnalysis` and `FirstSet` types
-- [ ] Implement `compute_first_set()` for all patterns
-- [ ] Add optimizer pass hook in compilation pipeline
+
+#### AC-P1-1: Add `FirstSet` type
+
+**File**: `fmpl-core/src/grammar/optimizer.rs` (new file)
+**Test**: `fmpl-core/tests/grammar_optimizer.rs` (new file)
+
+- Create `FirstSet` enum as defined in section 5
+- Implement `FirstSet::contains(char)`, `FirstSet::union()`, `FirstSet::with_epsilon()`
+- Test: `FirstSet::Chars({'a','b'}).contains('a')` → true
+
+#### AC-P1-2: Implement `compute_first_set()`
+
+**File**: `fmpl-core/src/grammar/optimizer.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- Implement for all Pattern variants as defined in section 5
+- Test: `compute_first_set(Pattern::Literal("hello"))` → `FirstSet::Chars({'h'})`
+- Test: `compute_first_set(Pattern::Choice([Literal("a"), Literal("b")]))` → `FirstSet::Chars({'a','b'})`
+- Test: `compute_first_set(Pattern::Star(Any))` → `FirstSet::AnyChar` with epsilon
+
+#### AC-P1-3: Add `are_disjoint()` check
+
+**File**: `fmpl-core/src/grammar/optimizer.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- Implement disjointness check for pairs of FirstSets
+- Test: `are_disjoint(Chars({'a'}), Chars({'b'}))` → true
+- Test: `are_disjoint(Chars({'a'}), Chars({'a','b'}))` → false
+
+#### AC-P1-4: Add optimizer pass hook in compilation pipeline
+
+**File**: `fmpl-core/src/grammar/mod.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- Add `optimize_pattern(pattern) -> Pattern` entry point
+- Call it from grammar compilation before lowering to bytecode
+- Initially a no-op pass-through; later phases add transforms
 
 ### Phase 2: Core Optimizations
-- [ ] Implement `SkipToLiteral` pattern and instruction
-- [ ] Implement literal trie for `Choice`
-- [ ] Implement char jump table
+
+#### AC-P2-1: `SkipToLiteral` pattern and runtime
+
+**File**: `fmpl-core/src/grammar/optimizer.rs`, `fmpl-core/src/grammar/runtime.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- Detect `Seq([Star(Any), Literal(s)])` → `SkipToLiteral { literal: s }`
+- Runtime: use `str::find` for O(n) substring search
+- Test: `"foo hello bar" @ grammar { rule = .*"hello" }` → succeeds, returns match
+- Test: `"no match here" @ grammar { rule = .*"hello" }` → fails
+
+#### AC-P2-2: Literal trie for `Choice`
+
+**File**: `fmpl-core/src/grammar/optimizer.rs`, `fmpl-core/src/grammar/runtime.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- Detect `Choice` of 4+ literal alternatives → `TrieNode`
+- Build trie at compile time using `build_trie()` from section 1
+- Runtime: walk trie character-by-character
+- Test: `"for" @ grammar { kw = "function" | "for" | "false" }` → matches "for"
+
+#### AC-P2-3: Char jump table for `Choice`
+
+**File**: `fmpl-core/src/grammar/optimizer.rs`, `fmpl-core/src/grammar/runtime.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- Detect `Choice` of 4+ single-char alternatives → `CharJumpTable`
+- Build HashMap<char, action_index> at compile time
+- Runtime: O(1) lookup
+- Test: `"+" @ grammar { op = '+' | '-' | '*' | '/' }` → matches "+"
 
 ### Phase 3: Advanced Optimizations
-- [ ] Add `aho-corasick` dependency
-- [ ] Implement multi-pattern search
-- [ ] Implement generalized pattern trie
+
+#### AC-P3-1: Aho-Corasick multi-pattern search
+
+**File**: `fmpl-core/Cargo.toml`, `fmpl-core/src/grammar/optimizer.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- Add `aho-corasick` dependency
+- Detect `Choice` of `SkipToLiteral` patterns → `SkipToAnyLiteral`
+- Runtime: single-pass O(n + m) search
+- Test: `"got a warning here" @ grammar { detect = .*"error" | .*"warning" | .*"fatal" }` → matches "warning"
+
+#### AC-P3-2: Generalized pattern trie
+
+**File**: `fmpl-core/src/grammar/optimizer.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- Extend trie to non-literal patterns (rule references, char classes)
+- Detect shared prefixes across pattern alternatives
+- Test: grammar with `"if" expr "then" block` and `"if" expr "then" block "else" block` shares prefix
 
 ### Phase 4: Integration
-- [ ] Benchmark suite for grammar performance
-- [ ] Optimization level flags (`-O0`, `-O1`, `-O2`)
-- [ ] Debug output for optimization decisions
+
+#### AC-P4-1: Grammar benchmark suite
+
+**File**: `fmpl-core/benches/grammar_bench.rs` (new)
+**Test**: `cargo bench -p fmpl-core`
+
+- Benchmark keyword matching (with/without trie)
+- Benchmark substring search (with/without SkipToLiteral)
+- Benchmark multi-pattern search (sequential vs Aho-Corasick)
+- Use `criterion` crate
+
+#### AC-P4-2: Optimization level flags
+
+**File**: `fmpl-core/src/grammar/optimizer.rs`
+**Test**: `fmpl-core/tests/grammar_optimizer.rs`
+
+- `-O0`: No optimization (pass-through)
+- `-O1`: SkipToLiteral + CharJumpTable (safe, always wins)
+- `-O2`: All optimizations including trie and Aho-Corasick
+
+#### AC-P4-3: Debug output for optimization decisions
+
+**File**: `fmpl-core/src/grammar/optimizer.rs`
+**Test**: manual
+
+- When `FMPL_OPT_DEBUG=1`, print optimization decisions to stderr
+- Format: `[opt] Choice(7 literals) → Trie (disjoint first-sets)`
 
 ---
 

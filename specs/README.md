@@ -15,6 +15,7 @@ Design documentation for FMPL, a streaming-first DSL for building AI agents with
 ## Core Systems
 
 | Spec | Code | Purpose |
+|------|------|---------|
 | [grammar-system.md](./grammar-system.md) | [fmpl-core/src/grammar/](../fmpl-core/src/grammar/) | OMeta-style PEG grammars with inheritance and streaming support |
 | [grammar-optimizer.md](./grammar-optimizer.md) | `fmpl-core/src/grammar/optimizer.rs` (planned) | Prefix trie, skip-to-literal fusion, Aho-Corasick multi-pattern |
 | [object-system.md](./object-system.md) | [fmpl-core/src/object.rs](../fmpl-core/src/object.rs) | Goblins-inspired objects with spawn, facets |
@@ -27,19 +28,39 @@ Design documentation for FMPL, a streaming-first DSL for building AI agents with
 |------|------|---------|
 | [language-guide.md](../docs/design/language-guide.md) | — | DSL syntax and concepts overview |
 | [async-streams.md](./async-streams.md) | [fmpl-core/src/stream.rs](../fmpl-core/src/stream.rs) | Async streams with pipe operator |
+| [parse-stream.md](./parse-stream.md) | [fmpl-core/src/parse_stream.rs](../fmpl-core/src/parse_stream.rs) | ParseStream with combinators and packrat memoization |
 | [pattern-matching.md](./pattern-matching.md) | [fmpl-core/src/vm.rs](../fmpl-core/src/vm.rs) | Pattern matching with `@` operator |
+| [in-operator.md](./in-operator.md) | [fmpl-core/src/vm.rs](../fmpl-core/src/vm.rs) | Membership testing with `in` operator |
+| [type-system.md](./type-system.md) | — (not yet implemented) | Layered type inference: success typing, row polymorphism, occurrence typing, algebraic structures, SMT |
 
 ## Agent Framework
 
 | Spec | Code | Purpose |
 |------|------|---------|
 | [12-factor-agents.md](./12-factor-agents.md) | Cross-cutting | 12-Factor Agents + RLM context management mapped to FMPL |
+| [llm-tool-calling.md](./llm-tool-calling.md) | [fmpl-core/tests/tool_calling.rs](../fmpl-core/tests/tool_calling.rs) | LLM tool calling with `@` operator (Complete v4) |
+
+## Backtracking & CSP
+
+| Spec | Code | Purpose |
+|------|------|---------|
+| [backtracking-csp.md](./backtracking-csp.md) | [fmpl-core/src/grammar/runtime.rs](../fmpl-core/src/grammar/runtime.rs) | Prolog-style backtracking for grammar ambiguity |
+| [backtracking-opt-in-marker.md](./backtracking-opt-in-marker.md) | — | Explicit `?` marker for opt-in backtracking |
+| [csp-solving-status.md](./csp-solving-status.md) | — | CSP solving implementation status |
 
 ## Standard Library
 
 | Spec | Code | Purpose |
 |------|------|---------|
 | [lib.md](./lib.md) | [lib/](../lib/) | Standard library modules (LLM clients, compaction detection) |
+
+## Implementation Details
+
+| Spec | Code | Purpose |
+|------|------|---------|
+| [indexed-rpn-conversion.md](./indexed-rpn-conversion.md) | [fmpl-core/src/compiler.rs](../fmpl-core/src/compiler.rs) | Indexed RPN bytecode design and conversion |
+| [parser-limitations.md](./parser-limitations.md) | [fmpl-core/src/parser.rs](../fmpl-core/src/parser.rs) | Known parser limitations and workarounds |
+| [tuplespace.md](./tuplespace.md) | [fmpl-core/src/tuplespace/](../fmpl-core/src/tuplespace/) | Linda-style tuple space coordination |
 
 ## Design Documents
 
@@ -55,6 +76,13 @@ Design documentation for FMPL, a streaming-first DSL for building AI agents with
 
 | Document | Purpose |
 |----------|---------|
+| [type-inference-duck-typed-systems.md](../docs/research/2026-02-25-type-inference-duck-typed-systems.md) | 12 type inference approaches for duck-typed languages (layered recommendation) |
+| [category-theoretic-type-system.md](../docs/research/2026-02-25-category-theoretic-type-system.md) | Category theory, coalgebraic semantics, algebraic law inference for FMPL types |
+| [lattice-salt-analysis.md](../docs/research/2026-02-25-lattice-salt-analysis.md) | Salt/Lattice: Z3 verification, coroutines, capability tokens |
+| [oxiz-smt-solver-analysis.md](../docs/research/2026-02-25-oxiz-smt-solver-analysis.md) | OxiZ pure-Rust SMT solver for exhaustiveness checking |
+| [multi-user-architecture-synthesis.md](../docs/research/2026-02-25-multi-user-architecture-synthesis.md) | Multi-user architecture synthesis (mooR, ColdMUD, Salt) |
+| [moor-echo-analysis.md](../docs/research/2026-02-25-moor-echo-analysis.md) | mooR/Echo analysis for multi-user patterns |
+| [coldmud-architecture.md](../docs/research/2026-02-25-coldmud-architecture.md) | ColdMUD architecture analysis |
 | [tuplespace-vat-actor-conversion.md](../docs/research/2025-12-27-tuplespace-vat-actor-conversion.md) | Tuple space coordination (future) |
 | [lindaspaces-book.md](../docs/research/lindaspaces-book.md) | Linda tuple space reference |
 

@@ -89,6 +89,55 @@ Partition: sessions
 | `fmpl-core/src/object.rs:30` | Add source blob to Method struct |
 | `fmpl-core/src/vm.rs` | Reflection builtins (method_source, etc.) |
 
+## Acceptance Criteria
+
+### AC-1: Store method source alongside bytecode
+
+**File**: `object.rs` (Method struct)
+**Test**: `fmpl-core/tests/object_methods.rs`
+
+- Given `object.rs:Method` struct
+- Add `source: Option<String>` field
+- When a method is compiled, the original source text is stored alongside the `CompiledCode`
+- And `method_source(:name)` builtin returns the stored source
+
+### AC-2: `method_source()` builtin
+
+**File**: `vm.rs` (builtin dispatch)
+**Test**: `fmpl-core/tests/object_methods.rs`
+
+- Given an object `thing` with method `greet(): "hello"`
+- When `thing.method_source(:greet)` is called
+- Then it returns `"greet(): \"hello\""` (the original source text)
+- When `thing.method_source(:nonexistent)` is called → returns `:none`
+
+### AC-3: Lambda source recovery
+
+**File**: `value.rs` (Lambda), `vm.rs`
+**Test**: `fmpl-core/tests/lambda_closures.rs`
+
+- Given `let f = \x x + 1`
+- When `f.source()` is called
+- Then it returns `"\\x x + 1"` (the original source)
+- And if source is unavailable, returns `:none`
+
+### AC-4: ImageStore object persistence partitions
+
+**File**: `fmpl-web/src/image_store.rs`
+**Test**: `fmpl-web/tests/` (new)
+
+- Given `ImageStore::new(path)`
+- Then partitions `objects`, `code`, `sessions` are created
+- And `store.save_object(id, object)` serializes via rkyv to `objects` partition
+- And `store.load_object(id)` deserializes and returns `Option<Object>`
+
+## Implementation Order
+
+1. AC-1 (source storage) — struct change, backward compatible
+2. AC-2 (method_source) — new builtin, depends on AC-1
+3. AC-3 (lambda source) — independent of AC-1/AC-2
+4. AC-4 (persistence partitions) — independent, fmpl-web scope
+
 ## Related
 
 - [persistence.md](../persistence.md) — Fjall storage details

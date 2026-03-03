@@ -134,6 +134,82 @@ combinable.laws: [\(a, b, c) -> a.combine(b).combine(c) == a.combine(b.combine(c
 | `parser.rs:188` | Parse arity and unification variables in facet defs |
 | `compiler.rs:230` | No change needed (GetFacet instruction is sufficient) |
 
+## Acceptance Criteria
+
+### AC-1: Sealed facet values
+
+**File**: `vm.rs` (GetFacet handler)
+**Test**: `fmpl-core/tests/facet_enforcement.rs`
+
+- Given an object with facet `auditor: [view_balance]`
+- When `obj.as(:auditor)` is called
+- Then the result is `Value::Facet(id, "auditor")`, not `Value::Object(id)`
+- And `repr()` shows `<facet:auditor of #42>`, not `#42`
+
+### AC-2: Method dispatch checks facet membership
+
+**File**: `vm.rs` (method dispatch)
+**Test**: `fmpl-core/tests/facet_enforcement.rs`
+
+- Given `let f = obj.as(:auditor)` where auditor exposes `[view_balance]`
+- When `f.view_balance()` is called → succeeds, returns balance
+- When `f.withdraw(100)` is called → error: "method 'withdraw' not exposed by facet 'auditor'"
+
+### AC-3: Property access checks facet membership
+
+**File**: `vm.rs` (property access)
+**Test**: `fmpl-core/tests/facet_enforcement.rs`
+
+- Given `let f = obj.as(:auditor)` where auditor exposes `[view_balance]`
+- When `f.balance` is accessed → error: "property 'balance' not exposed by facet 'auditor'"
+
+### AC-4: Facet composition via intersection
+
+**File**: `vm.rs` (GetFacet on Facet values)
+**Test**: `fmpl-core/tests/facet_enforcement.rs`
+
+- Given `let f = obj.as(:treasurer)` where treasurer exposes `[view_balance, withdraw]`
+- When `f.as(:auditor)` is called where auditor exposes `[view_balance]`
+- Then result is a facet exposing only `[view_balance]` (intersection)
+
+### AC-5: Level 2 facet parsing (arity)
+
+**File**: `parser.rs` (parse_facet_def)
+**Test**: `fmpl-core/tests/facet_enforcement.rs`
+
+- Given `auditor: [view_balance()]` in a facet definition
+- Then `FacetMember { name: "view_balance", params: [], returns: None }` is stored
+- Given `container: [put(_), take()]`
+- Then `put` has params `[Wildcard]` and `take` has params `[]`
+
+### AC-6: Level 3 facet parsing (unification variables)
+
+**File**: `parser.rs` (parse_facet_def), `object.rs` (Facet struct)
+**Test**: `fmpl-core/tests/facet_enforcement.rs`
+
+- Given `combinable(T): [combine(T) -> T]`
+- Then `Facet { type_vars: ["T"], members: [FacetMember { name: "combine", params: [Var("T")], returns: Some(Var("T")) }] }`
+- This is a parsing/storage task only; unification enforcement is deferred to the type system
+
+### AC-7: Terminal facets block cross-VAT transmission
+
+**File**: `vm.rs` (async send handler)
+**Test**: `fmpl-core/tests/facet_enforcement.rs`
+
+- Given `customer!: [greet, buy]` (terminal facet)
+- When the facet is sent via `<-` to another VAT
+- Then error: "terminal facet 'customer' cannot be transmitted"
+- Note: Depends on multi-VAT implementation; can be deferred
+
+## Implementation Order
+
+1. AC-1 (sealed values) — prerequisite for all others
+2. AC-2, AC-3 (enforcement) — core security guarantee
+3. AC-4 (composition) — usability
+4. AC-5 (Level 2 parsing) — incremental
+5. AC-6 (Level 3 parsing) — incremental
+6. AC-7 (terminal) — depends on multi-VAT
+
 ## Related
 
 - [visibility](visibility.md) — Default private, `.#public` sugar

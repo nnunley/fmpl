@@ -141,6 +141,95 @@ Grammar is swappable per-connection without touching object methods.
 | `fmpl-web/src/main.rs` | Set principal on `/eval` |
 | `fmpl-cli/src/main.rs` | Set system principal for REPL |
 
+## Acceptance Criteria
+
+### Phase 1: User Context
+
+#### AC-1: Set `current_user` from web connection
+
+**File**: `fmpl-web/src/main.rs`, `vm.rs`
+**Test**: `fmpl-web/tests/` (new)
+
+- Given an HTTP request to `/eval` with session cookie
+- When the request is processed
+- Then `vm.current_user` is set to the session's principal ObjectId before evaluation
+- And `vm.current_user` is cleared to `None` after the turn completes
+
+#### AC-2: Set `current_user` in CLI REPL
+
+**File**: `fmpl-cli/src/main.rs`
+**Test**: `fmpl-core/tests/core_prelude.rs`
+
+- Given the REPL starts
+- When a system principal object is created at startup
+- Then `vm.current_user` is set to that system principal
+- And `user` magical variable resolves to the system principal
+
+#### AC-3: `user` magical variable returns current principal
+
+**File**: `vm.rs` (LoadUser handler)
+**Test**: `fmpl-core/tests/core_prelude.rs`
+
+- Given `vm.current_user = Some(principal_id)`
+- When `user` is evaluated in FMPL code
+- Then it returns `Value::Object(principal_id)`
+- When `vm.current_user = None`, `user` returns `:none`
+
+### Phase 1.5: Yield Injection
+
+#### AC-4: Compiler emits `YieldCheck` at loop back-edges
+
+**File**: `compiler.rs`
+**Test**: `fmpl-core/tests/core_prelude.rs`
+
+- Given `while true do x + 1`
+- When compiled, the `Jump` instruction targeting a lower IP (back-edge) is preceded by a `YieldCheck` instruction
+- And straight-line code (no loops) has zero `YieldCheck` instructions
+
+#### AC-5: VM handles `YieldCheck` with budget
+
+**File**: `vm.rs`
+**Test**: `fmpl-core/tests/yield_injection.rs` (new file)
+
+- Given `vm.turn_budget = 100`
+- When a loop executes 100 iterations
+- Then the VM returns `Err(Error::YieldExhausted)` on the 101st check
+- And `vm.turn_budget` resets to default at the start of each new turn
+
+#### AC-6: Stripe factor amortizes yield overhead
+
+**File**: `compiler.rs`
+**Test**: `fmpl-core/tests/yield_injection.rs`
+
+- Given a stripe factor of 8
+- When a loop has a back-edge, `YieldCheck` is emitted once per 8 back-edge traversals
+- Implementation: a local counter variable, check only when counter mod 8 == 0
+
+### Phase 2: Multi-VAT (future — depends on Phase 1)
+
+These are design-level criteria, not yet implementable:
+
+#### AC-7: Cross-VAT async messages carry sender identity
+
+- When `<-` sends a message to another VAT
+- Then the message envelope contains `sender_principal: ObjectId`
+- And the receiving VAT sets `current_user` from the envelope
+
+#### AC-8: Promise pipelining
+
+- When `<- (<- bank.get_account("alice")).get_balance()` is evaluated
+- Then only one round-trip occurs (pipelined message)
+
+## Implementation Order
+
+1. AC-3 (`user` variable) — already partially exists, just needs `current_user` to be set
+2. AC-2 (CLI principal) — simple, no external dependency
+3. AC-1 (web principal) — requires session management
+4. AC-4 (compiler emit) — independent of user context
+5. AC-5 (VM budget) — depends on AC-4
+6. AC-6 (stripe factor) — optimization on AC-4/AC-5
+7. AC-7, AC-8 — Phase 2, deferred
+
 ## Related
 
 - [facets](facets.md) — Capability model

@@ -98,6 +98,61 @@ Existing code that accesses object slots directly will break. Migration path:
 | `vm.rs` (property access) | Check visibility for non-self receivers |
 | `object.rs:30` | No struct change needed |
 
+## Acceptance Criteria
+
+### AC-1: `.#public` desugars to synthetic facet
+
+**File**: `parser.rs` (parse_object_body)
+**Test**: `fmpl-core/tests/facet_enforcement.rs`
+
+- Given an object with `.#public` section containing `name` and `describe`
+- When parsed, a synthetic `FacetDef { name: "public", members: ["name", "describe"], terminal: false }` is emitted
+- And the properties/methods themselves are stored normally (not duplicated)
+
+### AC-2: External method calls denied on raw objects
+
+**File**: `vm.rs` (method dispatch)
+**Test**: `fmpl-core/tests/visibility.rs` (new file)
+
+- Given object `thing` with private method `internal()` and public method `describe()`
+- When `thing.internal()` is called from outside `thing` → error: "slot 'internal' is private; use .as(:facet) to access"
+- When `thing.as(:public).describe()` is called → succeeds
+
+### AC-3: Self access unrestricted
+
+**File**: `vm.rs` (method dispatch)
+**Test**: `fmpl-core/tests/visibility.rs`
+
+- Given object `thing` with private slot `internal` and method `get_internal(): self.internal`
+- When `thing.as(:public).get_internal()` is called → succeeds (self access is unrestricted)
+- The check: compare receiver ObjectId with `self` ObjectId in current frame
+
+### AC-4: External property access denied on raw objects
+
+**File**: `vm.rs` (property access)
+**Test**: `fmpl-core/tests/visibility.rs`
+
+- Given object with private property `balance` not in any facet
+- When `obj.balance` is accessed externally → error: "property 'balance' is private"
+- When `obj.as(:auditor).view_balance()` accesses `self.balance` internally → succeeds
+
+### AC-5: Backward compatibility flag
+
+**File**: `vm.rs` (Vm struct)
+**Test**: `fmpl-core/tests/visibility.rs`
+
+- Given `Vm { permissive_visibility: true }` (migration mode)
+- When a private slot is accessed externally → warning printed, access allowed
+- When `permissive_visibility: false` (default) → error as in AC-2/AC-4
+
+## Implementation Order
+
+1. AC-1 (parser desugaring) — no behavioral change, safe to land first
+2. AC-5 (permissive flag) — safety net before enforcement
+3. AC-2, AC-4 (enforcement) — core change, behind permissive flag initially
+4. AC-3 (self check) — must land with AC-2/AC-4
+5. Remove permissive flag once existing code is migrated
+
 ## Related
 
 - [facets](facets.md) — Sealed views, composition

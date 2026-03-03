@@ -430,18 +430,18 @@ Implemented via:
 
 ## Grammar Integration
 
-The VM integrates with the grammar system ([vm.rs:657](../fmpl-core/src/vm.rs:657)):
+The VM integrates with the grammar system via the `GrammarApply` instruction:
 
 ```rust
-Instruction::GrammarApply(rule_name) => {
-    let grammar_val = self.pop()?;
-    let input = self.pop()?;
-    let result = self.apply_grammar(input, grammar, &rule_name)?;
-    self.stack.push(result.unwrap());
+Instruction::GrammarApply { input, grammar, rule } => {
+    let input_val = frame.get(input);
+    let grammar_val = frame.get(grammar);
+    let result = self.apply_grammar(input_val, grammar_arc, &rule)?;
+    frame.set_current(result.unwrap());
 }
 ```
 
-Grammar application supports both string and AsyncStream inputs.
+Grammar application supports string, list, and AsyncStream inputs.
 
 ---
 
@@ -453,6 +453,31 @@ Built-in methods available via special symbols:
 |---------|-------------|
 | `curl.get(url)` | HTTP GET, returns `%{source: stream, sink: null}` |
 | `curl.post(url, body)` | HTTP POST, returns `%{source: stream, sink: null}` |
+| `json::parse(str)` | Parse JSON string to FMPL values |
+| `json::stringify(val)` | Serialize FMPL values to JSON string |
+| `rand::int(min, max)` | Random integer in range |
+| `rand::float()` | Random float [0, 1) |
+| `io::load(path)` | Load and execute FMPL file |
+
+### ParseStream builtins (`stream::*`)
+
+| Builtin | Description |
+|---------|-------------|
+| `stream::new(input)` | Create ParseStream from string or list |
+| `stream::match_char(s, ch)` | Match exact character |
+| `stream::match_class(s, cls)` | Match character class (e.g., `"a-z"`, `"0-9"`) |
+| `stream::fail(msg)` | Raise parse failure |
+| `stream::choice(s, [alts])` | Try alternatives with backtracking |
+| `stream::star(s, rule)` | Zero-or-more matches |
+| `stream::plus(s, rule)` | One-or-more matches |
+| `stream::seq(s, [rules])` | Sequence all rules |
+| `stream::not(s, rule)` | Negative lookahead |
+| `stream::lookahead(s, rule)` | Positive lookahead |
+| `stream::optional(s, rule)` | Zero-or-one match |
+
+See [parse-stream.md](./parse-stream.md) for full combinator documentation.
+
+### Collection methods
 
 List methods (built-in):
 - `.len()`, `.first()`, `.last()`, `.push(item)`
@@ -460,7 +485,11 @@ List methods (built-in):
 String methods (built-in):
 - `.len()`, `.upper()`, `.lower()`
 
-See [builtins/curl.rs](../fmpl-core/src/builtins/curl.rs:17) for HTTP implementation.
+### ParseStream methods
+
+- `.head()`, `.position()`, `.advance(n)`, `.checkpoint()`, `.restore(cp)`, `.apply(rule)`
+
+See [builtins/curl.rs](../fmpl-core/src/builtins/curl.rs) for HTTP implementation.
 
 ---
 
@@ -469,6 +498,8 @@ See [builtins/curl.rs](../fmpl-core/src/builtins/curl.rs:17) for HTTP implementa
 - [fmpl-core.md](./fmpl-core.md) — Core runtime
 - [object-system.md](./object-system.md) — Object database
 - [grammar-system.md](./grammar-system.md) — Grammar integration
+- [parse-stream.md](./parse-stream.md) — ParseStream combinators and memoization
+- [pattern-matching.md](./pattern-matching.md) — Pattern matching with `@` operator
 
 ---
 

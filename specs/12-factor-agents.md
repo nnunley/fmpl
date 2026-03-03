@@ -572,21 +572,96 @@ The TUI now supports automatic detection and manual compaction:
 - String methods added: `contains`, `starts_with`, `ends_with`, `slice`
 
 **Remaining subtasks**:
-- [ ] Factor 3: Token counting utilities (currently using chars/4 approximation)
-- [ ] Factor 3: Context budget enforcement (max tokens per request)
-- [ ] Factor 9: Error-specific compaction (summarize error chains)
-- [ ] RLM: Partition + Map helpers for large contexts
-- [ ] List methods: `filter`, `map`, `reduce` for FMPL-based compaction
+
+#### AC-P2-1: Token counting utility
+
+**File**: `fmpl-core/src/builtins/` (new `tokens.rs`)
+**Test**: `fmpl-core/tests/core_prelude.rs`
+
+- Add `tokens::count(string)` builtin returning approximate token count
+- Use chars/4 as baseline, optionally integrate tiktoken-rs
+- `tokens::count("hello world")` → `2` (approx)
+
+#### AC-P2-2: Context budget enforcement
+
+**File**: `lib/llm-common.fmpl`
+**Test**: `fmpl-core/tests/tool_calling.rs`
+
+- Add `context_budget` parameter to `agent_loop`
+- Before each LLM call, check `tokens::count(messages) < budget`
+- If over budget, trigger compaction automatically
+
+#### AC-P2-3: Error-specific compaction
+
+**File**: `lib/compaction.fmpl`
+**Test**: `fmpl-core/tests/core_prelude.rs`
+
+- Add `summarize_errors(error_list)` function
+- Groups errors by type, keeps only most recent per type
+- Returns compact error summary string
+
+#### AC-P2-4: List methods `filter`, `map`, `reduce`
+
+**File**: `fmpl-core/src/vm.rs` (list method dispatch)
+**Test**: `fmpl-core/tests/core_prelude.rs`
+
+- `[1,2,3].map(\x x * 2)` → `[2,4,6]`
+- `[1,2,3].filter(\x x > 1)` → `[2,3]`
+- `[1,2,3].reduce(0, \acc, x acc + x)` → `6`
 
 ### Phase 3: Human-in-the-Loop
-- [ ] Factor 7: `human.approve()` builtin
-- [ ] Factor 6: Full pause/resume API (ParseState exists, need VM state)
-- [ ] Factor 7: Approval UI integration (TUI or web)
+
+#### AC-P3-1: `human.approve()` builtin
+
+**File**: `fmpl-core/src/builtins/` (new), `fmpl-tui/src/`
+**Test**: `fmpl-core/tests/tool_calling.rs`
+
+- `<- human.approve(request)` sends an approval request and suspends
+- Returns `%{approved: true}` or `%{denied: reason}` when human responds
+- In TUI: renders approval prompt, waits for user input
+- In web: sends approval request via WebSocket, waits for response
+
+#### AC-P3-2: VM state checkpoint/restore
+
+**File**: `fmpl-core/src/vm.rs`
+**Test**: `fmpl-core/tests/core_prelude.rs`
+
+- `vm.checkpoint()` serializes full VM state (frames, scopes, objects) to bytes
+- `Vm::restore(bytes)` reconstructs a VM from serialized state
+- Round-trip: `restore(checkpoint()) == original` for all value types
+
+#### AC-P3-3: Approval UI in TUI
+
+**File**: `fmpl-tui/src/`
+**Test**: manual
+
+- When `human.approve()` fires, TUI shows a prompt with request details
+- User can press `y` to approve, `n` to deny (with optional reason)
+- Response is sent back to the suspended stream
 
 ### Phase 4: Production Readiness
-- [ ] Factor 5: `bcom` transaction rollback (Goblins pattern)
-- [ ] Factor 11: Cron/webhook triggers
-- [ ] Factor 6: Checkpoint/restore full VM state
+
+#### AC-P4-1: `bcom` transaction rollback
+
+See [spawn-bcom.md](./object-system/spawn-bcom.md) AC-2 through AC-4.
+
+#### AC-P4-2: Cron/scheduler integration
+
+**File**: `fmpl-core/src/builtins/` (new `scheduler.rs`)
+**Test**: `fmpl-core/tests/core_prelude.rs`
+
+- `scheduler::every(cron_expr, callback)` registers periodic execution
+- `scheduler::after(duration_ms, callback)` one-shot delayed execution
+- Uses tokio timers internally
+
+#### AC-P4-3: Webhook endpoint helpers
+
+**File**: `fmpl-web/src/`
+**Test**: `fmpl-web/tests/`
+
+- `route("/webhook/:name", handler)` creates a webhook endpoint
+- Incoming POST bodies parsed via grammar and dispatched to handler
+- Returns 200 on success, 400 on parse failure
 
 ---
 

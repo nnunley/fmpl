@@ -592,11 +592,38 @@ let mut runtime = runtime.with_action_evaluator(evaluator);
 
 ---
 
+## Module Structure
+
+```
+fmpl-core/src/grammar/
+├── mod.rs          # Grammar, Rule, Pattern types, GrammarRegistry
+├── parser.rs       # Grammar definition syntax parser
+├── runtime.rs      # PEG runtime with memoization and backtracking
+├── trampoline.rs   # Stack-safe recursion via trampolining (2.4K lines)
+├── input.rs        # Input sources (string, list)
+├── stream_input.rs # Streaming input with Fjall overflow
+├── incremental.rs  # ParseState/ParseNext for suspension
+└── driver.rs       # ParseDriver for async pipelines
+```
+
+### Trampoline (`trampoline.rs`)
+
+The trampoline module provides stack-safe execution for deeply recursive grammar rules. Instead of using Rust's call stack (which overflows on deep recursion), pattern matching is converted to a continuation-passing style that loops in the trampoline.
+
+Key features:
+- **BacktrackEntry** — Choice points for Prolog-style backtracking on ambiguous matches
+- **Stack-safe recursion** — Arbitrary grammar depth without stack overflow
+- **Backtracking modes** — Depth-first search through alternatives
+
+---
+
 ## Related Specs
 
 - [fmpl-core.md](./fmpl-core.md) — Core runtime
+- [parse-stream.md](./parse-stream.md) — Combinator-based parsing alternative
 - [async-streams.md](./async-streams.md) — Stream types for grammar pipelines
 - [persistence.md](./persistence.md) — Fjall storage for durable state
+- [backtracking-csp.md](./backtracking-csp.md) — Backtracking and CSP solving
 
 ---
 

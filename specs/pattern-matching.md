@@ -230,32 +230,24 @@ value @ {
 
 Without `_`, unmatched values cause runtime errors.
 
-**Current Working Example** (using only `Var` and `Wildcard` patterns):
-```fmpl
-value @ {
-  x when x > 0 => "positive"
-  x when x < 0 => "negative"
-  _            => "zero"
-}
-```
-
 ---
 
 ## Pattern Types Summary
 
 | Pattern | Matches | Example | Status |
 |---------|---------|---------|--------|
-| `_` | Anything | `_ => default()` | Implemented ✅ |
-| Literal | Exact value | `42 => ...` | Parsed, not compiled |
-| `:symbol` | Symbol | `:ok => ...` | Parsed, not compiled |
-| `name` | Bind to name | `x => use(x)` | Implemented ✅ |
-| `%{k: v}` | Map with key | `%{id: i} => ...` | Implemented ✅ |
-| `[...]` | List | `[a, b] => ...` | Implemented ✅ |
-| `[h \| t]` | Head/tail | `[first \| rest] => ...` | Implemented ✅ |
-| `p when g` | Pattern with guard | `n when n > 0 => ...` | Implemented ✅ |
-| `p as name` | Bind match to name | `%{...} as whole => ...` | Implemented ✅ |
+| `_` | Anything | `_ => default()` | ✅ Implemented |
+| Literal | Exact value | `42 => ...` | ✅ Implemented |
+| `:symbol` | Symbol | `:ok => ...` | ✅ Implemented |
+| `name` | Bind to name | `x => use(x)` | ✅ Implemented |
+| `%{k: v}` | Map with key | `%{id: i} => ...` | ✅ Implemented |
+| `[...]` | List | `[a, b] => ...` | ✅ Implemented |
+| `[h \| t]` | Head/tail | `[first \| rest] => ...` | ✅ Implemented |
+| `p when g` | Pattern with guard | `n when n > 0 => ...` | ✅ Implemented |
+| `p as name` | Bind match to name | `%{...} as whole => ...` | ✅ Implemented |
+| Constructor | Tagged value | `:Tag(a, b) => ...` | Parsed, not compiled |
 
-**✅ All pattern types are now supported in `@` match expressions**, including map patterns, list patterns, head/tail patterns, patterns with guards, and as-patterns.
+All pattern types except constructors are fully supported in `@` match expressions, including map patterns, list patterns, head/tail patterns, literal patterns, symbol patterns, patterns with guards, and as-patterns.
 
 ---
 
@@ -263,18 +255,18 @@ value @ {
 
 | Feature | Parsing | Compilation | Execution |
 |---------|---------|-------------|-----------|
-| Var patterns | ✓ | ✓ | ✓ |
-| Wildcard patterns | ✓ | ✓ | ✓ |
-| Guards (`when`) | ✓ | ✓ | ✓ |
-| Let map destructure | ✓ | ✓ | ✓ |
-| Let list destructure | ✓ | ✓ (fixed-length) | ✓ |
-| **Map patterns in @** | ✓ | ✓ | ✓ |
-| **List patterns in @** | ✓ | ✓ | ✓ |
-| **Head/tail lists in @** | ✓ | ✓ | ✓ |
-| **As-patterns in @** | ✓ | ✓ | ✓ |
-| **Literal patterns** | ✓ | ✓ | ✓ |
-| **Symbol patterns** | ✓ | ✓ | ✓ |
-| **Constructor patterns** | ✓ | — | — |
+| Var patterns | ✅ | ✅ | ✅ |
+| Wildcard patterns | ✅ | ✅ | ✅ |
+| Guards (`when`) | ✅ | ✅ | ✅ |
+| Let map destructure | ✅ | ✅ | ✅ |
+| Let list destructure | ✅ | ✅ (fixed-length) | ✅ |
+| Map patterns in `@` | ✅ | ✅ | ✅ |
+| List patterns in `@` | ✅ | ✅ | ✅ |
+| Head/tail lists in `@` | ✅ | ✅ | ✅ |
+| As-patterns in `@` | ✅ | ✅ | ✅ |
+| Literal patterns | ✅ | ✅ | ✅ |
+| Symbol patterns | ✅ | ✅ | ✅ |
+| Constructor patterns | ✅ | — | — |
 
 ---
 

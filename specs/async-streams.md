@@ -268,8 +268,42 @@ let results = <- pipeline |> collect
 
 ---
 
+## ParseStream Combinators
+
+In addition to async streams, FMPL provides `ParseStream` — a synchronous, combinator-based parsing API for building parsers from FMPL lambdas.
+
+See [parse-stream.md](./parse-stream.md) for the full specification.
+
+### Quick Reference
+
+```fmpl
+let s = stream::new("hello 42")
+
+-- Primitive matchers
+stream::match_char(s, "h")          -- Match exact character
+stream::match_class(s, "a-z")       -- Match character class
+
+-- Combinators
+stream::choice(s, [rule1, rule2])    -- Ordered choice with backtracking
+stream::star(s, rule)                -- Zero-or-more
+stream::plus(s, rule)                -- One-or-more
+stream::seq(s, [r1, r2, r3])        -- Sequence (all must match)
+stream::not(s, rule)                 -- Negative lookahead
+stream::lookahead(s, rule)           -- Positive lookahead
+stream::optional(s, rule)            -- Zero-or-one
+
+-- Memoization
+s.apply(rule)                        -- Call rule with packrat caching
+
+-- Failure
+stream::fail("message")             -- Explicit parse failure
+```
+
+---
+
 ## Related Specs
 
+- [parse-stream.md](./parse-stream.md) — ParseStream with combinators and packrat memoization
 - [grammar-system.md](./grammar-system.md) — Streaming and incremental parsing
 - [vm.md](./vm.md) — Async VM support
 - [fmpl-core.md](./fmpl-core.md) — Core runtime

@@ -14,7 +14,7 @@ The core crate provides the complete language runtime:
 - **Lexer** — Tokenization using [logos](https://github.com/maciejhirsz/logos)
 - **Parser** — Recursive descent producing AST
 - **Compiler** — AST to indexed RPN bytecode
-- **VM** — Stack-based bytecode execution with async support
+- **VM** — Indexed RPN bytecode execution with async support
 - **Object Database** — Prototype-based objects with Goblins patterns
 - **Grammar Engine** — OMeta-style extensible PEG grammars
 
@@ -24,27 +24,46 @@ The core crate provides the complete language runtime:
 
 ```
 fmpl-core/src/
-├── lib.rs           # Public API exports
-├── lexer.rs         # Token definitions and lexing
-├── parser.rs        # Recursive descent parser
-├── ast.rs           # AST node definitions
-├── compiler.rs      # Bytecode compilation
-├── bytecode/        # Bytecode format definitions
-├── vm.rs            # Bytecode VM with async runtime
-├── value.rs         # Runtime values (primitives, streams, grammars)
-├── object.rs        # Object database with facets
-├── stream.rs        # Async stream primitives
-├── repr.rs          # Source code representation (pretty-print)
-├── error.rs         # Error types
-├── builtins/        # Built-in functions
+├── lib.rs              # Public API exports
+├── lexer.rs            # Token definitions and lexing (logos)
+├── parser.rs           # Recursive descent parser (+ generated parser support)
+├── ast.rs              # AST node definitions
+├── compiler.rs         # AST → Indexed RPN bytecode compilation
+├── bytecode/           # Bytecode format definitions
+├── vm.rs               # Indexed RPN VM with async runtime
+├── vm_internal/        # VM internal implementation details
+├── instructions/       # Instruction handlers (arithmetic, control_flow, etc.)
+├── value.rs            # Runtime values (primitives, streams, grammars)
+├── object.rs           # Object database with facets
+├── stream.rs           # Async stream primitives (StreamHandle, SinkHandle)
+├── parse_stream.rs     # ParseStream: unified parsing with combinators and memoization
+├── pattern/            # Unified pattern type for let bindings and grammars
+│   └── mod.rs          # Pattern enum with compilation modes
+├── repr.rs             # Source code representation (pretty-print)
+├── debug.rs            # Debug utilities
+├── error.rs            # Error types (thiserror)
+├── tuplespace/         # Linda-style tuple space coordination
+├── builtins/           # Built-in functions (17 modules)
+│   ├── ast.rs          # AST manipulation
+│   ├── curl.rs         # HTTP requests
+│   ├── io.rs           # I/O operations
+│   ├── rand.rs         # Random number generation
+│   ├── sse.rs          # Server-sent events
+│   ├── time.rs         # Time operations
+│   ├── bytes.rs        # Byte operations
+│   ├── bridge.rs       # Rust-FMPL bridges
+│   ├── ir.rs           # Intermediate representation
+│   ├── codegen/        # Code generation
+│   └── ...
 └── grammar/
-    ├── mod.rs       # Grammar registry and public API
-    ├── parser.rs    # Grammar definition parser
-    ├── runtime.rs   # PEG runtime with memoization
-    ├── input.rs     # Input sources (string, list)
-    ├── stream_input.rs  # Streaming input with Fjall overflow
-    ├── incremental.rs   # ParseState/ParseNext for suspension
-    └── driver.rs    # ParseDriver for async pipelines
+    ├── mod.rs          # Grammar registry and public API
+    ├── parser.rs       # Grammar definition parser
+    ├── runtime.rs      # PEG runtime with memoization and backtracking
+    ├── trampoline.rs   # Stack-safe recursion via trampolining
+    ├── input.rs        # Input sources (string, list)
+    ├── stream_input.rs # Streaming input with Fjall overflow
+    ├── incremental.rs  # ParseState/ParseNext for suspension
+    └── driver.rs       # ParseDriver for async pipelines
 ```
 
 ---
@@ -73,24 +92,31 @@ pub use vm::Vm;
 Runtime values include:
 
 - Primitives: `Null`, `Bool`, `Int`, `Float`, `String`, `Symbol`
-- Collections: `List`, `Map`
+- Collections: `List(Arc<Vec<Value>>)`, `Map(Arc<HashMap<SmolStr, Value>>)`
 - Objects: `Object(ObjectId)`, `Facet { object, members }`
-- Functions: `Closure`, `BuiltinFn`, `Constructor`
-- Async: `Promise`, `Stream`, `StreamOp`
-- Grammars: `Grammar`, `GrammarRef`
+- Functions: `Lambda(Arc<Lambda>)`, `Partial(Arc<Partial>)`
+- Data: `Tagged(SmolStr, Arc<Vec<Value>>)` — Constructor values with tag + children
+- Grammars: `Grammar(Arc<Grammar>)` — First-class grammar values
+- Async Streams: `Stream(Arc<Stream>)`, `AsyncStream`, `Sink`, `SuspendedStream`, `SuspendedSink`
+- Parsing: `ParseStream(Arc<Mutex<ParseStream>>)` — Unified stream for combinator parsing
+- Coordination: `TupleSpace`, `TupleSpaceFacet`
+- Observation: `Cursor` — RLM-style CoW reference
+- Code: `Code(Arc<CompiledCode>)` — Compiled bytecode (opaque)
 
 ### Stream Operations
 
 ```rust
 pub enum StreamOp {
-    Map { f: Value },
-    Filter { f: Value },
-    Parse { grammar: Value, rule: SmolStr },
-    AsyncParse { grammar: Value, rule: SmolStr },  // Incremental
-    Collect,
-    // ...
+    Map(Value),
+    Filter(Value),
+    FlatMap(Value),
+    Reduce(Value),
+    Parse { grammar: Value, rule: SmolStr },      // Blocking parse
+    AsyncParse { grammar: Value, rule: SmolStr },  // Incremental parse
 }
 ```
+
+Note: `Collect`, `Take`, `Drop` are not implemented as StreamOp variants.
 
 ---
 
@@ -150,5 +176,7 @@ fn main() -> fmpl_core::Result<()> {
 ## Related Specs
 
 - [grammar-system.md](./grammar-system.md) — OMeta-style grammars with streaming support
+- [parse-stream.md](./parse-stream.md) — ParseStream with combinators and packrat memoization
 - [object-system.md](./object-system.md) — Goblins-inspired objects
 - [vm.md](./vm.md) — Bytecode VM details
+- [pattern-matching.md](./pattern-matching.md) — Pattern matching with `@` operator

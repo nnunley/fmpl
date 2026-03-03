@@ -119,6 +119,77 @@ error("Oops!")      -- turn rolls back, cell still has old value
 | `compiler.rs` | Parse `^name` constructor syntax, pass `bcom` callback |
 | `parser.rs` | Recognize `^name` as constructor form |
 
+## Acceptance Criteria
+
+### AC-1: Parse `^name` constructor syntax
+
+**File**: `parser.rs`, `ast.rs`
+**Test**: `fmpl-core/tests/core_prelude.rs` (or new `bcom.rs`)
+
+- Given `object ^cell (bcom, val) { ... }`
+- When parsed, the `^` prefix marks this as a constructor function
+- And `bcom` is recognized as the first parameter (special form)
+- And the AST node stores `is_constructor: true`
+
+### AC-2: `bcom` callback queues state replacement
+
+**File**: `vm.rs`, `object.rs`
+**Test**: `fmpl-core/tests/bcom.rs` (new file)
+
+- Given a constructor `^cell(bcom, val)` with method `set(new_val): bcom(^cell(bcom, new_val))`
+- When `cell.set(42)` is called
+- Then `bcom` stores a `BcomState` in `object.pending_bcom`
+- And the method returns normally (doesn't apply the change yet)
+
+### AC-3: Turn commit applies pending bcom
+
+**File**: `vm.rs`
+**Test**: `fmpl-core/tests/bcom.rs`
+
+- Given a pending `bcom` on object `cell`
+- When the turn completes successfully
+- Then `cell`'s properties/methods/facets are replaced with the `BcomState` values
+- And subsequent calls see the new state
+- And the ObjectId remains the same (identity preserved)
+
+### AC-4: Turn rollback discards pending bcom
+
+**File**: `vm.rs`
+**Test**: `fmpl-core/tests/bcom.rs`
+
+- Given `cell.set(42)` followed by `error("Oops!")`
+- When the turn fails with an exception
+- Then `cell` retains its original state (bcom discarded)
+- And `cell.get()` returns the pre-set value
+
+### AC-5: Multiple bcom calls — last wins
+
+**File**: `vm.rs`
+**Test**: `fmpl-core/tests/bcom.rs`
+
+- Given `cell.set(1)` then `cell.set(2)` in the same turn
+- When the turn commits
+- Then `cell.get()` returns `2` (last bcom wins)
+
+### AC-6: bcom preserves facets
+
+**File**: `object.rs`
+**Test**: `fmpl-core/tests/bcom.rs`
+
+- Given a cell with facet `public: [get, set]`
+- When `bcom` replaces the cell's state
+- Then the `public` facet is preserved in the new state
+- And `cell.as(:public).get()` still works
+
+## Implementation Order
+
+1. AC-1 (parser) — syntax only, no runtime change
+2. AC-2 (bcom callback) — core mechanism
+3. AC-3 (turn commit) — requires turn boundary concept
+4. AC-4 (rollback) — requires exception-aware turn handling
+5. AC-5 (last wins) — simple once AC-2/AC-3 work
+6. AC-6 (facet preservation) — integration test
+
 ## Related
 
 - [facets](facets.md) — bcom must preserve facet definitions
