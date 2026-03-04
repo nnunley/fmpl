@@ -58,7 +58,10 @@ def main():
     # --- Pre-flight checks ---
     context_parts = []
 
-    # 1. Health check: cargo test
+    # 1. Auto-format: cargo fmt (fix formatting before anything else)
+    run("cargo fmt 2>&1")
+
+    # 2. Health check: cargo test
     _, test_output = run(
         "cargo test -p fmpl-core 2>&1 | grep -E '^(test |test result:|FAILED|error\\[|thread.*panicked)' | head -20"
     )
@@ -77,7 +80,7 @@ def main():
             if m and int(m.group(1)) > 0:
                 tests_failing = True
 
-    # 2. Health check: cargo clippy
+    # 3. Health check: cargo clippy
     _, clippy_output = run(
         "cargo clippy -p fmpl-core 2>&1 | grep -v objfs | grep -E '^warning:' "
         "| grep -v 'fmpl-core@' | grep -v 'generated.*warnings'",
@@ -88,7 +91,7 @@ def main():
     ]
     has_clippy_warnings = len(clippy_warnings) > 0
 
-    # 3. Uncommitted changes: jj diff from iteration base bookmark
+    # 4. Uncommitted changes: jj diff from iteration base bookmark
     _, diff_output = run("jj diff --from ralph-iter-base --stat 2>&1")
     if "No such bookmark" in diff_output:
         _, diff_output = run("jj diff --stat 2>&1")
@@ -109,7 +112,7 @@ def main():
                                  ".claude/settings.local.json"):
                         protected_files.append(fname)
 
-    # 4. Determine starting state
+    # 5. Determine starting state
     if tests_failing:
         start_state = "IMPLEMENT"
         health_fix = True

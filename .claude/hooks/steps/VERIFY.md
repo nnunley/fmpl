@@ -1,7 +1,14 @@
 Run verification:
 
-1. ONE `cargo test` run (filtered to your changes). Must pass.
-2. Clippy auto-fix, then check for remaining warnings. Must have zero warnings.
+1. `cargo fmt` — format all code.
+2. ONE `cargo test` run (filtered to your changes). Must pass.
+3. Clippy auto-fix, then check for remaining warnings. Must have zero warnings.
+
+### Format
+
+```
+cargo fmt
+```
 
 ### Clippy procedure — follow exactly:
 
@@ -19,5 +26,5 @@ If Step 2 shows any warnings, fix them manually. Zero warnings required, not jus
 
 Do NOT target individual test files with clippy (e.g., `--test foo`). Clippy runs on the crate.
 
-If tests/clippy fail, you'll return to IMPLEMENT. Fix and retry.
-If both pass, you'll advance to REVIEW.
+If tests/clippy/fmt fail, you'll return to IMPLEMENT. Fix and retry.
+If all pass, you'll advance to REVIEW.
