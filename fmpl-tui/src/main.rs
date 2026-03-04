@@ -199,7 +199,8 @@ enum CommandState {
     Approved, // Approved for execution
     Denied,   // Denied/skipped by user
     Executed, // Successfully executed
-    Failed,   // Execution failed
+    #[allow(dead_code)]
+    Failed, // Execution failed
 }
 
 /// A tool invocation within a command
@@ -221,13 +222,15 @@ struct RuleMatch {
 #[derive(Clone, Debug)]
 struct CodeCommand {
     id: CommandId,
-    parent_id: Option<CommandId>,     // Parent in command DAG
-    linked_task_id: Option<usize>,    // Links to planning task
-    description: String,              // Human-readable description
-    tool_call: ToolInvocation,        // The tool to invoke
-    grammar_checks: Vec<RuleMatch>,   // Policy/grammar validation
-    state: CommandState,              // Current state
-    timestamp: String,                // ISO timestamp
+    parent_id: Option<CommandId>, // Parent in command DAG
+    #[allow(dead_code)]
+    linked_task_id: Option<usize>, // Links to planning task
+    description: String,          // Human-readable description
+    tool_call: ToolInvocation,    // The tool to invoke
+    grammar_checks: Vec<RuleMatch>, // Policy/grammar validation
+    state: CommandState,          // Current state
+    #[allow(dead_code)]
+    timestamp: String, // ISO timestamp
     execution_result: Option<String>, // Result if executed
 }
 
@@ -271,7 +274,8 @@ struct App {
     // Command Stream: Code panel as command stream viewer/editor
     command_stream: Option<Value>, // The active async stream handle
     arrived_commands: Vec<CodeCommand>, // Commands that have arrived on current branch
-    command_cursor: usize,         // Current position in command stream
+    #[allow(dead_code)]
+    command_cursor: usize, // Current position in command stream
     selected_command_index: usize, // Currently selected command (for UI)
     command_counter: CommandId,    // For generating command IDs
     stream_complete: bool,         // Has the stream terminated?
@@ -2402,6 +2406,7 @@ impl App {
     }
 
     /// Helper: Extract string value from FMPL Map
+    #[allow(dead_code)]
     fn get_map_string(&self, map: &Arc<HashMap<SmolStr, Value>>, key: &str) -> Option<String> {
         map.get(&SmolStr::new(key)).and_then(|v| match v {
             Value::String(s) => Some(s.to_string()),
@@ -2410,6 +2415,7 @@ impl App {
     }
 
     /// Helper: Extract bool value from FMPL Map
+    #[allow(dead_code)]
     fn get_map_bool(&self, map: &Arc<HashMap<SmolStr, Value>>, key: &str) -> Option<bool> {
         map.get(&SmolStr::new(key)).and_then(|v| match v {
             Value::Bool(b) => Some(*b),
@@ -2418,6 +2424,7 @@ impl App {
     }
 
     /// Helper: Extract float value from FMPL Map
+    #[allow(dead_code)]
     fn get_map_float(&self, map: &Arc<HashMap<SmolStr, Value>>, key: &str) -> Option<f64> {
         map.get(&SmolStr::new(key)).and_then(|v| match v {
             Value::Float(f) => Some(*f),
@@ -2427,6 +2434,7 @@ impl App {
     }
 
     /// Helper: Extract int value from FMPL Map
+    #[allow(dead_code)]
     fn get_map_int(&self, map: &Arc<HashMap<SmolStr, Value>>, key: &str) -> Option<i64> {
         map.get(&SmolStr::new(key)).and_then(|v| match v {
             Value::Int(i) => Some(*i),
@@ -2763,12 +2771,12 @@ impl App {
                             "🤖 Assistant"
                         };
                         text.push_str(&format!("\n🔄 [{}] {} (MODIFIED)\n", i + 1, role_label));
-                        text.push_str(&"  ── Comparison branch:\n".to_string());
+                        text.push_str("  ── Comparison branch:\n");
                         text.push_str(&format!(
                             "  {}\n",
                             comp.content.lines().next().unwrap_or("")
                         ));
-                        text.push_str(&"  ── Current branch:\n".to_string());
+                        text.push_str("  ── Current branch:\n");
                         text.push_str(&format!(
                             "  {}\n",
                             curr.content.lines().next().unwrap_or("")
@@ -2972,11 +2980,13 @@ impl App {
 
 // Phase 9 Task 9.1: Tool Execution Request Parsing
 
-/// Parse a tool request from LLM response text
+/// Parse a tool request from LLM response text.
+///
 /// Supports formats:
 /// - Simple: TOOL:grep:pattern:src/
 /// - JSON: TOOL:{"tool": "grep", "args": {"pattern": "..."}}
-/// Returns None if no tool request found
+///
+/// Returns None if no tool request found.
 fn parse_tool_request(text: &str) -> Option<Vec<ToolRequest>> {
     let mut requests = Vec::new();
 
@@ -3083,7 +3093,7 @@ fn validate_tool_request(request: &ToolRequest, tools: &[Tool]) -> Result<(), St
 /// Execute a tool synchronously (Phase 9 Task 9.2)
 /// Handles different tool types: grep, file_read, bash_execute, llm_query
 /// Returns ToolResult with success status, output, error, and duration
-fn execute_tool(request: &ToolRequest, tools: &mut Vec<Tool>) -> ToolResult {
+fn execute_tool(request: &ToolRequest, tools: &mut [Tool]) -> ToolResult {
     let start = std::time::Instant::now();
 
     // Find tool

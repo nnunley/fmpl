@@ -189,6 +189,12 @@ run_segment() {
                 end
             elif .type == "result" then
                 "\n[result: turns=\(.num_turns) cost=$\(.total_cost_usd)]\n"
+            elif .type == "system" and .subtype == "hook_response" then
+                # Extract state transitions from hook output
+                (.output // "") | fromjson? //empty |
+                (.hookSpecificOutput?.additionalContext // .additional_context // empty) |
+                capture("(?<state>\\[STATE.*\\])") // empty |
+                .state | "\n\(.)\n"
             else empty
             end
         ' 2>/dev/null || true
@@ -274,7 +280,8 @@ while true; do
     log "Bookmark ralph-iter-base set at $(jj log -r ralph-iter-base --no-graph -T 'change_id.short()' 2>/dev/null || echo '?')"
 
     # Pre-flight: run health check, detect uncommitted changes, init state machine.
-    PREFLIGHT_MSG=$(python3 .claude/hooks/ralph-preflight.py 2>>"$SESSION_LOG")
+    # Stderr shows progress AND goes to session log via tee.
+    PREFLIGHT_MSG=$(python3 .claude/hooks/ralph-preflight.py 2> >(tee -a "$SESSION_LOG" >&2))
     log "Pre-flight: $(python3 -c "import json; s=json.load(open('.claude/.ralph-state.json')); print(f\"state={s['state']} protected={len(s.get('protected_files',[]))} uncommitted={len(s.get('uncommitted_files',[]))}\")" 2>/dev/null || echo "no state")"
 
     PROMPT_CONTENT=$(cat "$PROMPT_FILE")

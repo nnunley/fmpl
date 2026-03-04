@@ -58,10 +58,16 @@ def main():
     # --- Pre-flight checks ---
     context_parts = []
 
+    def progress(msg):
+        """Print progress to stderr so ralph.sh can display it."""
+        print(f"  preflight: {msg}", file=sys.stderr)
+
     # 1. Auto-format: cargo fmt (fix formatting before anything else)
+    progress("cargo fmt...")
     run("cargo fmt 2>&1")
 
     # 2. Health check: cargo test
+    progress("cargo test...")
     _, test_output = run(
         "cargo test -p fmpl-core 2>&1 | grep -E '^(test |test result:|FAILED|error\\[|thread.*panicked)' | head -20"
     )
@@ -81,6 +87,7 @@ def main():
                 tests_failing = True
 
     # 3. Health check: cargo clippy (workspace-wide)
+    progress("cargo clippy...")
     _, clippy_output = run(
         "cargo clippy 2>&1 | grep -v objfs "
         "| grep -E '^warning:' "
@@ -93,6 +100,7 @@ def main():
     has_clippy_warnings = len(clippy_warnings) > 0
 
     # 4. Uncommitted changes: jj diff from iteration base bookmark
+    progress("checking uncommitted changes...")
     _, diff_output = run("jj diff --from ralph-iter-base --stat 2>&1")
     if "No such bookmark" in diff_output:
         _, diff_output = run("jj diff --stat 2>&1")
