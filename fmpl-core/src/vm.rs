@@ -1379,6 +1379,13 @@ impl Vm {
                 Instruction::PopHandler => {
                     self.exception_handlers.pop();
                 }
+
+                Instruction::YieldCheck => {
+                    // Check for preemption request at loop back-edge
+                    // For now, this is a no-op. In the future, it will check a preemption flag
+                    // and allow cooperative multitasking by yielding to other tasks
+                }
+
                 Instruction::Throw { value } => {
                     let error = frame.get(value);
                     self.throw_exception(error)?;

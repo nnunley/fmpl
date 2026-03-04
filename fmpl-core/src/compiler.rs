@@ -248,6 +248,7 @@ pub enum Instruction {
     YieldToSink {
         value: InstrIndex,
     }, // Yield value to current sink (for grammar backtracking)
+    YieldCheck, // Check for preemption at loop back-edge
 
     // Data structures (explicit operand indices)
     MakeList {
@@ -1595,6 +1596,9 @@ impl Compiler {
         // Body (result discarded)
         let _body_idx = self.compile_expr(body)?;
 
+        // Check for preemption before looping back
+        self.code.emit(Instruction::YieldCheck);
+
         // Jump back to start
         self.code.emit(Instruction::Jump { target: loop_start });
 
@@ -1615,6 +1619,9 @@ impl Compiler {
 
         // Condition
         let cond_idx = self.compile_expr(cond)?;
+
+        // Check for preemption before looping back
+        self.code.emit(Instruction::YieldCheck);
 
         // Jump back if true
         self.code.emit(Instruction::JumpIfTrue {
@@ -1720,6 +1727,9 @@ impl Compiler {
             name: cursor_var.clone(),
             value: advanced_cursor,
         });
+
+        // Check for preemption before looping back
+        self.code.emit(Instruction::YieldCheck);
 
         // Jump back to start
         self.code.emit(Instruction::Jump { target: loop_start });

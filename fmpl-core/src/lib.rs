@@ -32,7 +32,7 @@ pub mod value;
 pub mod vm;
 
 pub use ast::Expr;
-pub use compiler::{CompiledCode, Compiler};
+pub use compiler::{CompiledCode, Compiler, Instruction};
 pub use error::{Error, Result};
 pub use grammar::{Grammar, GrammarRegistry, Rule};
 pub use lexer::{Lexer, Token};

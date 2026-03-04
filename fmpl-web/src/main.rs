@@ -1,7 +1,8 @@
 //! FMPL Web REPL Server
 
 use axum::{
-    Extension, Form, Router,
+    Form, Router,
+    extract::State,
     http::StatusCode,
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -10,14 +11,24 @@ use fmpl_core::{Vm, eval};
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 use tower_http::services::ServeDir;
+use tower_sessions::{MemoryStore, SessionManagerLayer};
 
-/// Shared VM state wrapped in Arc<Mutex<>> for thread-safety.
-type SharedVm = Arc<Mutex<Vm>>;
+/// Application state
+#[derive(Clone)]
+pub struct AppState {
+    pub vm: Arc<Mutex<Vm>>,
+}
 
 #[tokio::main]
 async fn main() {
     let vm = Arc::new(Mutex::new(Vm::new()));
 
+    let session_store = MemoryStore::default();
+    let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
+
+    let state = AppState { vm };
+
+    // Build the storylet app separately and merge with proper state handling
     let storylet = fmpl_web::storylet::build_app("data").expect("storylet app");
 
     let app = Router::new()
@@ -25,9 +36,9 @@ async fn main() {
         .route("/eval", post(eval_code))
         .route("/reset", post(reset_vm))
         .nest_service("/static", ServeDir::new("static"))
-        .layer(Extension(vm));
-
-    let app = app.merge(storylet);
+        .with_state(state.clone())
+        .merge(storylet)
+        .layer(session_layer);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("FMPL Web REPL running at http://localhost:3000");
@@ -46,7 +57,7 @@ struct EvalRequest {
 
 /// Evaluate FMPL code.
 async fn eval_code(
-    Extension(vm): Extension<SharedVm>,
+    State(state): State<AppState>,
     Form(req): Form<EvalRequest>,
 ) -> impl IntoResponse {
     let code = req.code.trim();
@@ -55,9 +66,10 @@ async fn eval_code(
         return (StatusCode::OK, String::new());
     }
 
-    let mut vm = vm.lock().unwrap();
+    let mut vm = state.vm.lock().unwrap();
+    let result = eval(&mut vm, code);
 
-    match eval(&mut vm, code) {
+    match result {
         Ok(value) => {
             let html = format!(
                 r#"<div class="entry">
@@ -84,8 +96,8 @@ async fn eval_code(
 }
 
 /// Reset the VM state.
-async fn reset_vm(Extension(vm): Extension<SharedVm>) -> impl IntoResponse {
-    let mut vm = vm.lock().unwrap();
+async fn reset_vm(State(state): State<AppState>) -> impl IntoResponse {
+    let mut vm = state.vm.lock().unwrap();
     *vm = Vm::new();
     Html(r#"<div class="entry system">VM state reset.</div>"#)
 }

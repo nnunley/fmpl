@@ -33,6 +33,37 @@ fn assert_ir_parity(rust_source: &str, ir_source: &str) {
     );
 }
 
+/// Setup helper: loads prelude and ast_to_ir into VM, returns VM ready for pipeline
+fn setup_fmpl_pipeline() -> Vm {
+    let mut vm = Vm::new();
+    eval(&mut vm, r#"io::load("lib/core/prelude.fmpl")"#).expect("failed to load prelude");
+    eval(&mut vm, r#"io::load("lib/core/ast_to_ir.fmpl")"#).expect("failed to load ast_to_ir");
+    vm
+}
+
+/// Run the source through the FMPL compiler pipeline (ast:: ast_to_ir -> ir::compile -> code::eval)
+fn run_full_pipeline(vm: &mut Vm, source: &str) -> Value {
+    let compile_code = format!(
+        r#"let (ast = ast::parse({:?})) let (ir = ast @ ast_to_ir.expr) let (code = ir::compile(ir)) code::eval(code)"#,
+        source
+    );
+    eval(vm, &compile_code).expect(&format!("FMPL pipeline failed for: {}", source))
+}
+
+fn assert_pipeline_parity(source: &str) {
+    let mut vm_fmpl = setup_fmpl_pipeline();
+    let mut vm_rust = Vm::new();
+
+    let fmpl_result = run_full_pipeline(&mut vm_fmpl, source);
+    let rust_result = run_rust_compiler(&mut vm_rust, source);
+
+    assert_eq!(
+        fmpl_result, rust_result,
+        "Pipeline parity mismatch for '{}': FMPL={:?}, Rust={:?}",
+        source, fmpl_result, rust_result
+    );
+}
+
 mod literals {
     use super::*;
 
@@ -284,49 +315,6 @@ mod functions {
 mod full_pipeline {
     use super::*;
 
-    fn run_fmpl_pipeline(vm: &mut Vm, source: &str) -> Result<Value, String> {
-        let code = format!(
-            r#"
-            io::load("lib/core/prelude.fmpl");
-            io::load("lib/core/ast_to_ir.fmpl");
-            let (ast = ast::parse({:?}));
-            let (ir = ast @ ast_to_ir.expr);
-            let (code = ir::compile(ir));
-            code::eval(code)
-            "#,
-            source
-        );
-        eval(vm, &code).map_err(|e| e.to_string())
-    }
-
-    fn assert_pipeline_parity(source: &str) {
-        let mut vm_fmpl = Vm::new();
-        let mut vm_rust = Vm::new();
-
-        let fmpl_result = run_fmpl_pipeline(&mut vm_fmpl, source);
-        let rust_result = run_rust_compiler(&mut vm_rust, source);
-
-        match fmpl_result {
-            Ok(f) => {
-                // FMPL succeeded - compare with Rust result
-                assert_eq!(
-                    f, rust_result,
-                    "Pipeline parity mismatch for '{}': FMPL={:?}, Rust={:?}",
-                    source, f, rust_result
-                );
-            }
-            Err(f) => {
-                // FMPL failed - this is expected for unsupported features
-                eprintln!(
-                    "FMPL pipeline failed for '{}' (may be unsupported): {}",
-                    source, f
-                );
-                // Still try to run Rust compiler to see if it would have worked
-                eprintln!("Rust compiler result for '{}': {:?}", source, rust_result);
-            }
-        }
-    }
-
     #[test]
     fn parity_integer() {
         assert_pipeline_parity("42");
@@ -365,5 +353,109 @@ mod full_pipeline {
     #[test]
     fn parity_map() {
         assert_pipeline_parity("%{a: 1, b: 2}");
+    }
+
+    #[test]
+    fn parity_symbol() {
+        assert_pipeline_parity(":hello");
+    }
+
+    #[test]
+    fn parity_tagged() {
+        assert_pipeline_parity(":Point(1, 2)");
+    }
+
+    #[test]
+    fn parity_index() {
+        assert_pipeline_parity("[1, 2, 3][0]");
+    }
+
+    #[test]
+    fn parity_prop_access() {
+        assert_pipeline_parity("%{a: 1, b: 2}.a");
+    }
+
+    #[test]
+    fn parity_nested_lambda() {
+        assert_pipeline_parity("let (add = \\x \\y x + y) add(2)(3)");
+    }
+
+    #[test]
+    fn parity_closure() {
+        assert_pipeline_parity(
+            "let (make_adder = \\n \\x x + n) let (add5 = make_adder(5)) add5(10)",
+        );
+    }
+
+    #[test]
+    fn parity_method_call() {
+        assert_pipeline_parity("[1, 2, 3].len()");
+    }
+}
+
+mod full_pipeline_loops {
+    use super::*;
+
+    #[test]
+    fn parity_while_simple() {
+        assert_pipeline_parity("while false do 1");
+    }
+
+    #[test]
+    fn parity_for_simple() {
+        assert_pipeline_parity("for x in [1, 2, 3] { x * 2 }");
+    }
+}
+
+mod full_pipeline_sequences {
+    use super::*;
+
+    #[test]
+    fn parity_sequence() {
+        assert_pipeline_parity("let (a = 1) let (b = 2) a + b");
+    }
+
+    #[test]
+    fn parity_block() {
+        assert_pipeline_parity("{ let (x = 1) x + 1 }");
+    }
+}
+
+mod full_pipeline_advanced {
+    use super::*;
+
+    #[test]
+    fn parity_return_value() {
+        assert_pipeline_parity("let (f = \\x return x + 1) f(41)");
+    }
+
+    #[test]
+    fn parity_pipe_simple() {
+        assert_pipeline_parity("1 |> \\x x + 1");
+    }
+
+    #[test]
+    fn parity_slice_open() {
+        assert_pipeline_parity("[1, 2, 3][1..]");
+    }
+
+    #[test]
+    fn parity_slice_closed() {
+        assert_pipeline_parity("[1, 2, 3][0..2]");
+    }
+
+    #[test]
+    fn parity_match_simple() {
+        assert_pipeline_parity("match 42 { _ => 0 }");
+    }
+
+    #[test]
+    fn parity_match_tagged() {
+        assert_pipeline_parity(":Point(1, 2) @ { :Point(x, y) => [x, y], _ => [] }");
+    }
+
+    #[test]
+    fn parity_try_catch() {
+        assert_pipeline_parity("try { 42 } catch e { 0 }");
     }
 }

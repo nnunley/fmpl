@@ -21,3 +21,5 @@ fjall = { workspace = true }
 blake3 = { workspace = true }
 base64 = "0.22"
 tower = { workspace = true }
+tower-sessions = "0.15"
+uuid = { version = "1.0", features = ["v4"] }

@@ -15,4 +15,13 @@ Rules:
 9. Make sure all specs are clear, concise, and unambiguous. If they're longer than about 200 lines, break the spec into a top level file, a directory, and subspecs within that directory.
 10. Use TDD. Make sure to use DRY, KISS, and YAGNI principles.
 11. Always filter cargo output — see AGENTS.md "Operating Instructions" section.
-
+12. cargo test should always pass before you commit. After entering TDD green mode, don't fix failing tests by changing the test itself.
+13. cargo clippy must always pass before you commit - all suggestions should be applied. If you need to add an allow, add it to the top of the file with a comment explaining why.
+14. There MUST be no warnings while building.
+15. Filter ALL cargo output (build, test, check, clippy) — not just tests. See AGENTS.md for the filter commands.
+16. Limit issue selection: `jj issue ready | head -5`
+17. For external crate APIs, use context7 (resolve-library-id + query-docs) or fetch docs.rs. Never grep ~/.cargo/registry.
+18. Read files once, generously. Don't re-read narrow windows of the same file.
+19. Context is precious. One filtered build command, one docs lookup, one file read.
+20. Never declare done while the build is broken. The last cargo build/test must show zero errors.
+21. If you hit the same error 3 times: write a spec with what you tried and what failed, comment the spec path on the issue (`jj issue comment <id> "Blocked: see specs/<path>"`), then stop. Do not continue.

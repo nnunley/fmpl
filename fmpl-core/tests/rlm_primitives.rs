@@ -1,7 +1,6 @@
 //! Tests for RLM primitives: chunk and await_all
 
 use fmpl_core::{Value, eval};
-use std::sync::Arc;
 
 // Note: chunk() function tests are skipped because the @ pattern matching syntax
 // for lists needs to be properly supported first. The chunk function is defined

@@ -31,10 +31,15 @@ FMPL is a streaming-first DSL for building AI agents with grammars, capabilities
 
 ### Cargo Output Filtering
 
-Always filter cargo output to test results:
+Always filter cargo output. Unfiltered cargo output wastes context.
 
 ```bash
+# Tests
 cargo test -p fmpl-core --test <name> <filter> 2>&1 | grep -E '^(test |test result:|error\[|thread.*panicked|assertion)'
+
+# Build / check / clippy
+cargo build -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:.*fmpl|Compiling fmpl)' | head -30
+cargo clippy -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:)' | head -30
 ```
 
 ### Avoid Re-reading What You Already Have
@@ -43,6 +48,23 @@ cargo test -p fmpl-core --test <name> <filter> 2>&1 | grep -E '^(test |test resu
 - Don't `jj diff` to verify edits — run the failing test instead
 - After editing, run only the specific failing test, not the full suite. Full suite once before commit.
 - Don't re-read files you just wrote — you know what's in them
+- Read files once, generously. Don't re-read narrow windows of the same file.
+
+### How To: Understand an External Crate API
+
+Use context7 (`resolve-library-id` then `query-docs`) or fetch docs.rs. Do not grep through `~/.cargo/registry/src/`.
+
+### How To: Fix Axum Handler Trait Errors
+
+The issue is extractor ordering or missing middleware. `Session` requires `SessionManagerLayer` on the router. Use `State<T>` instead of `Extension<T>` when extractors need to work with middleware layers. Check tower-sessions docs for correct extractor signatures.
+
+### How To: Debug Cargo Build Failures
+
+```bash
+cargo build -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:.*fmpl)' | head -30
+```
+
+If errors reference external crate types, check API docs first (see above).
 
 ## Build & Test
 

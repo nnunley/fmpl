@@ -8,6 +8,7 @@ use fmpl_core::{Value, Vm, eval, object_source_repr};
 use serde::Deserialize;
 use std::path::Path as FsPath;
 use std::sync::{Arc, Mutex};
+use tower_sessions::Session;
 
 use crate::continuations::{ContinuationStore, SnapshotEnvelope};
 use crate::image_store::ImageStore;
@@ -44,11 +45,11 @@ pub fn build_app(data_dir: impl AsRef<FsPath>) -> crate::continuations::Result<R
         .layer(Extension(state)))
 }
 
-async fn play_start(Extension(state): Extension<AppState>) -> impl IntoResponse {
-    let session_id = "default";
+async fn play_start(session: Session, Extension(state): Extension<AppState>) -> impl IntoResponse {
+    let session_id = get_or_create_session_id(&session).await;
     let token = match state
         .continuations
-        .save(session_id, SnapshotEnvelope::new(Vec::new(), "rkyv-v1"))
+        .save(&session_id, SnapshotEnvelope::new(Vec::new(), "rkyv-v1"))
     {
         Ok(token) => token,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -58,13 +59,14 @@ async fn play_start(Extension(state): Extension<AppState>) -> impl IntoResponse 
 }
 
 async fn play_token(
+    session: Session,
     Extension(state): Extension<AppState>,
     Path(token): Path<String>,
     Query(query): Query<StoryletQuery>,
     headers: HeaderMap,
 ) -> impl IntoResponse {
-    let session_id = "default";
-    match state.continuations.load(session_id, &token) {
+    let session_id = get_or_create_session_id(&session).await;
+    match state.continuations.load(&session_id, &token) {
         Ok(_env) => {
             let mut vm = state.vm.lock().unwrap();
             let debug = query
@@ -92,18 +94,19 @@ struct ChoiceForm {
 }
 
 async fn play_choice(
+    session: Session,
     Extension(state): Extension<AppState>,
     Path(token): Path<String>,
     axum::Form(form): axum::Form<ChoiceForm>,
 ) -> impl IntoResponse {
-    let session_id = "default";
-    if state.continuations.load(session_id, &token).is_err() {
+    let session_id = get_or_create_session_id(&session).await;
+    if state.continuations.load(&session_id, &token).is_err() {
         return StatusCode::NOT_FOUND.into_response();
     }
 
     if state
         .continuations
-        .update_last_action(session_id, &token, &form.choice)
+        .update_last_action(&session_id, &token, &form.choice)
         .is_err()
     {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -450,4 +453,15 @@ fn html_escape(input: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+async fn get_or_create_session_id(session: &Session) -> String {
+    match session.get("session_id").await.unwrap() {
+        Some(id) => id,
+        None => {
+            let id = uuid::Uuid::new_v4().to_string();
+            session.insert("session_id", &id).await.unwrap();
+            id
+        }
+    }
 }
