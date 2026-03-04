@@ -298,14 +298,24 @@ def main():
             else:
                 state["clippy_passed"] = True
                 if state.get("tests_passed"):
-                    state["state"] = "REVIEW"
-                    save_state(state)
-                    context(
-                        "[STATE -> REVIEW] Tests and clippy passed. "
-                        "Run code review before committing. Use: "
-                        "Skill(codereview-reviewing) or "
-                        "Skill(superpowers:requesting-code-review)"
-                    )
+                    if state.get("health_fix"):
+                        # Health fix: skip review, go straight to commit
+                        state["state"] = "COMMIT"
+                        save_state(state)
+                        context(
+                            "[STATE -> COMMIT] Health fix verified. "
+                            "Commit with `jj describe -m 'fix: ...'` "
+                            "then output COMPLETED:health-fix."
+                        )
+                    else:
+                        state["state"] = "REVIEW"
+                        save_state(state)
+                        context(
+                            "[STATE -> REVIEW] Tests and clippy passed. "
+                            "Run code review before committing. Use: "
+                            "Skill(codereview-reviewing) or "
+                            "Skill(superpowers:requesting-code-review)"
+                        )
                 else:
                     save_state(state)
 

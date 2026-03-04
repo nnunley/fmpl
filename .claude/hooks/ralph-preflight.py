@@ -156,10 +156,19 @@ def main():
             "If they conflict with your task, work around them.\n"
         )
 
-    context_parts.append(
-        "\nExecute the task loop. Output COMPLETED:<id>, BLOCKED:<id>, "
-        "or CLOSED:<id> when done.\n"
-    )
+    if health_fix:
+        context_parts.append(
+            "\n## HEALTH FIX ITERATION\n"
+            "This iteration is ONLY for fixing the health issues above.\n"
+            "Do NOT pick a new task. Do NOT implement new features.\n"
+            "Fix the issues, run `cargo fmt`, verify with `cargo test` and "
+            "`cargo clippy`, commit, then output COMPLETED:health-fix.\n"
+        )
+    else:
+        context_parts.append(
+            "\nExecute the task loop. Output COMPLETED:<id>, BLOCKED:<id>, "
+            "or CLOSED:<id> when done.\n"
+        )
 
     # Progressive reveal: inject instructions for the starting state
     steps_dir = os.path.join(os.path.dirname(__file__), "steps")
