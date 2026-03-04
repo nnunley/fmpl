@@ -24,7 +24,7 @@
 use crate::ast::{Arg, BinOp, LetBinding, MapEntry, UnaryOp};
 use crate::error::{Error, Result};
 use crate::grammar::{Grammar, Rule};
-use crate::pattern::{BinaryPattern, CharPattern, CharRange, Pattern, RepeatKind};
+use crate::pattern::{CharPattern, CharRange, Pattern, RepeatKind};
 use crate::value::Value;
 use smol_str::SmolStr;
 use std::sync::Arc;

@@ -51,6 +51,8 @@ pub enum Token {
     Return,
     #[token("spawn")]
     Spawn,
+    #[token("new")]
+    New,
     #[token("try")]
     Try,
     #[token("catch")]

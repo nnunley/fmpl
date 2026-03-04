@@ -190,7 +190,7 @@ impl IrBuilder {
         &mut self,
         cond: InstrIndex,
         then_val: InstrIndex,
-        else_val: InstrIndex,
+        _else_val: InstrIndex,
     ) -> InstrIndex {
         // Allocate a temporary for the result
         let _result_idx = self.len();

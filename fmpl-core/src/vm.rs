@@ -11,7 +11,6 @@ mod vm_internal;
 use crate::compiler::{CompiledCode, InstrIndex, Instruction};
 use crate::error::{Error, Result};
 use crate::grammar::input::MemoEntry;
-use crate::grammar::runtime::apply_grammar_to_value_with_evaluator;
 use crate::grammar::{Grammar, GrammarRegistry};
 use crate::json;
 use crate::object::{Facet, Method, ObjectDb, ObjectId};
@@ -2992,26 +2991,22 @@ impl Vm {
         // Track if we need to collect results (for backtracking)
         let mut output_tx: Option<tokio::sync::mpsc::Sender<Value>> = None;
         let mut results: Vec<Value> = Vec::new();
-        let mut take_count: Option<usize> = None;
 
         // Execute operations in sequence
         for op in &stream.ops {
             match op {
-                StreamOp::Map(func) => {
+                StreamOp::Map(_func) => {
                     // Map: apply function to each value
                     // For now, just pass through (will need collection first)
                     current = Value::String(SmolStr::new("<map stream>"));
                 }
-                StreamOp::Filter(pred) => {
+                StreamOp::Filter(_pred) => {
                     // Filter: keep values matching predicate
                     // For now, just pass through
                     current = Value::String(SmolStr::new("<filter stream>"));
                 }
-                StreamOp::Take { n } => {
-                    // Extract the take count
-                    if let Value::Int(count) = n {
-                        take_count = Some(*count as usize);
-                    }
+                StreamOp::Take { n: _ } => {
+                    // TODO: take_count will limit collected results when full streaming is implemented
                 }
                 StreamOp::Collect => {
                     // Terminal operation: collect all results into a list
@@ -3029,7 +3024,7 @@ impl Vm {
                 }
                 StreamOp::Parse { grammar, rule } => {
                     // Create a channel for backtracking results
-                    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+                    let (tx, _rx) = tokio::sync::mpsc::channel(100);
 
                     // Set output_tx so yield expressions can send to it
                     output_tx = Some(tx);
@@ -3060,9 +3055,9 @@ impl Vm {
 
                     // The evaluator evaluates semantic action expressions
                     let vm_ptr = self as *mut Self;
-                    let grammar_for_closure = grammar_arc.clone();
-                    let registry_for_closure = self.grammars.clone();
-                    let rule_for_closure = rule.clone();
+                    let _grammar_for_closure = grammar_arc.clone();
+                    let _registry_for_closure = self.grammars.clone();
+                    let _rule_for_closure = rule.clone();
 
                     let evaluator = std::rc::Rc::new(std::cell::RefCell::new(
                         move |expr: &crate::ast::Expr, bindings: &HashMap<SmolStr, Value>| {

@@ -8,10 +8,7 @@ use crate::error::Error;
 use crate::grammar::Grammar;
 use crate::grammar::parser::GrammarParser;
 use crate::lexer::{SpannedToken, Token};
-use crate::value::Value;
 use smol_str::SmolStr;
-use std::rc::Rc;
-use std::sync::Arc;
 
 // Local Result type for parser (same as crate::error::Result)
 type Result<T> = std::result::Result<T, Error>;
@@ -724,6 +721,7 @@ impl<'a> Parser<'a> {
             Token::Return => self.parse_return(),
             Token::Yield => self.parse_yield(),
             Token::Spawn => self.parse_spawn(),
+            Token::New => self.parse_new(),
             Token::Match => self.parse_match(),
             Token::Try => self.parse_try_catch(),
             Token::Throw => self.parse_throw(),
@@ -1350,6 +1348,7 @@ impl<'a> Parser<'a> {
             Token::Lambda => "lambda".into(),
             Token::Return => "return".into(),
             Token::Spawn => "spawn".into(),
+            Token::New => "new".into(),
             Token::Try => "try".into(),
             Token::Catch => "catch".into(),
             Token::Throw => "throw".into(),
@@ -1385,6 +1384,7 @@ impl<'a> Parser<'a> {
                 | Token::Return
                 | Token::Yield
                 | Token::Spawn
+                | Token::New
                 | Token::Try
                 | Token::Catch
                 | Token::Throw
@@ -1708,6 +1708,20 @@ impl<'a> Parser<'a> {
         Ok(Expr::Spawn(Box::new(constructor), args))
     }
 
+    /// Parse new constructor expression: `new ^ctor(args)`.
+    /// Semantically synchronous object construction (vs spawn for concurrent).
+    /// Currently compiles to the same Spawn instruction.
+    fn parse_new(&mut self) -> Result<Expr> {
+        self.expect(&Token::New)?;
+        let constructor = self.parse_primary()?;
+        let args = if self.check(&Token::LParen) {
+            self.parse_args()?
+        } else {
+            vec![]
+        };
+        Ok(Expr::Spawn(Box::new(constructor), args))
+    }
+
     /// Parse match expression.
     fn parse_match(&mut self) -> Result<Expr> {
         self.expect(&Token::Match)?;
@@ -1987,6 +2001,7 @@ impl<'a> Parser<'a> {
             Some(Token::Return) => Ok(SmolStr::new("return")),
             Some(Token::Yield) => Ok(SmolStr::new("yield")),
             Some(Token::Spawn) => Ok(SmolStr::new("spawn")),
+            Some(Token::New) => Ok(SmolStr::new("new")),
             Some(Token::Do) => Ok(SmolStr::new("do")),
             Some(Token::While) => Ok(SmolStr::new("while")),
             Some(Token::For) => Ok(SmolStr::new("for")),

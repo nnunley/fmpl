@@ -436,7 +436,6 @@ impl Value {
 "#;
 
 struct IrToRust {
-    indent: usize,
     var_counter: usize,
     // When true, generating code for fmpl-core where Value methods return Result<Value>
     // When false, generating standalone code where RUNTIME_PRELUDE Value methods return Value
@@ -446,7 +445,6 @@ struct IrToRust {
 impl IrToRust {
     fn new() -> Self {
         Self {
-            indent: 0,
             var_counter: 0,
             is_grammar_mode: false,
         }
@@ -454,7 +452,6 @@ impl IrToRust {
 
     fn new_grammar_mode() -> Self {
         Self {
-            indent: 0,
             var_counter: 0,
             is_grammar_mode: true,
         }
@@ -463,19 +460,6 @@ impl IrToRust {
     fn fresh_var(&mut self) -> String {
         self.var_counter += 1;
         format!("__v{}", self.var_counter)
-    }
-
-    /// Check if a value has a specific tag, supporting both formats:
-    /// - Old: Value::Tagged(tag, ...)
-    /// - New: Value::List([Symbol(tag), ...])
-    fn has_tag(&self, ir: &Value, expected_tag: &str) -> bool {
-        match ir {
-            Value::Tagged(tag, _) => tag.as_str() == expected_tag,
-            Value::List(items) if !items.is_empty() => {
-                matches!(&items[0], Value::Symbol(tag) if tag.as_str() == expected_tag)
-            }
-            _ => false,
-        }
     }
 
     /// Extract tag and children from IR, supporting both formats:
@@ -935,7 +919,7 @@ impl IrToRust {
             // :ParseChar(char) - match a single character
             "ParseChar" => {
                 let c = self.expect_string(&children[0])?;
-                let c_char = c.chars().next().unwrap_or('\0');
+                let _c_char = c.chars().next().unwrap_or('\0');
                 let escaped_for_comparison = escape_string_for_rust(&c.to_string());
                 let escaped_for_error = escape_string_for_error_message(&c.to_string());
                 Ok(format!(
@@ -2166,6 +2150,7 @@ fn escape_string_for_error_message(s: &str) -> String {
 }
 
 /// Collect free variables from IR
+#[allow(dead_code)]
 fn collect_free_vars(ir: &Value, bound: &HashSet<String>, free: &mut HashSet<String>) {
     match ir {
         Value::Tagged(tag, children) => match tag.as_str() {
@@ -2217,6 +2202,7 @@ fn collect_free_vars(ir: &Value, bound: &HashSet<String>, free: &mut HashSet<Str
 
 /// Collect all binding names from a list of IR items (ParseSeq items).
 /// This extracts variable names bound via ParseBind so they can be declared upfront.
+#[allow(dead_code)]
 fn collect_bindings_from_ir_list(items: &[Value], bindings: &mut Vec<SmolStr>) {
     for item in items {
         collect_bindings_from_ir(item, bindings);

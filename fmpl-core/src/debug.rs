@@ -5,7 +5,6 @@
 
 use crate::lexer::Lexer;
 use crate::parser::Parser;
-use crate::value::Value;
 use std::fmt;
 
 /// Detailed tokenization information for debugging.
@@ -123,7 +122,7 @@ pub fn debug_tokenize(source: &str) -> Vec<TokenDebugInfo> {
 }
 
 /// Debug parse of source code with detailed tracing.
-pub fn debug_parse(source: &str, with_trace: bool) -> ParseDebug {
+pub fn debug_parse(source: &str, _with_trace: bool) -> ParseDebug {
     let tokens_info = debug_tokenize(source);
 
     // Try to parse
@@ -161,7 +160,7 @@ pub fn format_with_lines(source: &str) -> String {
 /// Show a context window around a position in source.
 pub fn show_context(source: &str, position: usize, window: usize) -> String {
     let start = position.saturating_sub(window);
-    let end = (position + window).min(source.len());
+    let _end = (position + window).min(source.len());
 
     let mut result = String::new();
     result.push_str(&format!("Position {} ({}):\n", position, source.len()));
@@ -174,7 +173,7 @@ pub fn show_context(source: &str, position: usize, window: usize) -> String {
 
     // Show marker under the position
     let marker = if position < source.len() {
-        let char_width = source[position..]
+        let _char_width = source[position..]
             .chars()
             .next()
             .map(|c| c.len_utf8())

@@ -3559,6 +3559,7 @@ impl Compiler {
 
     /// Extract the nested binding path and variable name from a pattern.
     /// For example, for key="outer" and pattern=`%{inner: x}`, returns `(vec!["outer", "inner"], "x")`.
+    #[allow(dead_code)]
     fn extract_nested_binding_path(
         pattern: &crate::grammar::Pattern,
         key: &SmolStr,
