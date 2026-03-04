@@ -7,7 +7,7 @@ Run verification:
 
 **Step 1: Auto-fix**
 ```
-cargo clippy --fix --allow-dirty -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:.*fmpl|Fixed)' | head -30
+cargo clippy --fix -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:.*fmpl|Fixed)' | head -30
 ```
 
 **Step 2: Check remaining warnings**

@@ -128,7 +128,7 @@ def main():
         context_parts.append(f"\n## Clippy: FAILED — {len(clippy_warnings)} warnings\n")
         context_parts.append(
             "Zero warnings required. Fix all clippy warnings before picking a new task.\n"
-            "Run `cargo clippy --fix --allow-dirty -p fmpl-core` first, then fix remaining manually.\n"
+            "Run `cargo clippy --fix -p fmpl-core` first, then fix remaining manually.\n"
         )
         context_parts.append("```\n" + "\n".join(clippy_warnings[:15]) + "\n```\n")
     else:

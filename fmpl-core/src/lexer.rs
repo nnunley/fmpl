@@ -125,7 +125,7 @@ pub enum Token {
         let inner = &s[1..s.len()-1];
         // Process escape sequences
         let mut result = String::with_capacity(inner.len());
-        let mut chars = inner.chars();
+        let chars = inner.chars();
         let mut last_was_backslash = false;
 
         for c in chars {
