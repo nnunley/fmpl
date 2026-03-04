@@ -38,6 +38,13 @@ def is_cargo_test(cmd):
 def is_cargo_clippy(cmd):
     return bool(re.search(r'cargo\s+clippy', cmd))
 
+def is_cargo_cmd(cmd):
+    return bool(re.search(r'cargo\s+(test|clippy|build|check)', cmd))
+
+def is_cargo_filtered(cmd):
+    """Check if cargo output is piped through a filter (grep, head, tail)."""
+    return bool(re.search(r'\|\s*(grep|head|tail)', cmd))
+
 def is_jj_issue(cmd):
     return bool(re.search(r'jj\s+issue', cmd))
 
@@ -121,6 +128,12 @@ def main():
     # --- TRIAGE ---
     if current == "TRIAGE":
         if tool_name == "Bash":
+            # Enforce close-and-pick limit
+            if re.search(r'jj\s+issue\s+close', cmd) and state.get("close_count", 0) >= 3:
+                block(
+                    "BLOCKED [state=TRIAGE]: 3 close-and-pick loops exhausted. "
+                    "You must implement the current task or output CLOSED/BLOCKED."
+                )
             if is_jj_issue(cmd) or is_cargo_test(cmd):
                 allow()
         if tool_name in RESEARCH_TOOLS:
@@ -145,6 +158,14 @@ def main():
                 "BLOCKED [state=IMPLEMENT]: You are committed to the current "
                 "task. `jj issue ready` is not allowed during implementation. "
                 "Finish the task, verify, and commit."
+            )
+        # Enforce cargo output filtering to limit context growth
+        if tool_name == "Bash" and is_cargo_cmd(cmd) and not is_cargo_filtered(cmd):
+            block(
+                "BLOCKED [state=IMPLEMENT]: Cargo output must be filtered to "
+                "limit context growth. Pipe through grep and head:\n"
+                "  cargo test ... 2>&1 | grep -E '^(test |test result:|error\\[|thread.*panicked)'\n"
+                "  cargo clippy ... 2>&1 | grep -E '^(error|warning:)' | head -30"
             )
         if tool_name in ("Write", "Edit"):
             # Require docs/codebase/ check before first write
@@ -208,6 +229,14 @@ def main():
     # --- VERIFY ---
     if current == "VERIFY":
         if tool_name == "Bash":
+            # Enforce cargo output filtering
+            if is_cargo_cmd(cmd) and not is_cargo_filtered(cmd):
+                block(
+                    "BLOCKED [state=VERIFY]: Cargo output must be filtered. "
+                    "Pipe through grep and head:\n"
+                    "  cargo test ... 2>&1 | grep -E '^(test |test result:|error\\[|thread.*panicked)'\n"
+                    "  cargo clippy ... 2>&1 | grep -E '^(error|warning:)' | head -30"
+                )
             if is_cargo_test(cmd) or is_cargo_clippy(cmd):
                 allow()
             if is_jj_commit(cmd) or is_jj_issue(cmd):
@@ -266,6 +295,14 @@ def main():
     # --- COMMIT ---
     if current == "COMMIT":
         if tool_name == "Bash":
+            # Enforce cargo output filtering
+            if is_cargo_cmd(cmd) and not is_cargo_filtered(cmd):
+                block(
+                    "BLOCKED [state=COMMIT]: Cargo output must be filtered. "
+                    "Pipe through grep and head:\n"
+                    "  cargo test ... 2>&1 | grep -E '^(test |test result:|error\\[|thread.*panicked)'\n"
+                    "  cargo clippy ... 2>&1 | grep -E '^(error|warning:)' | head -30"
+                )
             # Block jj describe until full health check passes
             if is_jj_commit(cmd):
                 if not state.get("health_check_passed"):

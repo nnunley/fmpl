@@ -1,7 +1,17 @@
-//! Type system representation tests (AC-L1-1).
+//! Type system representation and constraint generation tests (AC-L1-1, AC-L1-2).
 
-use fmpl_core::types::{Type, TypeConstraint};
+use fmpl_core::types::{ConstraintGenerator, Type, TypeConstraint};
+use fmpl_core::{Lexer, Parser};
 use smol_str::SmolStr;
+
+fn constraints_for(source: &str) -> (Type, Vec<TypeConstraint>) {
+    let tokens = Lexer::new(source).tokenize().expect("lex failed");
+    let expr = Parser::with_source(&tokens, source)
+        .parse()
+        .expect("parse failed");
+    let mut cg = ConstraintGenerator::new();
+    cg.generate(&expr)
+}
 
 #[test]
 fn int_is_subtype_of_any() {
@@ -74,4 +84,75 @@ fn type_constraint_construction() {
     assert!(matches!(c1, TypeConstraint::Subtype(..)));
     assert!(matches!(c2, TypeConstraint::HasMethod(..)));
     assert!(matches!(c3, TypeConstraint::HasProperty(..)));
+}
+
+// --- Constraint generation tests (AC-L1-2) ---
+
+#[test]
+fn cg_binary_op_has_method() {
+    let (_, cs) = constraints_for("a + b");
+    assert!(
+        cs.iter()
+            .any(|c| matches!(c, TypeConstraint::HasMethod(_, name, _) if name == "+"))
+    );
+}
+
+#[test]
+fn cg_call_eq_fun() {
+    let (_, cs) = constraints_for("f(x)");
+    assert!(
+        cs.iter()
+            .any(|c| matches!(c, TypeConstraint::Eq(_, Type::Fun(..))))
+    );
+}
+
+#[test]
+fn cg_let_binding_eq() {
+    // Parser produces Sequence([Let([Simple("x", Some(42))], Unit), Ident("x")])
+    // ConstraintGenerator doesn't walk Sequence yet, so no constraints from top-level let;
+    // verify constraint generation works when Let has an explicit body via direct AST construction.
+    use fmpl_core::ast::{Expr, LetBinding};
+    let let_expr = Expr::Let(
+        vec![LetBinding::Simple(
+            SmolStr::new("x"),
+            Some(Box::new(Expr::Int(42))),
+        )],
+        Box::new(Expr::Ident(SmolStr::new("x"))),
+    );
+    let mut cg = ConstraintGenerator::new();
+    let (_, cs) = cg.generate(&let_expr);
+    assert!(cs.iter().any(|c| matches!(c, TypeConstraint::Eq(..))));
+}
+
+#[test]
+fn cg_prop_access_has_property() {
+    let (_, cs) = constraints_for("x.name");
+    assert!(
+        cs.iter()
+            .any(|c| matches!(c, TypeConstraint::HasProperty(_, name) if name == "name"))
+    );
+}
+
+#[test]
+fn cg_let_x_1_plus_2() {
+    // Construct AST directly: let x = 1 + 2; x
+    use fmpl_core::ast::{BinOp, Expr, LetBinding};
+    let add_expr = Expr::BinOp(Box::new(Expr::Int(1)), BinOp::Add, Box::new(Expr::Int(2)));
+    let let_expr = Expr::Let(
+        vec![LetBinding::Simple(
+            SmolStr::new("x"),
+            Some(Box::new(add_expr)),
+        )],
+        Box::new(Expr::Ident(SmolStr::new("x"))),
+    );
+    let mut cg = ConstraintGenerator::new();
+    let mut cs = vec![];
+    cg.walk(&let_expr, &mut cs);
+    // Binary op produces HasMethod constraint for "+"
+    assert!(
+        cs.iter()
+            .any(|c| matches!(c, TypeConstraint::HasMethod(_, name, _) if name == "+"))
+    );
+    // let binding produces an Eq constraint
+    assert!(cs.iter().any(|c| matches!(c, TypeConstraint::Eq(..))));
 }

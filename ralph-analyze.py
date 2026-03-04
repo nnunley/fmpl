@@ -12,6 +12,7 @@ Usage:
 """
 
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -151,7 +152,66 @@ def analyze_tool_usage(turns):
     }
 
 
-def detect_waste(turns, tool_analysis):
+def categorize_bash_commands(commands):
+    """Categorize bash commands by type for visibility."""
+    categories = {
+        "cargo test": [],
+        "cargo clippy": [],
+        "cargo build/check": [],
+        "jj issue": [],
+        "jj vcs": [],
+        "ls/file ops": [],
+        "other": [],
+    }
+    for cmd in commands:
+        if re.search(r'cargo\s+test', cmd):
+            categories["cargo test"].append(cmd)
+        elif re.search(r'cargo\s+clippy', cmd):
+            categories["cargo clippy"].append(cmd)
+        elif re.search(r'cargo\s+(build|check)', cmd):
+            categories["cargo build/check"].append(cmd)
+        elif re.search(r'jj\s+issue', cmd):
+            categories["jj issue"].append(cmd)
+        elif re.search(r'jj\s', cmd):
+            categories["jj vcs"].append(cmd)
+        elif re.search(r'^(ls|find|wc|stat)\b', cmd):
+            categories["ls/file ops"].append(cmd)
+        else:
+            categories["other"].append(cmd)
+    # Remove empty categories
+    return {k: v for k, v in categories.items() if v}
+
+
+def analyze_tool_result_sizes(events):
+    """Measure tool result sizes to find context waste."""
+    # Build a map of tool_use_id -> tool_name
+    tool_names = {}
+    for ev in events:
+        if ev.get("type") == "assistant":
+            for c in ev.get("message", {}).get("content", []):
+                if c.get("type") == "tool_use":
+                    tool_names[c.get("id", "")] = c.get("name", "unknown")
+
+    results = []
+    for ev in events:
+        if ev.get("type") != "user":
+            continue
+        for c in ev.get("message", {}).get("content", []):
+            if c.get("type") != "tool_result":
+                continue
+            content = c.get("content", "")
+            if isinstance(content, (list, dict)):
+                size = len(json.dumps(content))
+            else:
+                size = len(str(content))
+            tool_id = c.get("tool_use_id", "")
+            tool_name = tool_names.get(tool_id, "unknown")
+            results.append({"tool": tool_name, "size": size})
+
+    return results
+
+
+def detect_waste(turns, tool_analysis, events=None):
     """Flag potential context waste patterns."""
     issues = []
 
@@ -198,6 +258,30 @@ def detect_waste(turns, tool_analysis):
             f"Unfiltered cargo commands: {len(unfiltered)} "
             f"(e.g. {unfiltered[0][:80]})"
         )
+
+    # Tool result size analysis
+    if events:
+        result_sizes = analyze_tool_result_sizes(events)
+        large = [r for r in result_sizes if r["size"] > 5000]
+        if large:
+            total_large = sum(r["size"] for r in large)
+            issues.append(
+                f"Large tool results (>5k): {len(large)} results, "
+                f"{total_large:,} chars total"
+            )
+        # Context composition
+        by_tool = {}
+        for r in result_sizes:
+            by_tool.setdefault(r["tool"], 0)
+            by_tool[r["tool"]] += r["size"]
+        total_results = sum(by_tool.values())
+        if total_results > 0:
+            top = sorted(by_tool.items(), key=lambda x: -x[1])[:3]
+            breakdown = ", ".join(
+                f"{t}: {s:,} ({s/total_results*100:.0f}%)"
+                for t, s in top
+            )
+            issues.append(f"Context by tool: {breakdown}")
 
     # Too many tool calls
     total = tool_analysis["total_tool_calls"]
@@ -247,17 +331,83 @@ def format_timeline(turns):
     return "\n".join(lines)
 
 
+CONTEXT_WINDOW = 200_000
+
+
+def analyze_context(events):
+    """Analyze context window utilization from per-turn usage data."""
+    turn_data = []
+    for ev in events:
+        if ev.get("type") != "assistant":
+            continue
+        msg = ev.get("message", {})
+        usage = msg.get("usage", {})
+        model = msg.get("model", "unknown")
+        if not usage:
+            continue
+        inp = usage.get("input_tokens", 0)
+        cache_read = usage.get("cache_read_input_tokens", 0)
+        cache_create = usage.get("cache_creation_input_tokens", 0)
+        out = usage.get("output_tokens", 0)
+        total = inp + cache_read + cache_create
+        if total > 0:
+            turn_data.append({
+                "total": total,
+                "output": out,
+                "model": model,
+                "cache_hit_pct": (cache_read / total * 100) if total else 0,
+            })
+
+    if not turn_data:
+        return None
+
+    # Filter to main model turns (largest context = main model, not subagents)
+    main_turns = [t for t in turn_data if t["total"] > 20000]
+    if not main_turns:
+        main_turns = turn_data
+
+    start_ctx = main_turns[0]["total"]
+    end_ctx = main_turns[-1]["total"]
+    max_ctx = max(t["total"] for t in main_turns)
+    growth = end_ctx - start_ctx
+    num_main = len(main_turns)
+    per_turn = growth / max(num_main - 1, 1) if num_main > 1 else 0
+
+    total_output = sum(t["output"] for t in turn_data)
+    # Use average context per turn * num turns as "total context read"
+    # (each turn re-reads the full context, so this reflects actual API reads)
+    avg_ctx = sum(t["total"] for t in turn_data) / len(turn_data)
+    efficiency = (total_output / avg_ctx * 100) if avg_ctx else 0
+
+    avg_cache_hit = sum(t["cache_hit_pct"] for t in turn_data) / len(turn_data)
+
+    return {
+        "start_pct": start_ctx / CONTEXT_WINDOW * 100,
+        "end_pct": end_ctx / CONTEXT_WINDOW * 100,
+        "max_pct": max_ctx / CONTEXT_WINDOW * 100,
+        "growth_per_turn": per_turn,
+        "total_turns": len(turn_data),
+        "main_turns": num_main,
+        "efficiency_pct": efficiency,
+        "avg_cache_hit_pct": avg_cache_hit,
+        "start_tokens": start_ctx,
+        "end_tokens": end_ctx,
+    }
+
+
 def format_summary(events, output_json=False, show_timeline=False):
     """Format the full analysis."""
     turns = extract_turns(events)
     result = extract_result(events)
     tool_analysis = analyze_tool_usage(turns)
-    waste = detect_waste(turns, tool_analysis)
+    waste = detect_waste(turns, tool_analysis, events)
+    ctx = analyze_context(events)
 
     if output_json:
         return json.dumps({
             "result": result,
             "tools": tool_analysis,
+            "context": ctx,
             "waste_flags": waste,
         }, indent=2)
 
@@ -282,6 +432,18 @@ def format_summary(events, output_json=False, show_timeline=False):
             f"cache_create={usage.get('cache_creation_input_tokens', 0)}"
         )
 
+    if ctx:
+        lines.append("")
+        lines.append(
+            f"Context: {ctx['start_pct']:.0f}% -> {ctx['end_pct']:.0f}% "
+            f"(max {ctx['max_pct']:.0f}%) of {CONTEXT_WINDOW // 1000}k window"
+        )
+        lines.append(
+            f"  Growth: +{ctx['growth_per_turn']:.0f} tok/turn  "
+            f"Efficiency: {ctx['efficiency_pct']:.2f}% (output/context)  "
+            f"Cache hit: {ctx['avg_cache_hit_pct']:.1f}%"
+        )
+
     lines.append("")
     lines.append(f"Tool calls: {tool_analysis['total_tool_calls']}")
     for tool, count in sorted(
@@ -303,6 +465,11 @@ def format_summary(events, output_json=False, show_timeline=False):
 
     if tool_analysis["commands_run"]:
         lines.append("")
+        bash_cats = categorize_bash_commands(tool_analysis["commands_run"])
+        lines.append("Bash breakdown:")
+        for cat, cmds in bash_cats.items():
+            lines.append(f"  {cat}: {len(cmds)}")
+        lines.append("")
         lines.append("Commands:")
         for c in tool_analysis["commands_run"]:
             lines.append(f"  $ {c}")
@@ -322,25 +489,108 @@ def format_summary(events, output_json=False, show_timeline=False):
     return "\n".join(lines)
 
 
+def find_sibling_segments(path):
+    """Find all segment logs belonging to the same iteration.
+
+    Segment logs follow the pattern: iter-TIMESTAMP-ITER-segNN.jsonl
+    Given any segment, finds all siblings sorted by segment number.
+    Also handles legacy single-file logs (iter-TIMESTAMP-ITER.jsonl).
+    """
+    p = Path(path)
+    name = p.name
+
+    # Match segment pattern: iter-TIMESTAMP-ITER-segNN.jsonl
+    m = re.match(r'(iter-\d{8}-\d{6}-\d{3})-seg\d{2}\.jsonl$', name)
+    if not m:
+        # Not a segment file — return just this file
+        return [p]
+
+    prefix = m.group(1)
+    parent = p.parent
+    segments = sorted(parent.glob(f"{prefix}-seg*.jsonl"))
+    return segments if segments else [p]
+
+
+def format_segments_breakdown(segment_paths):
+    """Format a per-segment breakdown for multi-segment iterations."""
+    lines = []
+    lines.append("")
+    lines.append("SEGMENT BREAKDOWN:")
+    lines.append("-" * 40)
+
+    total_cost = 0
+    total_turns = 0
+
+    for i, seg_path in enumerate(segment_paths, 1):
+        events = parse_events(str(seg_path))
+        result = extract_result(events)
+        ctx = analyze_context(events)
+        tool_analysis = analyze_tool_usage(extract_turns(events))
+
+        cost = result["cost_usd"] if result else 0
+        turns = result["num_turns"] if result else 0
+        total_cost += cost
+        total_turns += turns
+
+        success = "OK" if (result and result["success"]) else "budget/error"
+        ctx_info = ""
+        if ctx:
+            ctx_info = f"  ctx: {ctx['start_pct']:.0f}%->{ctx['end_pct']:.0f}%"
+
+        lines.append(
+            f"  Seg {i}: {turns} turns, ${cost:.3f}, "
+            f"{tool_analysis['total_tool_calls']} tools, "
+            f"{success}{ctx_info}"
+        )
+
+    lines.append(f"  Total: {total_turns} turns, ${total_cost:.3f}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: ralph-analyze.py <logfile.jsonl> [--json] [--timeline]")
+        print(
+            "Usage: ralph-analyze.py <logfile.jsonl> "
+            "[--json] [--timeline] [--segments]"
+        )
         sys.exit(1)
 
     path = sys.argv[1]
     output_json = "--json" in sys.argv
     show_timeline = "--timeline" in sys.argv
+    show_segments = "--segments" in sys.argv
 
     if not Path(path).exists():
         print(f"Error: {path} not found", file=sys.stderr)
         sys.exit(1)
 
-    events = parse_events(path)
-    if not events:
-        print(f"Error: no events in {path}", file=sys.stderr)
-        sys.exit(1)
+    # Find sibling segments for multi-segment iterations
+    segments = find_sibling_segments(path)
+    is_multi_segment = len(segments) > 1
 
-    print(format_summary(events, output_json, show_timeline))
+    if is_multi_segment and not output_json:
+        # Concatenate all segment events for full iteration analysis
+        all_events = []
+        for seg in segments:
+            all_events.extend(parse_events(str(seg)))
+        if not all_events:
+            print(f"Error: no events in segments", file=sys.stderr)
+            sys.exit(1)
+        print(format_summary(all_events, output_json, show_timeline))
+        # Always show segment breakdown for multi-segment
+        print(format_segments_breakdown(segments))
+    else:
+        events = parse_events(path)
+        if not events:
+            print(f"Error: no events in {path}", file=sys.stderr)
+            sys.exit(1)
+        print(format_summary(events, output_json, show_timeline))
+
+    # Show segments breakdown on request even for single-segment files
+    if show_segments and not is_multi_segment:
+        # Check if there are segments we missed (user passed a non-segment file)
+        print("(Single segment — no breakdown to show)")
 
 
 if __name__ == "__main__":

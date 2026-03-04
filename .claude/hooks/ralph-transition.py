@@ -125,13 +125,15 @@ def main():
         if tool_name == "Bash" and re.search(r'jj\s+issue\s+show', cmd):
             match = re.search(r'jj\s+issue\s+show\s+(\S+)', cmd)
             task_id = match.group(1) if match else "unknown"
+            close_count = state.get("close_count", 0)
             state["state"] = "TRIAGE"
             state["task_id"] = task_id
-            state["close_count"] = 0
+            # Preserve close_count across close-and-pick loops
             save_state(state)
             context(
-                f"[STATE -> TRIAGE] Task #{task_id} selected. "
-                f"Check if already done (close-and-pick) or proceed to implement."
+                f"[STATE -> TRIAGE] Task #{task_id} selected "
+                f"({close_count}/3 close-and-pick loops used). "
+                f"Check if already done or proceed to implement."
             )
 
     # --- TRIAGE ---
@@ -140,11 +142,11 @@ def main():
             close_count = state.get("close_count", 0) + 1
             state["close_count"] = close_count
             if close_count >= 3:
-                state["state"] = "IMPLEMENT"
+                state["state"] = "DONE"
                 save_state(state)
                 context(
-                    "[STATE -> IMPLEMENT] 3 close-and-pick loops used. "
-                    "You must implement the current task now."
+                    "[STATE -> DONE] 3 close-and-pick loops used. "
+                    "Output CLOSED:<id> for this iteration."
                 )
             else:
                 state["state"] = "PICK_TASK"
