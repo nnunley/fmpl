@@ -2403,6 +2403,7 @@ impl Compiler {
     /// Supports:
     /// - Simple variable assignment: x = value
     /// - Property assignment: obj.prop = value
+    ///
     /// Emits: StoreVar/SetProp, returns the assigned value
     fn compile_assignment(&mut self, target: &Expr, value: &Expr) -> Result<InstrIndex> {
         let value_idx = self.compile_expr(value)?;
