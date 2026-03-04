@@ -55,6 +55,9 @@ pub enum Error {
 
     #[error("Parse failed at position {position}: {message}")]
     ParseFailed { position: usize, message: String },
+
+    #[error("Object persistence error: {0}")]
+    ObjectPersistenceError(String),
 }
 
 impl Error {

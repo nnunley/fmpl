@@ -172,6 +172,66 @@ impl ObjectDb {
             false
         }
     }
+
+    /// Save all objects to a Fjall keyspace (AC-1).
+    #[cfg(feature = "fjall-persistence")]
+    pub fn save_to_fjall(&self, keyspace: &fjall::Keyspace) -> Result<()> {
+        // Save list of object IDs for efficient loading
+        let ids: Vec<u64> = self.objects.keys().copied().collect();
+        let ids_bytes =
+            serde_json::to_vec(&ids).map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
+        keyspace
+            .insert(b"__object_ids__", ids_bytes)
+            .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
+
+        // Save each object
+        for (id, object) in &self.objects {
+            let key = format!("obj:{}", id);
+            let value = serde_json::to_vec(object)
+                .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
+            keyspace
+                .insert(key.as_bytes(), value)
+                .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    /// Load all objects from a Fjall keyspace (AC-2, AC-3, AC-4).
+    #[cfg(feature = "fjall-persistence")]
+    pub fn load_from_fjall(&mut self, keyspace: &fjall::Keyspace) -> Result<()> {
+        // Load object IDs list
+        let ids_bytes = keyspace
+            .get(b"__object_ids__")
+            .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
+
+        let ids: Vec<u64> = match ids_bytes {
+            Some(bytes) => serde_json::from_slice(&bytes)
+                .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?,
+            None => Vec::new(), // No objects saved yet
+        };
+
+        // Load each object
+        for id in ids {
+            let key = format!("obj:{}", id);
+            let obj_bytes = keyspace
+                .get(key.as_bytes())
+                .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
+
+            if let Some(bytes) = obj_bytes {
+                let object: Object = serde_json::from_slice(&bytes)
+                    .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
+                self.objects.insert(id, object);
+
+                // Update next_id to avoid collisions
+                if id >= self.next_id {
+                    self.next_id = id + 1;
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for ObjectDb {

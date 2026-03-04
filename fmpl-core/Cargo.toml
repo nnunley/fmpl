@@ -12,6 +12,8 @@ default = []
 trampolined-grammar = []
 # Enable cross-compilation to execution_tape VM
 cross_compile = ["execution_tape"]
+# Enable Fjall-backed persistence for objects, bytecode, and grammars
+fjall-persistence = []
 
 [dependencies]
 curl = "0.4"

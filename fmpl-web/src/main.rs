@@ -3,6 +3,7 @@
 use axum::{
     Form, Router,
     extract::Extension,
+    extract::ws::{Message, WebSocket, WebSocketUpgrade},
     http::StatusCode,
     response::{Html, IntoResponse, Json},
     routing::{get, post},
@@ -14,7 +15,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tower_http::services::ServeDir;
 use tower_sessions::{MemoryStore, Session, SessionManagerLayer};
-use uuid;
 
 /// Application state
 #[derive(Clone)]
@@ -40,6 +40,7 @@ async fn main() {
         .route("/reset", post(reset_vm))
         .route("/approval/pending", get(get_pending_approval))
         .route("/approval/respond", post(submit_approval_response))
+        .route("/approval/ws", get(approval_ws_handler))
         .nest_service("/static", ServeDir::new("static"))
         .layer(Extension(state.clone()))
         .merge(storylet)
@@ -90,7 +91,7 @@ async fn eval_code(
     ]);
 
     let mut vm = state.vm.lock().unwrap();
-    let old_user = vm.current_user.clone();
+    let old_user = vm.current_user;
     vm.current_user = Some(principal_id);
 
     let result = eval(&mut vm, code);
@@ -235,6 +236,112 @@ async fn submit_approval_response(Json(response): Json<ApprovalResponse>) -> imp
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "no pending approval"})),
         )
+    }
+}
+
+/// WebSocket handler for real-time approval notifications.
+///
+/// The WebSocket connection:
+/// 1. Polls APPROVAL_QUEUE every 500ms, sends pending approvals as JSON to client
+/// 2. Receives approval/denial responses from client and forwards to the stream TX channel
+async fn approval_ws_handler(ws: WebSocketUpgrade) -> impl IntoResponse {
+    ws.on_upgrade(handle_approval_ws)
+}
+
+async fn handle_approval_ws(mut socket: WebSocket) {
+    use tokio::time::{Duration, interval};
+
+    let mut poll_interval = interval(Duration::from_millis(500));
+    // Track which approval IDs we've already sent to avoid duplicates
+    let mut sent_ids: std::collections::HashSet<u64> = std::collections::HashSet::new();
+
+    loop {
+        tokio::select! {
+            _ = poll_interval.tick() => {
+                // Check for new pending approvals
+                let pending = APPROVAL_QUEUE.with(|q| {
+                    let queue = q.lock().unwrap();
+                    queue.iter()
+                        .filter(|req| !sent_ids.contains(&req.id))
+                        .map(|req| {
+                            serde_json::json!({
+                                "type": "approval_request",
+                                "id": req.id,
+                                "action": req.action,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                });
+
+                for item in &pending {
+                    if let Some(id) = item.get("id").and_then(|v| v.as_u64()) {
+                        sent_ids.insert(id);
+                    }
+                    let msg = Message::Text(item.to_string().into());
+                    if socket.send(msg).await.is_err() {
+                        return; // Client disconnected
+                    }
+                }
+            }
+            msg = socket.recv() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        // Parse approval response from client
+                        if let Ok(response) = serde_json::from_str::<ApprovalWsResponse>(&text) {
+                            handle_ws_approval_response(response).await;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => {
+                        return; // Client disconnected
+                    }
+                    _ => {} // Ignore other message types
+                }
+            }
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ApprovalWsResponse {
+    id: u64,
+    approved: bool,
+    reason: Option<String>,
+}
+
+/// Process an approval response received via WebSocket.
+async fn handle_ws_approval_response(response: ApprovalWsResponse) {
+    // Find and remove the matching request from the queue
+    let request = APPROVAL_QUEUE.with(|q| {
+        let mut queue = q.lock().unwrap();
+        queue
+            .iter()
+            .position(|req| req.id == response.id)
+            .map(|pos| queue.remove(pos))
+    });
+
+    if let Some(request) = request {
+        let tx = request.tx.clone();
+        let response_value = if response.approved {
+            let mut map = HashMap::new();
+            map.insert(smol_str::SmolStr::new("approved"), Value::Bool(true));
+            Value::Map(Arc::new(map))
+        } else {
+            let mut map = HashMap::new();
+            map.insert(
+                smol_str::SmolStr::new("denied"),
+                Value::String(smol_str::SmolStr::new(
+                    response.reason.as_deref().unwrap_or("User denied"),
+                )),
+            );
+            Value::Map(Arc::new(map))
+        };
+
+        tokio::spawn(async move {
+            let mut guard = tx.lock().await;
+            if let Some(sender) = guard.take() {
+                let _ = sender.send(StreamEvent::Ok(response_value)).await;
+            }
+        });
     }
 }
 
@@ -505,6 +612,78 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
             color: var(--accent-2);
         }
 
+        #approval-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(31, 27, 23, 0.45);
+            z-index: 100;
+            align-items: center;
+            justify-content: center;
+        }
+
+        #approval-overlay.active {
+            display: flex;
+        }
+
+        #approval-dialog {
+            background: var(--surface);
+            border-radius: 16px;
+            padding: 2rem;
+            max-width: 420px;
+            width: 90%;
+            border: 1px solid rgba(43, 111, 106, 0.3);
+            box-shadow: 0 24px 48px -12px var(--shadow);
+        }
+
+        #approval-dialog h3 {
+            margin: 0 0 0.5rem;
+            color: var(--accent-2);
+        }
+
+        #approval-dialog .action-text {
+            margin: 0 0 1.25rem;
+            font-size: 1rem;
+        }
+
+        #approval-dialog .btn-row {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        #approval-dialog button {
+            flex: 1;
+            padding: 0.7rem 1rem;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: bold;
+            font-size: 0.9rem;
+        }
+
+        #approval-dialog .btn-approve {
+            background: var(--success);
+            color: #f6efe5;
+        }
+
+        #approval-dialog .btn-deny {
+            background: var(--error);
+            color: #f6efe5;
+        }
+
+        #approval-dialog textarea {
+            width: 100%;
+            margin-bottom: 0.75rem;
+            padding: 0.5rem;
+            border: 1px solid rgba(31, 27, 23, 0.15);
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 0.9rem;
+            resize: vertical;
+            min-height: 60px;
+        }
+
         @media (max-width: 900px) {
             main {
                 grid-template-columns: 1fr;
@@ -567,7 +746,67 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
         </div>
     </footer>
 
+    <div id="approval-overlay">
+        <div id="approval-dialog">
+            <h3>Approval Required</h3>
+            <p class="action-text" id="approval-action"></p>
+            <textarea id="denial-reason" placeholder="Reason for denial (optional)"></textarea>
+            <div class="btn-row">
+                <button class="btn-approve" onclick="respondApproval(true)">Approve</button>
+                <button class="btn-deny" onclick="respondApproval(false)">Deny</button>
+            </div>
+        </div>
+    </div>
+
     <script>
+        let approvalWs = null;
+        let pendingApprovalId = null;
+
+        function connectApprovalWs() {
+            const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            approvalWs = new WebSocket(proto + '//' + location.host + '/approval/ws');
+
+            approvalWs.onmessage = function(evt) {
+                const data = JSON.parse(evt.data);
+                if (data.type === 'approval_request') {
+                    pendingApprovalId = data.id;
+                    document.getElementById('approval-action').textContent = data.action;
+                    document.getElementById('denial-reason').value = '';
+                    document.getElementById('approval-overlay').classList.add('active');
+                }
+            };
+
+            approvalWs.onclose = function() {
+                setTimeout(connectApprovalWs, 2000);
+            };
+
+            approvalWs.onerror = function() {
+                approvalWs.close();
+            };
+        }
+
+        function respondApproval(approved) {
+            if (pendingApprovalId === null || !approvalWs) return;
+            const reason = document.getElementById('denial-reason').value.trim();
+            const msg = { id: pendingApprovalId, approved: approved };
+            if (!approved && reason) msg.reason = reason;
+            approvalWs.send(JSON.stringify(msg));
+            document.getElementById('approval-overlay').classList.remove('active');
+
+            const output = document.getElementById('output');
+            const entry = document.createElement('div');
+            entry.className = 'entry system';
+            entry.textContent = approved
+                ? 'Approved: ' + document.getElementById('approval-action').textContent
+                : 'Denied: ' + document.getElementById('approval-action').textContent;
+            output.appendChild(entry);
+            scrollToBottom();
+
+            pendingApprovalId = null;
+        }
+
+        connectApprovalWs();
+
         function scrollToBottom() {
             const main = document.querySelector('main');
             main.scrollTop = main.scrollHeight;

@@ -1150,13 +1150,63 @@ impl<'a> GrammarParser<'a> {
                 self.parse_map_pattern()
             }
             Some(c) if c.is_alphabetic() => {
-                // Bare identifier - treat as binding (not rule reference)
                 let name = self.parse_ident()?;
-                Ok(Pattern::Bind {
-                    name: name,
-                    pattern: Box::new(Pattern::Any),
-                    is_choice: false,
-                })
+                // Check for suffix operators: rule*:binding, rule+:binding, rule:binding
+                match self.peek_char() {
+                    Some('*') => {
+                        self.advance(); // consume '*'
+                        let repeat = Pattern::Repeat {
+                            pattern: Box::new(Pattern::ApplyRule(name)),
+                            kind: RepeatKind::ZeroOrMore,
+                        };
+                        if self.peek_char() == Some(':') {
+                            self.advance(); // consume ':'
+                            let bind_name = self.parse_ident()?;
+                            Ok(Pattern::Bind {
+                                name: bind_name,
+                                pattern: Box::new(repeat),
+                                is_choice: false,
+                            })
+                        } else {
+                            Ok(repeat)
+                        }
+                    }
+                    Some('+') => {
+                        self.advance(); // consume '+'
+                        let repeat = Pattern::Repeat {
+                            pattern: Box::new(Pattern::ApplyRule(name)),
+                            kind: RepeatKind::OneOrMore,
+                        };
+                        if self.peek_char() == Some(':') {
+                            self.advance(); // consume ':'
+                            let bind_name = self.parse_ident()?;
+                            Ok(Pattern::Bind {
+                                name: bind_name,
+                                pattern: Box::new(repeat),
+                                is_choice: false,
+                            })
+                        } else {
+                            Ok(repeat)
+                        }
+                    }
+                    Some(':') => {
+                        self.advance(); // consume ':'
+                        let bind_name = self.parse_ident()?;
+                        Ok(Pattern::Bind {
+                            name: bind_name,
+                            pattern: Box::new(Pattern::ApplyRule(name)),
+                            is_choice: false,
+                        })
+                    }
+                    _ => {
+                        // Bare identifier - treat as binding (not rule reference)
+                        Ok(Pattern::Bind {
+                            name,
+                            pattern: Box::new(Pattern::Any),
+                            is_choice: false,
+                        })
+                    }
+                }
             }
             Some('"') => {
                 let s = self.parse_string()?;
@@ -1258,10 +1308,34 @@ impl<'a> GrammarParser<'a> {
                 }
             }
             Some(':') => {
-                // Symbol literal
+                // Could be :Tag(...) constructor or :symbol literal
                 self.advance();
-                let name = self.parse_ident()?;
-                Pattern::SymbolMatch(name)
+                let name = self.parse_symbol_name()?;
+                self.skip_whitespace();
+                if self.peek_char() == Some('(') {
+                    // Tag match: :Tag(children...)
+                    self.advance(); // consume '('
+                    self.skip_whitespace();
+                    let mut patterns = Vec::new();
+                    if self.peek_char() != Some(')') {
+                        patterns.push(self.parse_tag_child_pattern()?);
+                        self.skip_whitespace();
+                        while self.peek_char() == Some(',') {
+                            self.advance();
+                            self.skip_whitespace();
+                            if self.peek_char() == Some(')') {
+                                break;
+                            }
+                            patterns.push(self.parse_tag_child_pattern()?);
+                            self.skip_whitespace();
+                        }
+                    }
+                    self.expect_char(')')?;
+                    Pattern::TagMatch(name, patterns)
+                } else {
+                    // Symbol literal :foo
+                    Pattern::SymbolMatch(name)
+                }
             }
             Some('[') => {
                 // For value patterns (inside map/list), we only support list patterns, not char classes
@@ -1988,6 +2062,59 @@ mod tests {
             grammar.rules.len() > 30,
             "expected 30+ rules, got {}",
             grammar.rules.len()
+        );
+    }
+
+    #[test]
+    fn test_parse_star_quantifier_in_tag_child() {
+        // expr*:args inside a TagMatch should parse as Bind("args", Repeat(ApplyRule("expr"), ZeroOrMore))
+        let src = r#"
+            grammar test::star {
+                expr = :Tagged(tag, expr*:args) => :MakeTagged(tag, args)
+                     | :Call(expr:func, expr*:a) => :Call(func, a)
+                     | :List(expr*:items) => :MakeList(items)
+            }
+        "#;
+
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse().unwrap();
+        assert!(
+            grammar.rules.contains_key("expr"),
+            "grammar should have 'expr' rule"
+        );
+    }
+
+    #[test]
+    fn test_parse_rule_binding_in_tag_child() {
+        // expr:l inside a TagMatch should parse as Bind("l", ApplyRule("expr"))
+        let src = r#"
+            grammar test::bind {
+                expr = :Binary(:+, expr:l, expr:r) => :Add(l, r)
+            }
+        "#;
+
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse().unwrap();
+        assert!(
+            grammar.rules.contains_key("expr"),
+            "grammar should have 'expr' rule"
+        );
+    }
+
+    #[test]
+    fn test_parse_tag_in_list_pattern() {
+        // [:Binding(name, expr:value)] should parse a TagMatch inside a list pattern
+        let src = r#"
+            grammar test::tag_in_list {
+                expr = :Let([:Binding(name, expr:value)], expr:body) => :Let(name, value, body)
+            }
+        "#;
+
+        let mut parser = GrammarParser::new(src);
+        let grammar = parser.parse().unwrap();
+        assert!(
+            grammar.rules.contains_key("expr"),
+            "grammar should have 'expr' rule"
         );
     }
 }

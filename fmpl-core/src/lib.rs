@@ -28,6 +28,7 @@ pub mod pattern;
 pub mod repr;
 pub mod stream;
 pub mod tuplespace;
+pub mod types;
 pub mod value;
 pub mod vm;
 

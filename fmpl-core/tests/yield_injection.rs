@@ -37,3 +37,16 @@ fn test_do_while_loop_emits_yield_check() {
         "Expected YieldCheck instruction in do-while loop"
     );
 }
+
+#[test]
+fn test_straight_line_code_no_yield_check() {
+    let instructions = compile("let x = 1 + 2");
+    let yield_check_count = instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::YieldCheck))
+        .count();
+    assert_eq!(
+        yield_check_count, 0,
+        "Straight-line code should have zero YieldCheck instructions"
+    );
+}
