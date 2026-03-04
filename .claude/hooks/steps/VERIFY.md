@@ -1,12 +1,21 @@
 Run verification:
 
 1. ONE `cargo test` run (filtered to your changes). Must pass.
-2. ONE `cargo clippy` run on the **crate** (not individual test files). Must pass with zero errors.
+2. Clippy auto-fix, then check for remaining warnings. Must have zero warnings.
 
-Clippy command — use exactly this, do not vary:
+### Clippy procedure — follow exactly:
+
+**Step 1: Auto-fix**
 ```
-cargo clippy -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:)' | head -30
+cargo clippy --fix --allow-dirty -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:.*fmpl|Fixed)' | head -30
 ```
+
+**Step 2: Check remaining warnings**
+```
+cargo clippy -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:.*fmpl)' | head -30
+```
+
+If Step 2 shows any warnings, fix them manually. Zero warnings required, not just zero errors.
 
 Do NOT target individual test files with clippy (e.g., `--test foo`). Clippy runs on the crate.
 
