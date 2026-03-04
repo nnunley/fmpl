@@ -117,11 +117,7 @@ impl RustBuilder {
     /// Wrap expression in reference if needed.
     pub fn ref_expr(expr: &str) -> String {
         // If expr already has outer parens or is a simple variable, just add &
-        if expr.starts_with('(') {
-            format!("&{}", expr)
-        } else {
-            format!("&{}", expr)
-        }
+        format!("&{}", expr)
     }
 }
 

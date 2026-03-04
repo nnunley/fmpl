@@ -1930,8 +1930,8 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
                     ..
                 } => {
                     // Add all remaining alternatives from this choice point
-                    for i in *next_index..alternatives.len() {
-                        results.push(alternatives[i].clone());
+                    for alt in alternatives.iter().skip(*next_index) {
+                        results.push(alt.clone());
                     }
                 }
             }

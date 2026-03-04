@@ -242,17 +242,26 @@ pub enum PatternMode {
 impl Pattern {
     /// Determine if pattern requires full matching (backtracking/guards)
     pub fn requires_full_mode(&self) -> bool {
-        match self {
-            Pattern::Seq(_) | Pattern::Choice(_) | Pattern::Repeat { .. } => true,
-            Pattern::Lookahead(_) | Pattern::Not(_) | Pattern::Guard { .. } => true,
-            Pattern::Action { .. } | Pattern::Predicate(_) => true,
-            Pattern::Char(_) | Pattern::StringLiteral(_) => true,
-            Pattern::Binary(_) => true,
-            Pattern::List(ListPattern::Repeat { .. }) => true,
-            Pattern::ListMatch(_, _) | Pattern::MapMatch(_) | Pattern::TagMatch(_, _) => true,
-            Pattern::Apply(_) | Pattern::End => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Pattern::Seq(_)
+                | Pattern::Choice(_)
+                | Pattern::Repeat { .. }
+                | Pattern::Lookahead(_)
+                | Pattern::Not(_)
+                | Pattern::Guard { .. }
+                | Pattern::Action { .. }
+                | Pattern::Predicate(_)
+                | Pattern::Char(_)
+                | Pattern::StringLiteral(_)
+                | Pattern::Binary(_)
+                | Pattern::List(ListPattern::Repeat { .. })
+                | Pattern::ListMatch(_, _)
+                | Pattern::MapMatch(_)
+                | Pattern::TagMatch(_, _)
+                | Pattern::Apply(_)
+                | Pattern::End
+        )
     }
 
     /// Get recommended compilation mode for this pattern

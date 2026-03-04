@@ -1060,14 +1060,14 @@ impl<'a, 'e, I: PegInput> TrampolinedRuntime<'a, 'e, I> {
                 }
 
                 if patterns.is_empty() {
-                    if rest.is_some() {
+                    if let Some(rest_pat) = rest {
                         // Handle rest pattern
                         self.work_stack.push(WorkItem::ListMatchRestContinue {
                             collected: Vec::new(),
                             original_pos: pos,
                         });
                         let remaining: Vec<Value> = items;
-                        self.push_sub_values_match((*rest.unwrap()).clone(), remaining)?;
+                        self.push_sub_values_match((*rest_pat).clone(), remaining)?;
                     } else if items.is_empty() {
                         let new_pos = self.input.tail(&pos_obj);
                         self.result_stack.push(WorkResult::Success(

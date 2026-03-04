@@ -886,10 +886,7 @@ impl Vm {
                     // TODO: optimize to avoid clones
                     let start_cloned = start.as_ref().map(|idx| frame.get(*idx).clone());
                     let end_cloned = end.as_ref().map(|idx| frame.get(*idx).clone());
-                    let result = col.slice(
-                        start_cloned.as_ref().map(|v| v),
-                        end_cloned.as_ref().map(|v| v),
-                    )?;
+                    let result = col.slice(start_cloned.as_ref(), end_cloned.as_ref())?;
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(result);
                 }
@@ -2099,12 +2096,10 @@ impl Vm {
                         let input_len = input_list.len();
                         let patterns_len = patterns.len();
 
-                        // Check length: if no rest pattern, lengths must match exactly
-                        if rest.is_none() && input_len != patterns_len {
-                            frame.set_current(Value::Null);
-                        }
-                        // If there's a rest pattern, input must have at least as many elements as patterns
-                        else if rest.is_some() && input_len < patterns_len {
+                        // Check length constraints
+                        if (rest.is_none() && input_len != patterns_len)
+                            || (rest.is_some() && input_len < patterns_len)
+                        {
                             frame.set_current(Value::Null);
                         }
                         // Success - execute each pattern against the corresponding element
@@ -2217,11 +2212,9 @@ impl Vm {
                                         let inner_patterns_len = inner_patterns.len();
 
                                         // Check length
-                                        if inner_rest.is_none() && inner_len != inner_patterns_len {
-                                            all_matched = false;
-                                            break;
-                                        } else if inner_rest.is_some()
-                                            && inner_len < inner_patterns_len
+                                        if (inner_rest.is_none() && inner_len != inner_patterns_len)
+                                            || (inner_rest.is_some()
+                                                && inner_len < inner_patterns_len)
                                         {
                                             all_matched = false;
                                             break;
@@ -2297,12 +2290,10 @@ impl Vm {
                         let input_len = input_list.len();
                         let patterns_len = patterns.len();
 
-                        // Check length: if no rest pattern, lengths must match exactly
-                        if rest.is_none() && input_len != patterns_len {
-                            frame.set_current(Value::Null);
-                        }
-                        // If there's a rest pattern, input must have at least as many elements as patterns
-                        else if rest.is_some() && input_len < patterns_len {
+                        // Check length constraints
+                        if (rest.is_none() && input_len != patterns_len)
+                            || (rest.is_some() && input_len < patterns_len)
+                        {
                             frame.set_current(Value::Null);
                         }
                         // Success - bind variables and return the input list
@@ -2520,10 +2511,7 @@ impl Vm {
                         .get_constant(tag_idx)
                         .try_into()
                         .unwrap_or_else(|_| SmolStr::new(""));
-                    let input_tag_str: SmolStr = input_tag
-                        .clone()
-                        .try_into()
-                        .unwrap_or_else(|_| SmolStr::new(""));
+                    let input_tag_str: SmolStr = input_tag.clone();
 
                     if input_tag_str != expected_tag {
                         frame.set_current(Value::Null);
@@ -2567,10 +2555,7 @@ impl Vm {
                         .get_constant(tag_idx)
                         .try_into()
                         .unwrap_or_else(|_| SmolStr::new(""));
-                    let input_tag_str: SmolStr = input_tag
-                        .clone()
-                        .try_into()
-                        .unwrap_or_else(|_| SmolStr::new(""));
+                    let input_tag_str: SmolStr = input_tag.clone();
 
                     if input_tag_str != expected_tag {
                         frame.set_current(Value::Null);
@@ -2611,10 +2596,7 @@ impl Vm {
                                     .get_constant(*inner_tag_idx)
                                     .try_into()
                                     .unwrap_or_else(|_| SmolStr::new(""));
-                                let child_tag_str: SmolStr = child_tag
-                                    .clone()
-                                    .try_into()
-                                    .unwrap_or_else(|_| SmolStr::new(""));
+                                let child_tag_str: SmolStr = child_tag.clone();
 
                                 if child_tag_str != expected_inner_tag {
                                     all_matched = false;

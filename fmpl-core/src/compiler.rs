@@ -1023,7 +1023,9 @@ impl Compiler {
                 Ok(self.code.emit(Instruction::Return { value }))
             }
             Expr::Lambda(params, body) => self.compile_lambda(params, body),
-            Expr::ShortLambda(param, body) => self.compile_lambda(&[param.clone()], body),
+            Expr::ShortLambda(param, body) => {
+                self.compile_lambda(std::slice::from_ref(param), body)
+            }
             Expr::Let(bindings, body) => self.compile_let(bindings, body),
             Expr::LetStmt(name, expr) => self.compile_let_stmt(name, expr),
             Expr::Assignment(target, value) => self.compile_assignment(target, value),

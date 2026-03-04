@@ -289,12 +289,10 @@ impl Value {
 
     /// Check if value is a stream or cursor.
     pub fn is_stream_like(&self) -> bool {
-        match self {
-            Value::Stream(_) | Value::AsyncStream(_) | Value::Cursor(_) | Value::ParseStream(_) => {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            self,
+            Value::Stream(_) | Value::AsyncStream(_) | Value::Cursor(_) | Value::ParseStream(_)
+        )
     }
 
     /// Add two values.

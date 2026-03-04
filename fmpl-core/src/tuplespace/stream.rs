@@ -39,7 +39,7 @@ impl TupleSubscriber {
     pub fn send_tuple(
         &self,
         tuple: &Tuple,
-    ) -> Result<(), tokio::sync::mpsc::error::SendError<StreamEvent>> {
+    ) -> Result<(), Box<tokio::sync::mpsc::error::SendError<StreamEvent>>> {
         if self.pattern.matches(tuple) {
             // Convert tuple to Value for streaming
             // For now, we wrap it as a map with type and data

@@ -341,9 +341,16 @@ def compact(log_path, state_path=DEFAULT_STATE):
         parts.append("")
 
     parts.append(
-        "Resume immediately from where you left off. Do NOT re-read files "
-        "you already read, do NOT pick a new task, do NOT repeat completed work. "
-        "Execute the next step of your plan."
+        "Resume immediately from where you left off. "
+        "Execute the next step of your plan.\n\n"
+        "RULES FOR CONTINUATION SEGMENTS:\n"
+        "- Do NOT run jj diff/status to verify previous edits — they are on disk.\n"
+        "- Do NOT re-read files you already read in the previous segment.\n"
+        "- Do NOT pick a new task.\n"
+        "- Do NOT repeat completed work.\n"
+        "- If you need to verify previous edits worked, run the relevant "
+        "test or cargo check — not jj diff.\n"
+        "- Start with the NEXT action from your plan, not the first one."
     )
     parts.append("Output COMPLETED:<id>, BLOCKED:<id>, or CLOSED:<id> when done.")
 
