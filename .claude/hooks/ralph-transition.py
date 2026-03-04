@@ -342,10 +342,14 @@ def main():
                 )
 
         if tool_name == "Bash" and re.search(r'jj\s+describe', cmd):
+            # Auto-format before finalizing commit
+            import subprocess
+            subprocess.run("cargo fmt 2>/dev/null", shell=True, timeout=60)
             state["state"] = "DONE"
             save_state(state)
             context(
-                "[STATE -> DONE] Committed. Output your COMPLETED:<id> line."
+                "[STATE -> DONE] Committed (cargo fmt applied). "
+                "Output your COMPLETED:<id> line."
             )
 
     sys.exit(0)
