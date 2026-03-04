@@ -271,13 +271,30 @@ def main():
                 save_state(state)
 
         if tool_name == "Bash" and re.search(r'cargo\s+clippy', cmd):
-            # Check for actual errors (not just warnings in the grep output)
+            # Check for errors OR warnings — zero tolerance for both
             has_errors = bool(re.search(r'^error\b', response_str, re.MULTILINE))
+            has_warnings = bool(re.search(
+                r'^warning:', response_str, re.MULTILINE
+            )) and not re.search(r'0 warnings', response_str)
+            # Exclude the "N warnings generated" summary lines
+            real_warnings = [
+                line for line in response_str.split('\n')
+                if line.startswith('warning:')
+                and 'generated' not in line
+            ]
             if has_errors:
                 state["state"] = "IMPLEMENT"
                 state["verify_failed"] = True
                 save_state(state)
                 context("[STATE -> IMPLEMENT] Clippy errors found. Fix them.")
+            elif real_warnings:
+                state["state"] = "IMPLEMENT"
+                state["verify_failed"] = True
+                save_state(state)
+                context(
+                    f"[STATE -> IMPLEMENT] {len(real_warnings)} clippy warning(s) remain. "
+                    "Zero warnings required. Fix them all."
+                )
             else:
                 state["clippy_passed"] = True
                 if state.get("tests_passed"):

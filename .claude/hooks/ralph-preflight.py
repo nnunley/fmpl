@@ -80,11 +80,12 @@ def main():
             if m and int(m.group(1)) > 0:
                 tests_failing = True
 
-    # 3. Health check: cargo clippy
+    # 3. Health check: cargo clippy (workspace-wide)
     _, clippy_output = run(
-        "cargo clippy -p fmpl-core 2>&1 | grep -v objfs | grep -E '^warning:' "
-        "| grep -v 'fmpl-core@' | grep -v 'generated.*warnings'",
-        timeout=120,
+        "cargo clippy 2>&1 | grep -v objfs "
+        "| grep -E '^warning:' "
+        "| grep -v 'generated.*warnings'",
+        timeout=180,
     )
     clippy_warnings = [
         line.strip() for line in clippy_output.strip().split("\n") if line.strip()
@@ -133,7 +134,7 @@ def main():
         context_parts.append(f"\n## Clippy: FAILED — {len(clippy_warnings)} warnings\n")
         context_parts.append(
             "Zero warnings required. Fix all clippy warnings before picking a new task.\n"
-            "Run `cargo clippy --fix -p fmpl-core` first, then fix remaining manually.\n"
+            "Run `cargo clippy --fix` first, then fix remaining manually.\n"
         )
         context_parts.append("```\n" + "\n".join(clippy_warnings[:15]) + "\n```\n")
     else:

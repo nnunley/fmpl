@@ -54,7 +54,7 @@ FMPL is a streaming-first DSL for building AI agents with grammars, capabilities
 - **DRY, KISS, YAGNI**: Don't over-engineer. Only implement what's needed now.
 - **Green build is a precondition, not a postcondition.** If tests are failing when you start, fixing them is your first task. There is no such thing as a "pre-existing" failure — if it's failing, it's your problem.
 - **cargo test must pass before commit**. Run full suite once before commit; targeted tests during development.
-- **cargo clippy must pass before commit**. Run clippy on the **crate** (`cargo clippy -p <crate>`), never on individual test files (`--test`). Apply all suggestions. If you need `#[allow(...)]`, add it at the file top with a comment explaining why.
+- **cargo clippy must pass before commit with zero warnings**. Run clippy workspace-wide (`cargo clippy`), never on individual test files (`--test`). Apply all suggestions. Zero warnings required — including build-script warnings, dead code, unused fields. If you need `#[allow(...)]`, add it at the file top with a comment explaining why.
 - **Zero warnings**: There MUST be no warnings while building.
 - **3-strike rule**: If you hit the same error 3 times, write a spec with what you tried and what failed, comment the spec path on the issue (`jj issue comment <id> "Blocked: see specs/<path>"`), then stop.
 
@@ -81,7 +81,7 @@ cargo test -p fmpl-core --test <name> <filter> 2>&1 | grep -E '^(test |test resu
 
 # Build / check / clippy
 cargo build -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:.*fmpl|Compiling fmpl)' | head -30
-cargo clippy -p <crate> 2>&1 | grep -v objfs | grep -E '^(error|warning:)' | head -30
+cargo clippy 2>&1 | grep -v objfs | grep -E '^(error|warning:)' | grep -v 'generated.*warnings' | head -30
 ```
 
 ### Avoid Re-reading What You Already Have
