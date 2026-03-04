@@ -1908,6 +1908,7 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
                 parents: Vec::new(),
                 bindings,
                 facets,
+                is_constructor: false,
             }))
         }
         _ => Err(Error::Runtime(format!("Unknown AST node type: {}", tag))),

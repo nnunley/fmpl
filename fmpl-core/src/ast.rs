@@ -81,6 +81,8 @@ pub struct ObjectDef {
     pub parents: Vec<QualifiedName>,
     pub bindings: Vec<Binding>,
     pub facets: Vec<FacetDef>,
+    /// True when defined with `^name` syntax (bcom constructor)
+    pub is_constructor: bool,
 }
 
 /// A facet definition within an object.

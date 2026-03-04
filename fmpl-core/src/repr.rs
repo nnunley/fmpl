@@ -170,7 +170,11 @@ impl Display for Binding {
 
 impl Display for ObjectDef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "object ^{}", self.name)?;
+        if self.is_constructor {
+            write!(f, "object ^{}", self.name)?;
+        } else {
+            write!(f, "object {}", self.name)?;
+        }
         if !self.parents.is_empty() {
             write!(f, "(")?;
             for (i, p) in self.parents.iter().enumerate() {

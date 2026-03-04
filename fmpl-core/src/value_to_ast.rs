@@ -690,6 +690,7 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
                 parents: Vec::new(),
                 bindings,
                 facets,
+                is_constructor: false,
             }))
         }
         // AtInlineBlock(input, InlinePatternBlock(cases)) -> Expr::InlinePatternBlock

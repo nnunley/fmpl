@@ -70,7 +70,8 @@ impl<'a> Parser<'a> {
     fn parse_object_def(&mut self) -> Result<Expr> {
         self.expect(&Token::Object)?;
 
-        // Parse name (may be qualified or ^tag)
+        // Parse name (may be qualified or ^tag for bcom constructors)
+        let is_constructor = matches!(self.peek_token(), Some(Token::ObjTag(_)));
         let name = if let Some(Token::ObjTag(s)) = self.peek_token().cloned() {
             self.advance();
             QualifiedName::simple(s)
@@ -100,6 +101,7 @@ impl<'a> Parser<'a> {
             parents,
             bindings,
             facets,
+            is_constructor,
         }))
     }
 
