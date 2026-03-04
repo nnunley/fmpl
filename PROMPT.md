@@ -21,29 +21,44 @@ If tests pass, proceed to Step 1.
 
 The issue description IS your research. Do NOT re-read files already quoted in the issue.
 
-## Step 2: Quick-Check
+**You are now committed to this task.** You may not pick a different task (except via Step 2 close-and-pick).
 
-If there's an obvious test that would verify completion, run it (ONE test, filtered).
-If it passes → `jj issue close <id>` with a comment, then pick next task. Max 3 close-and-pick loops.
+## Step 2: Triage
 
-## Step 2b: Decompose If Too Large
+Check if the issue is already done. Max 3 close-and-pick loops total:
 
-If the task requires changes across multiple crates or has unclear design boundaries,
-**do not skip it for an easier task.** Instead:
+- If comments say the work is done → verify with one test → if pass, close and loop to Step 1.
+- If subtasks exist and are all closed → close parent, loop to Step 1.
+- If a test already passes → close and loop to Step 1.
 
-1. Break it into subtasks using `jj issue create -p <parent-id> -t "subtask title" -d "description"`.
-2. Each subtask should be completable in one iteration (one crate, one concern).
-3. Implement the first subtask in this iteration.
-4. Output `COMPLETED:<subtask-id> <message>` for the subtask you finished.
+If not already done → go to Step 3. **Do not go back to Step 1.**
 
-You are not allowed to abandon a task because it's hard. You ARE allowed to decompose it.
+## Step 3: Scope and Implement
 
-## Step 3: Implement
+You MUST produce code in this step. Triage and decomposition are not deliverables.
 
-- Read ONLY files not quoted in the issue. Read generously, once per file.
-- Use subagents for research beyond what the issue provides.
-- Follow TDD. Filter ALL cargo output (see AGENTS.md).
-- For external crate APIs, use context7 or docs.rs. Never grep `~/.cargo/registry`.
+**If the task is single-crate**: implement it directly.
+
+**If the task spans multiple crates** or is too large for one iteration:
+1. Decompose into subtasks (`jj issue create '<title>' --description="<desc>"`).
+2. Pick the first subtask.
+3. Implement it — write code, write tests.
+
+Either way, you must have **committed code** before moving to Step 4.
+
+**Use subagents for non-conflicting work:**
+- Use `Explore` subagent to understand code structure before editing.
+- Use `codebase-analyzer` to trace call chains or find usage patterns.
+- Use `context7` for external crate API docs (never grep `~/.cargo/registry`).
+- Use subagents for research in parallel while you plan your edits.
+- Do NOT use subagents to write code in files you're also editing (conflicts).
+
+**Anti-avoidance rules:**
+- "It's cross-crate" is not a reason to skip. Decompose and implement the first piece.
+- "I'll decompose now and implement next iteration" is not allowed.
+- "Let me pick something easier" is not allowed. You are committed from Step 1.
+- If you catch yourself creating subtasks without writing code, stop and write code.
+- Using a subagent for research does not count as implementation work.
 
 ## Step 4: Verify & Commit
 
