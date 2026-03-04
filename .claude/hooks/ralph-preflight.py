@@ -88,8 +88,10 @@ def main():
     ]
     has_clippy_warnings = len(clippy_warnings) > 0
 
-    # 3. Uncommitted changes: jj diff --stat
-    _, diff_output = run("jj diff --stat 2>&1")
+    # 3. Uncommitted changes: jj diff from iteration base bookmark
+    _, diff_output = run("jj diff --from ralph-iter-base --stat 2>&1")
+    if "No such bookmark" in diff_output:
+        _, diff_output = run("jj diff --stat 2>&1")
     has_uncommitted = bool(diff_output.strip()) and "0 files changed" not in diff_output
 
     # Parse which files are modified

@@ -212,13 +212,27 @@ def load_state(state_path):
 
 
 def get_diff_stat():
-    """Get jj diff --stat output."""
+    """Get jj diff from ralph-iter-base bookmark.
+
+    Uses the ralph-iter-base bookmark (set at iteration start) as the
+    base for diffing. This gives a stable view of all changes made
+    during this iteration, regardless of jj auto-snapshotting.
+    Falls back to bare jj diff if bookmark doesn't exist.
+    """
     try:
         result = subprocess.run(
-            "jj diff --stat 2>&1",
+            "jj diff --from ralph-iter-base --stat 2>&1",
             shell=True, capture_output=True, text=True, timeout=30,
         )
-        return result.stdout.strip()
+        output = result.stdout.strip()
+        # If bookmark doesn't exist, fall back to bare diff
+        if "No such bookmark" in output or result.returncode != 0:
+            result = subprocess.run(
+                "jj diff --stat 2>&1",
+                shell=True, capture_output=True, text=True, timeout=30,
+            )
+            output = result.stdout.strip()
+        return output
     except (subprocess.TimeoutExpired, Exception):
         return "(could not get diff stat)"
 

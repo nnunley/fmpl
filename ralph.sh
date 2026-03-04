@@ -269,6 +269,10 @@ while true; do
     ITER_START=$(date +%s)
     ITER_NUM=$(printf '%03d' "$ITERATION")
 
+    # Set a bookmark at the start of this iteration for stable diffing
+    jj bookmark set ralph-iter-base 2>/dev/null || true
+    log "Bookmark ralph-iter-base set at $(jj log -r ralph-iter-base --no-graph -T 'change_id.short()' 2>/dev/null || echo '?')"
+
     # Pre-flight: run health check, detect uncommitted changes, init state machine.
     PREFLIGHT_MSG=$(python3 .claude/hooks/ralph-preflight.py 2>>"$SESSION_LOG")
     log "Pre-flight: $(python3 -c "import json; s=json.load(open('.claude/.ralph-state.json')); print(f\"state={s['state']} protected={len(s.get('protected_files',[]))} uncommitted={len(s.get('uncommitted_files',[]))}\")" 2>/dev/null || echo "no state")"
