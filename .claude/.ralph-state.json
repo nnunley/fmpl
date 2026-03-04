@@ -1,0 +1,14 @@
+{
+  "state": "PICK_TASK",
+  "pid": 40610,
+  "task_id": null,
+  "close_count": 0,
+  "has_written_code": false,
+  "health_fix": false,
+  "decomposed": false,
+  "tests_passed": false,
+  "clippy_passed": false,
+  "verify_failed": false,
+  "protected_files": [],
+  "uncommitted_files": []
+}

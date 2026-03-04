@@ -3,11 +3,16 @@
 #![cfg(feature = "fjall-persistence")]
 
 use fmpl_core::compiler::{CompiledCode, Compiler};
+use fmpl_core::lexer::Lexer;
+use fmpl_core::parser::Parser;
 use fmpl_core::value::Value;
 use fmpl_core::vm::Vm;
 
 fn compile(source: &str) -> CompiledCode {
-    let ast = fmpl_core::ast::parse(source).expect("parse failed");
+    let tokens = Lexer::new(source).tokenize().expect("lex failed");
+    let ast = Parser::with_source(&tokens, source)
+        .parse()
+        .expect("parse failed");
     Compiler::new().compile(&ast).expect("compile failed")
 }
 
@@ -24,7 +29,7 @@ fn bytecode_survives_save_restore() {
     let dir = tempfile::tempdir().unwrap();
     let db = fjall::Database::builder(dir.path()).open().unwrap();
     let keyspace = db
-        .keyspace("bytecode", || fjall::KeyspaceCreateOptions::default())
+        .keyspace("bytecode", fjall::KeyspaceCreateOptions::default)
         .unwrap();
 
     let code = compile("1 + 2");
@@ -43,7 +48,7 @@ fn load_missing_key_returns_none() {
     let dir = tempfile::tempdir().unwrap();
     let db = fjall::Database::builder(dir.path()).open().unwrap();
     let keyspace = db
-        .keyspace("bytecode", || fjall::KeyspaceCreateOptions::default())
+        .keyspace("bytecode", fjall::KeyspaceCreateOptions::default)
         .unwrap();
 
     let result = CompiledCode::load_from_fjall(&keyspace, "nonexistent").unwrap();
@@ -56,7 +61,7 @@ fn various_instruction_types_survive() {
     let dir = tempfile::tempdir().unwrap();
     let db = fjall::Database::builder(dir.path()).open().unwrap();
     let keyspace = db
-        .keyspace("bytecode", || fjall::KeyspaceCreateOptions::default())
+        .keyspace("bytecode", fjall::KeyspaceCreateOptions::default)
         .unwrap();
 
     // Arithmetic
@@ -90,10 +95,10 @@ fn nested_code_survives() {
     let dir = tempfile::tempdir().unwrap();
     let db = fjall::Database::builder(dir.path()).open().unwrap();
     let keyspace = db
-        .keyspace("bytecode", || fjall::KeyspaceCreateOptions::default())
+        .keyspace("bytecode", fjall::KeyspaceCreateOptions::default)
         .unwrap();
 
-    let code = compile("let f = |x| x + 1; f(41)");
+    let code = compile("let f = \\x x + 1; f(41)");
     code.save_to_fjall(&keyspace, "lambda").unwrap();
     let restored = CompiledCode::load_from_fjall(&keyspace, "lambda")
         .unwrap()
@@ -107,7 +112,7 @@ fn multiple_keys_coexist() {
     let dir = tempfile::tempdir().unwrap();
     let db = fjall::Database::builder(dir.path()).open().unwrap();
     let keyspace = db
-        .keyspace("bytecode", || fjall::KeyspaceCreateOptions::default())
+        .keyspace("bytecode", fjall::KeyspaceCreateOptions::default)
         .unwrap();
 
     let code1 = compile("1 + 1");
