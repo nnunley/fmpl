@@ -1,8 +1,5 @@
 use fmpl_core::{Value, Vm, eval};
 
-// Tests run from fmpl-core/ directory, so use relative path to workspace root
-const TEST_PATH: &str = "../lib/core/grammar_optimizer_test.fmpl";
-
 #[test]
 fn test_grammar_optimizer() {
     // Change to workspace root so io::load paths work correctly

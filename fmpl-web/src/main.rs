@@ -2,7 +2,7 @@
 
 use axum::{
     Form, Router,
-    extract::State,
+    extract::Extension,
     http::StatusCode,
     response::{Html, IntoResponse},
     routing::{get, post},
@@ -11,7 +11,8 @@ use fmpl_core::{Vm, eval};
 use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 use tower_http::services::ServeDir;
-use tower_sessions::{MemoryStore, SessionManagerLayer};
+use tower_sessions::{MemoryStore, Session, SessionManagerLayer};
+use uuid;
 
 /// Application state
 #[derive(Clone)]
@@ -36,7 +37,7 @@ async fn main() {
         .route("/eval", post(eval_code))
         .route("/reset", post(reset_vm))
         .nest_service("/static", ServeDir::new("static"))
-        .with_state(state.clone())
+        .layer(Extension(state.clone()))
         .merge(storylet)
         .layer(session_layer);
 
@@ -57,7 +58,8 @@ struct EvalRequest {
 
 /// Evaluate FMPL code.
 async fn eval_code(
-    State(state): State<AppState>,
+    session: Session,
+    Extension(state): Extension<AppState>,
     Form(req): Form<EvalRequest>,
 ) -> impl IntoResponse {
     let code = req.code.trim();
@@ -66,8 +68,30 @@ async fn eval_code(
         return (StatusCode::OK, String::new());
     }
 
+    // Get or create session ID and principal for this session
+    let session_id = match session.get::<String>("session_id").await.unwrap() {
+        Some(id) => id,
+        None => {
+            let id = uuid::Uuid::new_v4().to_string();
+            let _ = session.insert("session_id", &id).await;
+            id
+        }
+    };
+
+    // Generate a deterministic principal ID from the session ID using UUID bytes
+    let parsed_uuid = uuid::Uuid::parse_str(&session_id).unwrap_or_else(|_| uuid::Uuid::new_v4());
+    let bytes = parsed_uuid.as_bytes();
+    let principal_id = u64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ]);
+
     let mut vm = state.vm.lock().unwrap();
+    let old_user = vm.current_user.clone();
+    vm.current_user = Some(principal_id);
+
     let result = eval(&mut vm, code);
+
+    vm.current_user = old_user;
 
     match result {
         Ok(value) => {
@@ -96,7 +120,7 @@ async fn eval_code(
 }
 
 /// Reset the VM state.
-async fn reset_vm(State(state): State<AppState>) -> impl IntoResponse {
+async fn reset_vm(_session: Session, Extension(state): Extension<AppState>) -> impl IntoResponse {
     let mut vm = state.vm.lock().unwrap();
     *vm = Vm::new();
     Html(r#"<div class="entry system">VM state reset.</div>"#)
@@ -108,6 +132,19 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+/// Get or create session ID for the current session.
+#[allow(dead_code)]
+async fn get_or_create_session_id(session: &Session) -> String {
+    match session.get::<String>("session_id").await.unwrap() {
+        Some(id) => id,
+        None => {
+            let id = uuid::Uuid::new_v4().to_string();
+            let _ = session.insert("session_id", &id).await;
+            id
+        }
+    }
 }
 
 const INDEX_HTML: &str = r##"<!DOCTYPE html>
@@ -388,7 +425,7 @@ const INDEX_HTML: &str = r##"<!DOCTYPE html>
     <header>
         <div class="brand">
             <h1>FMPL REPL</h1>
-            <p>Live image console · single-vat session</p>
+            <p>Live image console · per-user session</p>
         </div>
         <nav>
             <a href="/play">Open Storylet</a>
