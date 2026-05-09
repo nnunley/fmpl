@@ -137,3 +137,45 @@ These are genuine limitations requiring deeper work, not simple gap-fills.
 
 **Summary:**
 The FMPL pipeline is now a first-class compilation path, opt-in via `FMPL_USE_FMPL_COMPILER=1`. The Rust compiler is no longer the only option — it's an explicit fallback. Bootstrap caching ensures the prelude and ast_to_ir.fmpl load once per VM. The 11-test parity suite confirms identical results for basic expressions. Optimizer integration is deferred until the list-based AST refactor lands (the optimizer uses list patterns that don't match the current tagged AST). Tests: 1160 passed, 0 failed, 164 ignored. Workspace clippy: zero warnings.
+
+## ITER-0004b — Single Canonical Representation (PARTIAL)
+
+**Completed (partially):** 2026-05-08; reconciled 2026-05-09
+
+**Stories delivered (partial):** STORY-0010 — only the Rust-runtime half. The FMPL stdlib + AST/parser-surface half is rescheduled into ITER-0004c per the deferring-work-must-reschedule rule.
+
+**What shipped:**
+
+- `Value::list_node(tag, children)` and `Value::as_node(&self) -> Option<(&str, &[Value])>` helpers added to `fmpl-core/src/value.rs` (commit `pvruwplq`).
+- ast-grep transformer rules added at `tools/list-transform/rust-rules/` covering producer-with-args, consumer-iflet, consumer-iflet-else-panic patterns (commit `luxwnytk`).
+- ast-grep transformer applied workspace-wide: 229 mechanical rewrites across fmpl-core (118 producers, 111 if-let consumers) (commit `sqnqurnz`).
+- `lib/core/ast_to_ir.fmpl` rewritten **by hand** to list-pattern syntax (55 list-pattern uses, 0 legacy) (commit `psvlyykw`). The FMPL transformer that ITER-0004b's plan called for was never built; this file is the only stdlib file migrated.
+- `Value::Tagged` enum variant deleted from `fmpl-core/src/value.rs`. All Rust-side consumers migrated to use `as_node()` or list-shape destructuring. Bootstrap parser regen works without `FMPL_SKIP_PARSER_GEN` workaround (commit `qworqxrm`, originally combined with agentic-stack pollution as `puvpzsmk` and split out on 2026-05-09).
+
+**What was deferred (rescheduled to ITER-0004c):**
+
+- **FMPL transformer never built** (ITER-0004b plan Phase A item 3, Phase B item 7). The transformer was specified as a tree-grammar with three special-case rules (trailing comma for single-element list patterns, pair sentinel wrap, list-pattern binding repair) plus a CLI driver. None of it exists. Without it, the stdlib can't be regenerated mechanically from source, which transitively blocks ITER-0006 (self-compile seed).
+- **5 stdlib files still in legacy `:Tag(args)` syntax** (verified 2026-05-09 by grep):
+  - `lib/core/ast_optimizer.fmpl` — 62 legacy hits, 0 list-pattern. Critically, also not yet wired into `eval_via_fmpl_pipeline` — it's loadable only via its own test file. The 16 `#[ignore]`'d tests in `fmpl-core/tests/optimizer_integration.rs` codify this gap.
+  - `lib/core/fmpl_parser.fmpl` — 96 legacy hits.
+  - `lib/core/ir_to_rust.fmpl` — 48 legacy hits.
+  - `lib/core/prelude.fmpl` — 41 legacy hits.
+  - `lib/core/ir_to_execution_tape.fmpl` — 19 legacy hits. (Its `_indexed.fmpl` sibling IS in list-pattern syntax.)
+- **Optimizer wiring step skipped** (Phase B item 10). `eval_via_fmpl_pipeline` does not call the optimizer. SCENARIO-0103 was created but is blocked.
+- **AST/parser surfaces still present** (Phase C items 14–18): `Expr::Tagged`, `Pattern::Constructor`, `Pattern::TagMatch` AST/runtime types; the `:Tag(args)` parser production for value-constructor expressions; the `:Tag(args)` grammar-parser pattern production at `parse_value_pattern`; the tagged bytecode (`MakeTagged`, `MatchTag`, `ExtractTaggedChild`, `MatchTagged`, `MatchTaggedWithBindings`). The Rust type system still permits the dual surface; the parser silently translates `:Tag(args)` to list-shaped values via the surviving AST nodes — which is why the iteration's tests pass even though the syntax-level burn is incomplete.
+
+**Why the gap wasn't caught at commit time:**
+
+The Phase C commit message (`qworqxrm refactor(values): delete Value::Tagged variant`) claims "Final step of ITER-0004b — single canonical representation," and that claim is **true at the Rust runtime level** but **false at the FMPL stdlib and AST/parser-surface level**. The 16 `#[ignore]`'d tests in `optimizer_integration.rs` were the canary that should have failed loudly to catch the gap; instead they sit silent. Workspace tests pass because nothing currently exercises a path that would surface the parser-shape mismatch (the legacy stdlib files aren't loaded by `eval_via_fmpl_pipeline`, and ast_to_ir.fmpl IS migrated).
+
+**Scenarios:**
+- SCENARIO-0003, SCENARIO-0016, SCENARIO-0039: confirmed still passing through the FMPL pipeline (no regression from ITER-0004).
+- SCENARIO-0103 (full parity corpus with optimizer enabled): created in ITER-0004b but blocked — the optimizer is not yet wired.
+
+**Lessons (recorded for the deferring-work-must-reschedule rule):**
+
+1. **The transformer-driven strategy worked for Rust; was abandoned for FMPL.** The ast-grep rules landed 229 sites mechanically. The parallel FMPL-side transformer was never built — the session ran out of context after Phase A's Rust-side work and reverted to hand-editing `ast_to_ir.fmpl` instead. The strategy's core claim ("transformers convert a single huge atomic refactor into two reviewable artifacts") was only validated on one side of the rewrite.
+2. **A commit message that says "Final step of X" should be checked against X's stated acceptance criteria.** The Phase C commit was technically true for what it claimed (deleted the variant) but was elevated to "ITER-0004b complete" status without verifying the iteration's stated goal (single canonical representation, no parser ambiguity). Future iterations should require an explicit acceptance-check review before declaring complete — especially when the iteration plan is multi-phase.
+3. **`#[ignore]`'d tests are a deferred-acceptance contract.** The 16 tests in `optimizer_integration.rs` are the contract that ITER-0004b's optimizer-integration story requires. They should be un-ignored in the iteration that delivers their preconditions, or they should be tracked as scheduled work. Currently they sit ignored without an owner — this reconciliation moves them under ITER-0004c.
+
+**Tests:** 1170 passed, 0 failed (workspace). Workspace clippy: zero warnings. Bootstrap parser regen: works without `FMPL_SKIP_PARSER_GEN`.

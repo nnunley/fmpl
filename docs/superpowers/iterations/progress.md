@@ -1,7 +1,7 @@
 # Progress
 
-**Phase:** ITER-0004 done (compiler cutover wired). Ready for ITER-0005.
+**Phase:** ITER-0004b partially shipped (Rust runtime canonicalized; Value::Tagged deleted). FMPL stdlib + AST/parser-surface burn deferred to ITER-0004c. ITER-0005 (persistence) is technically unblocked from a serialization standpoint and can begin in parallel; ITER-0006 (self-compile) is blocked on ITER-0004c.
 **Task:** n/a
-**Iterations:** 5/8 done (ITER-0000 through ITER-0004), 3 remaining to self-hosting
-**Sentinel corpus:** 55/55 parity passing, 11/11 pipeline-compiler tests passing, 1160 total tests passing
-**Last event:** 2026-05-08 — ITER-0004 complete. eval_via_fmpl_pipeline wired; FMPL_USE_FMPL_COMPILER flag added; 11 E2E tests verify pipeline parity with Rust compiler.
+**Iterations:** 5/9 done (ITER-0000 through ITER-0004 complete; ITER-0004b partial). Now 4 remaining to self-hosting (ITER-0004c, ITER-0005, ITER-0006, ITER-0007).
+**Sentinel corpus:** 1170 total tests passing (workspace), clippy clean, bootstrap parser regen works without `FMPL_SKIP_PARSER_GEN`. The 16 `#[ignore]`'d tests in `fmpl-core/tests/optimizer_integration.rs` remain ignored — these are the contract for ITER-0004c (optimizer wired into pipeline).
+**Last event:** 2026-05-09 — Reconciled ITER-0004b status: shipped only the Rust-runtime half of the canonical-representation refactor on 2026-05-08. `Value::Tagged` is deleted; 5 stdlib files still hold legacy `:Tag(args)` syntax; `Expr::Tagged`, `Pattern::Constructor`, `Pattern::TagMatch`, the `:Tag(args)` parser productions are still present (parser silently translates to list-shaped values via the surviving AST nodes). The FMPL transformer ITER-0004b's plan called for was never built — ast_to_ir.fmpl was rewritten by hand. Created ITER-0004c to schedule the deferred work explicitly per the deferring-work-must-reschedule rule.

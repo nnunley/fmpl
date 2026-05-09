@@ -68,10 +68,23 @@
 
 The cutover (make `ast::parse` emit lists; FMPL pipeline consume lists; integrate the optimizer) and the cleanup (delete `Value::Tagged`, `Expr::Tagged`, `Pattern::Constructor`, the `:Tag(args)` parser productions, tagged bytecode, `Pattern::TagMatch`) are one refactor. Splitting them was attempted in the 2026-05-08 session and produced a worse interim state (parallel representations, dual codepaths, more code to maintain) than either before or after the full cleanup. They land together or not at all.
 
-**Status:** pending
-**Impacted scenarios:** SCENARIO-0003, SCENARIO-0016, SCENARIO-0039, SCENARIO-0103 (NEW)
+**Status:** partially shipped 2026-05-08 — Rust runtime canonicalized; FMPL stdlib + AST/parser surfaces deferred to ITER-0004c. See iteration-log.md ("ITER-0004b — Single Canonical Representation (partial)") for details.
+**Impacted scenarios:** SCENARIO-0003, SCENARIO-0016, SCENARIO-0039 (touched, ongoing); SCENARIO-0103 (NEW — blocked, optimizer not yet wired)
 **Depends on:** ITER-0004 (compiler cutover wired)
-**Look-ahead check:** Locks in `Value::List([Symbol(tag), ...])` as the canonical AST/IR representation BEFORE ITER-0005 starts persisting things — snapshots get one shape, not two. Also unblocks ITER-0006 (self-compile seed): the seed bytecode references one canonical AST/IR shape.
+**Look-ahead check (revised):** **Partial — does NOT yet fully lock in a single representation.** `Value::Tagged` is gone, but `Expr::Tagged`, `Pattern::Constructor`, the `:Tag(args)` parser production, and `Pattern::TagMatch` are still present (the parser silently translates `:Tag(args)` to list-shaped values at compile time via the surviving AST nodes). 5 stdlib files (`ast_optimizer.fmpl`, `fmpl_parser.fmpl`, `ir_to_rust.fmpl`, `prelude.fmpl`, `ir_to_execution_tape.fmpl`) still hold legacy `:Tag(args)` syntax. ITER-0005 (persistence) is technically unblocked because snapshots will only see `Value::List` — the runtime variant is the one that lives in serialized bytes — but the AST and parser ambiguity remains until ITER-0004c lands. ITER-0006 (self-compile seed) is **blocked** because the FMPL transformer was never built, so the stdlib can't be regenerated mechanically from source.
+
+**What actually shipped (Rust side only):**
+- Phase A items 1–2 and 5: `Value::list_node` + `Value::as_node` helpers, ast-grep rule files at `tools/list-transform/rust-rules/`, hand-tested.
+- Phase B items 6, 9: Ran ast-grep over fmpl-core (229 mechanical rewrites). Updated `expr_to_value` and `ir::compile_node` for list-only dispatch (commit `qworqxrm`).
+- Phase B item 7 partial: `lib/core/ast_to_ir.fmpl` was rewritten **by hand** (no FMPL transformer was ever built — items 3, 4, 7 in the original plan never executed).
+- Phase C item 13: `Value::Tagged` enum variant deleted. The Rust type-system burn is complete.
+
+**What was deferred (now ITER-0004c):**
+- Phase A item 3 (FMPL transformer build) — never started.
+- Phase B item 7 (FMPL transformer applied to all stdlib files) — only `ast_to_ir.fmpl` got rewritten, by hand. 5 files still in legacy syntax.
+- Phase B item 10 (optimizer wired into `eval_via_fmpl_pipeline`) — `ast_optimizer.fmpl` is still in legacy syntax and not called by any pipeline. The 16 `#[ignore]`'d tests in `optimizer_integration.rs` remain ignored.
+- Phase B item 12 (SCENARIO-0103) — added but blocked.
+- Phase C items 14–18 (delete `Expr::Tagged`, `Pattern::Constructor`, tagged bytecode, `Pattern::TagMatch`, the `:Tag(args)` parser production) — not started. The Rust type system permits both shapes; the parser still accepts both syntaxes; the runtime value layer is the only place that's truly canonicalized.
 
 **Scope:**
 
@@ -183,6 +196,34 @@ After Phase B the transformer has eliminated almost all `Value::Tagged` referenc
 **Why before persistence:**
 ITER-0005 will serialize `ObjectDb`, `CompiledCode`, `GrammarRegistry`, and the full VM image — all of which transitively contain `Value`. With `Value::Tagged` still present, snapshots taken now would be locked to a shape we want to abandon. Landing the canonical-representation refactor first means ITER-0005 persists `Value::List`, the only shape going forward.
 
+### ITER-0004c — FMPL Stdlib + Parser Burn (deferred from ITER-0004b)
+
+**Stories:** STORY-0010 (continued — ast_optimizer wiring is the canonical acceptance gate)
+**Rationale:** ITER-0004b shipped only the Rust-runtime half of the canonical-representation refactor. Five stdlib files still use legacy `:Tag(args)` syntax, and the AST/parser surfaces (`Expr::Tagged`, `Pattern::Constructor`, the `:Tag(args)` parser production, `Pattern::TagMatch`) are still present. This iteration completes the work: build the FMPL transformer that ITER-0004b's plan called for, apply it to the remaining stdlib files, wire the optimizer into `eval_via_fmpl_pipeline`, then delete the AST/parser surfaces. After this iteration there is genuinely one shape and one syntax.
+**Status:** pending
+**Impacted scenarios:** SCENARIO-0103 (the SCENARIO-0103 sentinel created in ITER-0004b can finally be unblocked here), plus reconfirms SCENARIO-0003/0016/0039 with optimizer enabled.
+**Depends on:** ITER-0004b (the Rust-runtime half).
+**Look-ahead check:** Closes the `Value::Tagged` look-ahead obligation. ITER-0006 (self-compile seed) is unblocked because the stdlib can be regenerated mechanically from source via the transformer, and the seed references exactly one AST shape with no parser ambiguity.
+
+**Files still on legacy syntax (post-ITER-0004b, verified 2026-05-09):**
+- `lib/core/ast_optimizer.fmpl` (62 legacy hits, 0 list-pattern) — also not yet wired into pipeline
+- `lib/core/fmpl_parser.fmpl` (96 legacy hits)
+- `lib/core/ir_to_rust.fmpl` (48 legacy hits)
+- `lib/core/prelude.fmpl` (41 legacy hits)
+- `lib/core/ir_to_execution_tape.fmpl` (19 legacy hits)
+- `lib/core/pipeline_demo.fmpl` (2 legacy hits — mostly already migrated)
+
+**Scope (picks up ITER-0004b's deferred items):**
+
+1. **Build the FMPL transformer** (`tools/list-transform/list_transform.fmpl` + driver). Was Phase A item 3 in ITER-0004b's plan. Tree-grammar rules + special-case rules (trailing comma, pair sentinel wrap, list-pattern binding repair) per the original spec.
+2. **Validate dry-runs** on a small subset (`prelude.fmpl` is the cheapest target — most `:Tag(args)` are simple constructor calls).
+3. **Apply the FMPL transformer** to all 6 files. Hand-edit transformer-flagged exceptions.
+4. **Wire `ast_optimizer.fmpl`** into `eval_via_fmpl_pipeline` at the slot the original plan specified: `ast::parse → ast_optimizer.optimize → ast_to_ir.expr → ir::compile → code::eval`.
+5. **Delete the AST/parser surfaces** that ITER-0004b's Phase C left behind: `Expr::Tagged`, `Pattern::Constructor`, `Pattern::TagMatch`, `Instruction::MakeTagged`/`MatchTag`/`ExtractTaggedChild`/`MatchTagged`/`MatchTaggedWithBindings` (or rename `MatchTag` to `MatchListNode`), the grammar parser's `:Tag(args)` pattern production at `fmpl-core/src/grammar/parser.rs::parse_value_pattern`, and the parser production for `:Tag(args)` value-constructor expressions.
+6. **Verification:** the 16 `#[ignore]`'d tests in `fmpl-core/tests/optimizer_integration.rs` un-ignored and passing; `grep -r ':[A-Z][a-zA-Z]*(' lib/core/` returns no matches (only list-pattern syntax in stdlib); `grep -r 'Expr::Tagged\|Pattern::Constructor\|Pattern::TagMatch' fmpl-core/src/` returns no matches.
+
+**Out of scope:** Removing `FMPL_USE_FMPL_COMPILER` opt-in (still deferred — promotion to default is its own iteration once the FMPL pipeline path has soak time).
+
 ### ITER-0005 — Image Persistence (Consolidated)
 
 **Stories:** STORY-0099, STORY-0100, STORY-0013, STORY-0014, STORY-0015, STORY-0019, STORY-0021, STORY-0069, STORY-0016, STORY-0017, STORY-0018, STORY-0020
@@ -205,7 +246,7 @@ ITER-0005 will serialize `ObjectDb`, `CompiledCode`, `GrammarRegistry`, and the 
 **Rationale:** Create seed snapshot from current Rust compiler (Stage 0). Add --snapshot and --from-seed flags to fmpl-bootstrap. Write fmpl_compiler.fmpl — the FMPL compiler driver that orchestrates the full pipeline (fmpl_parser.fmpl → ast_to_ir.fmpl → ast_optimizer.fmpl → ir::compile). Verify round-trip: snapshot → restore → compile "1 + 2" → get 3.
 **Status:** pending
 **Impacted scenarios:** SCENARIO-0020
-**Depends on:** ITER-0004 (compiler cutover), ITER-0004b (single canonical representation), and ITER-0005 (persistence)
+**Depends on:** ITER-0004 (compiler cutover), ITER-0004b + ITER-0004c (full canonical-representation refactor — both the runtime burn and the FMPL stdlib + parser burn), and ITER-0005 (persistence). The fmpl_compiler.fmpl pipeline `fmpl_parser.fmpl → ast_to_ir.fmpl → ast_optimizer.fmpl → ir::compile` requires that *every* stdlib file in that chain be in the canonical list-pattern syntax; today, three of the four are still in legacy syntax (only ast_to_ir.fmpl was migrated in ITER-0004b).
 **Look-ahead check:** Unblocks fixpoint verification.
 
 ### ITER-0007 — Fixpoint Verification
