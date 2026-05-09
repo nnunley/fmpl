@@ -2211,7 +2211,7 @@ fn collect_bindings_from_ir_list(items: &[Value], bindings: &mut Vec<SmolStr>) {
 
 /// Recursively collect binding names from an IR node.
 fn collect_bindings_from_ir(ir: &Value, bindings: &mut Vec<SmolStr>) {
-    if let Value::Tagged(tag, children) = ir {
+    if let Some((tag, children)) = ir.as_node() {
         match tag.as_str() {
             "ParseBind" => {
                 // Extract the binding name (second child)
@@ -2263,12 +2263,12 @@ mod tests {
 
     #[test]
     fn test_transpile_add() {
-        let ir = Value::Tagged(
-            SmolStr::new("Add"),
-            Arc::new(vec![
+        let ir = Value::list_node(
+            "Add",
+            vec![
                 Value::Tagged(SmolStr::new("LoadInt"), Arc::new(vec![Value::Int(1)])),
                 Value::Tagged(SmolStr::new("LoadInt"), Arc::new(vec![Value::Int(2)])),
-            ]),
+            ],
         );
         let result = transpile_expr(&ir).unwrap();
         assert!(result.contains("add"));
@@ -2276,16 +2276,16 @@ mod tests {
 
     #[test]
     fn test_transpile_let() {
-        let ir = Value::Tagged(
-            SmolStr::new("Let"),
-            Arc::new(vec![
+        let ir = Value::list_node(
+            "Let",
+            vec![
                 Value::Symbol(SmolStr::new("x")),
                 Value::Tagged(SmolStr::new("LoadInt"), Arc::new(vec![Value::Int(42)])),
                 Value::Tagged(
                     SmolStr::new("Var"),
                     Arc::new(vec![Value::Symbol(SmolStr::new("x"))]),
                 ),
-            ]),
+            ],
         );
         let result = transpile_expr(&ir).unwrap();
         assert!(result.contains("let x"));

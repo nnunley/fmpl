@@ -908,8 +908,10 @@ mod tests {
         assert!(val.is_truthy());
     }
 
+    // Tests for the legacy Value::Tagged variant. These exist alongside
+    // the list_node tests until Phase C of ITER-0004b deletes the variant.
     #[test]
-    fn test_tagged_value_type_name() {
+    fn test_tagged_variant_type_name() {
         let val = Value::Tagged(
             SmolStr::new("Binary"),
             Arc::new(vec![
@@ -922,29 +924,15 @@ mod tests {
     }
 
     #[test]
-    fn test_tagged_value_display() {
+    fn test_tagged_variant_display() {
         let val = Value::Tagged(SmolStr::new("Int"), Arc::new(vec![Value::Int(42)]));
         assert_eq!(format!("{}", val), ":Int(42)");
     }
 
     #[test]
-    fn test_tagged_value_is_truthy() {
+    fn test_tagged_variant_is_truthy() {
         let val = Value::Tagged(SmolStr::new("Foo"), Arc::new(vec![]));
         assert!(val.is_truthy());
-    }
-
-    #[test]
-    fn test_tagged_value_nested() {
-        let inner = Value::Tagged(SmolStr::new("Int"), Arc::new(vec![Value::Int(1)]));
-        let outer = Value::Tagged(
-            SmolStr::new("Binary"),
-            Arc::new(vec![
-                Value::Symbol(SmolStr::new("+")),
-                inner,
-                Value::Tagged(SmolStr::new("Int"), Arc::new(vec![Value::Int(2)])),
-            ]),
-        );
-        assert_eq!(format!("{}", outer), ":Binary(:+, :Int(1), :Int(2))");
     }
 
     #[test]

@@ -743,7 +743,7 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
             let mut grammar = Grammar::new(SmolStr::new(""));
             if let Value::List(rules) = &children[1] {
                 for rule_val in rules.iter() {
-                    if let Value::Tagged(tag, rule_children) = rule_val {
+                    if let Some((tag, rule_children)) = rule_val.as_node() {
                         if tag.as_str() == "Rule" && rule_children.len() >= 2 {
                             let rule_name = match &rule_children[0] {
                                 Value::String(s) => SmolStr::new(s.as_str()),
@@ -809,7 +809,7 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
                 match &children[2] {
                     Value::List(rules) => {
                         for rule_val in rules.iter() {
-                            if let Value::Tagged(tag, rule_children) = rule_val {
+                            if let Some((tag, rule_children)) = rule_val.as_node() {
                                 if tag.as_str() == "Rule" && rule_children.len() >= 2 {
                                     let rule_name = match &rule_children[0] {
                                         Value::String(s) => SmolStr::new(s.as_str()),

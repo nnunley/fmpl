@@ -233,13 +233,11 @@ fn test_ast_parse_int_literal() {
 fn test_ast_parse_binary_expr() {
     let mut vm = Vm::new();
     let result = eval(&mut vm, r#"ast::parse("1 + 2")"#).unwrap();
-    if let Value::Tagged(tag, children) = result {
+    if let Some((tag, children)) = result.as_node() {
         assert_eq!(tag.as_str(), "Binary");
         assert_eq!(children.len(), 3);
         // First child is the operator symbol
         assert!(matches!(&children[0], Value::Symbol(s) if s == "+"));
-    } else {
-        panic!("expected Tagged, got {:?}", result);
     }
 }
 

@@ -36,10 +36,16 @@ impl IrCompiler {
     }
 
     fn compile_ir(&mut self, ir: &Value) -> Result<InstrIndex> {
+        // Accept both shapes: list-shape `[Symbol(tag), child1, ...]` (the
+        // canonical post-ITER-0004b form) and `Value::Tagged(tag, [...])` (the
+        // legacy shape, retained until Phase C deletes it).
+        if let Some((tag, children)) = ir.as_node() {
+            return self.compile_tagged(tag.as_str(), children);
+        }
         match ir {
             Value::Tagged(tag, children) => self.compile_tagged(tag.as_str(), children),
             _ => Err(Error::Runtime(format!(
-                "IR compile expected tagged value, got {}",
+                "IR compile expected tagged or list-shaped value, got {}",
                 ir.type_name()
             ))),
         }
@@ -701,7 +707,7 @@ impl IrCompiler {
                                 target: InstrIndex(0),
                             });
                             jump_to_end_indices.push(jmp_idx);
-                        } else if let Value::Tagged(pat_tag, pat_children) = pat {
+                        } else if let Some((pat_tag, pat_children)) = pat.as_node() {
                             match pat_tag.as_str() {
                                 "PatVar" => {
                                     // :PatVar(:name) — bind match value to name, always matches
@@ -1069,19 +1075,19 @@ mod tests {
 
     #[test]
     fn test_compile_load_int() {
-        let ir = Value::Tagged(SmolStr::new("LoadInt"), Arc::new(vec![Value::Int(42)]));
+        let ir = Value::list_node("LoadInt", vec![Value::Int(42)]);
         let result = compile(&ir).unwrap();
         assert!(matches!(result, Value::Code(_)));
     }
 
     #[test]
     fn test_compile_add() {
-        let ir = Value::Tagged(
-            SmolStr::new("Add"),
-            Arc::new(vec![
+        let ir = Value::list_node(
+            "Add",
+            vec![
                 Value::Tagged(SmolStr::new("LoadInt"), Arc::new(vec![Value::Int(1)])),
                 Value::Tagged(SmolStr::new("LoadInt"), Arc::new(vec![Value::Int(2)])),
-            ]),
+            ],
         );
         let result = compile(&ir).unwrap();
         assert!(matches!(result, Value::Code(_)));
@@ -1089,16 +1095,16 @@ mod tests {
 
     #[test]
     fn test_compile_let() {
-        let ir = Value::Tagged(
-            SmolStr::new("Let"),
-            Arc::new(vec![
+        let ir = Value::list_node(
+            "Let",
+            vec![
                 Value::Symbol(SmolStr::new("x")),
                 Value::Tagged(SmolStr::new("LoadInt"), Arc::new(vec![Value::Int(42)])),
                 Value::Tagged(
                     SmolStr::new("Var"),
                     Arc::new(vec![Value::Symbol(SmolStr::new("x"))]),
                 ),
-            ]),
+            ],
         );
         let result = compile(&ir).unwrap();
         assert!(matches!(result, Value::Code(_)));
