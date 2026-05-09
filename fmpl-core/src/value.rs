@@ -237,6 +237,37 @@ pub struct Partial {
 }
 
 impl Value {
+    /// Construct a list-shaped node `[Symbol(tag), child1, child2, ...]`.
+    ///
+    /// FMPL uses uniform list values to represent tagged/structured data
+    /// (AST nodes, IR nodes, user constructors). The first element is a
+    /// symbol naming the node type; remaining elements are the children.
+    pub fn list_node<S>(tag: S, children: Vec<Value>) -> Value
+    where
+        S: Into<SmolStr>,
+    {
+        let mut items = Vec::with_capacity(children.len() + 1);
+        items.push(Value::Symbol(tag.into()));
+        items.extend(children);
+        Value::List(Arc::new(items))
+    }
+
+    /// If `self` is a list-shaped node `[Symbol(tag), child1, ...]`, return
+    /// `(tag, &children)`. Otherwise `None`.
+    ///
+    /// Returns `&SmolStr` (not `&str`) so consumer code that previously called
+    /// `tag.as_str()` against a `Value::Tagged(tag, ...)` binding works
+    /// unchanged when rewritten to use `as_node()`.
+    pub fn as_node(&self) -> Option<(&SmolStr, &[Value])> {
+        if let Value::List(items) = self
+            && let Some(Value::Symbol(tag)) = items.first()
+        {
+            Some((tag, &items[1..]))
+        } else {
+            None
+        }
+    }
+
     /// Check if value is truthy.
     pub fn is_truthy(&self) -> bool {
         match self {
@@ -914,6 +945,41 @@ mod tests {
             ]),
         );
         assert_eq!(format!("{}", outer), ":Binary(:+, :Int(1), :Int(2))");
+    }
+
+    #[test]
+    fn test_list_node_round_trip() {
+        let val = Value::list_node("Int", vec![Value::Int(42)]);
+        let (tag, children) = val.as_node().expect("list-shaped node");
+        assert_eq!(tag.as_str(), "Int");
+        assert_eq!(children, &[Value::Int(42)]);
+    }
+
+    #[test]
+    fn test_list_node_empty_children() {
+        let val = Value::list_node("Null", vec![]);
+        let (tag, children) = val.as_node().expect("list-shaped node");
+        assert_eq!(tag.as_str(), "Null");
+        assert!(children.is_empty());
+    }
+
+    #[test]
+    fn test_as_node_rejects_non_list() {
+        assert!(Value::Int(1).as_node().is_none());
+        assert!(Value::Symbol(SmolStr::new("x")).as_node().is_none());
+        assert!(Value::Null.as_node().is_none());
+    }
+
+    #[test]
+    fn test_as_node_rejects_list_without_symbol_head() {
+        let val = Value::List(Arc::new(vec![Value::Int(1), Value::Int(2)]));
+        assert!(val.as_node().is_none());
+    }
+
+    #[test]
+    fn test_as_node_rejects_empty_list() {
+        let val = Value::List(Arc::new(vec![]));
+        assert!(val.as_node().is_none());
     }
 
     #[test]
