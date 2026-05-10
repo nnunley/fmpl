@@ -1,70 +1,84 @@
+-- AST-level optimizer: constant folding + algebraic simplification.
+-- Operates on canonical list-shaped AST values produced by ast::parse.
+-- ITER-0004c: migrated from legacy tag-paren syntax to canonical
+-- list-pattern syntax. In list patterns bare identifiers
+-- are *rule references* — to bind an element to a name use `any:n` or
+-- `_:n` (wildcard) or `trans:n` (recursively transform).
+
 let constant_fold = grammar constant_fold {
-    trans = :Binary(:+, :Int(a), :Int(b)) => :Int(a + b)
-          | :Binary(:-, :Int(a), :Int(b)) => :Int(a - b)
-          | :Binary(:*, :Int(a), :Int(b)) => :Int(a * b)
-          | :Binary(:/, :Int(a), :Int(b)) &{ b != 0 } => :Int(a / b)
-          | :Binary(:%, :Int(a), :Int(b)) &{ b != 0 } => :Int(a % b)
-          | :Binary(:<,  :Int(a), :Int(b)) => :Bool(a < b)
-          | :Binary(:>,  :Int(a), :Int(b)) => :Bool(a > b)
-          | :Binary(:<=, :Int(a), :Int(b)) => :Bool(a <= b)
-          | :Binary(:>=, :Int(a), :Int(b)) => :Bool(a >= b)
-          | :Binary(:==, :Int(a), :Int(b)) => :Bool(a == b)
-          | :Binary(:!=, :Int(a), :Int(b)) => :Bool(a != b)
-          | :Binary(:&&, :Bool(a), :Bool(b)) => :Bool(a && b)
-          | :Binary(:||, :Bool(a), :Bool(b)) => :Bool(a || b)
-          | :Unary(:-, :Int(a)) &{ a > 0 - 9223372036854775807 - 1 } => :Int(0 - a)
-          | :Unary(:!, :Bool(a)) => :Bool(!a)
-          | :If(:Bool(true), trans:t, trans:e) => t
-          | :If(:Bool(false), trans:t, trans:e) => e
-          | :Binary(:+,  trans:a, trans:b) => :Binary(:+,  a, b)
-          | :Binary(:-,  trans:a, trans:b) => :Binary(:-,  a, b)
-          | :Binary(:*,  trans:a, trans:b) => :Binary(:*,  a, b)
-          | :Binary(:/,  trans:a, trans:b) => :Binary(:/,  a, b)
-          | :Binary(:%,  trans:a, trans:b) => :Binary(:%,  a, b)
-          | :Binary(:<,  trans:a, trans:b) => :Binary(:<,  a, b)
-          | :Binary(:>,  trans:a, trans:b) => :Binary(:>,  a, b)
-          | :Binary(:<=, trans:a, trans:b) => :Binary(:<=, a, b)
-          | :Binary(:>=, trans:a, trans:b) => :Binary(:>=, a, b)
-          | :Binary(:==, trans:a, trans:b) => :Binary(:==, a, b)
-          | :Binary(:!=, trans:a, trans:b) => :Binary(:!=, a, b)
-          | :Binary(:&&, trans:a, trans:b) => :Binary(:&&, a, b)
-          | :Binary(:||, trans:a, trans:b) => :Binary(:||, a, b)
-          | :Unary(:-,  trans:a) => :Unary(:-, a)
-          | :Unary(:!,  trans:a) => :Unary(:!, a)
-          | :If(trans:cond, trans:t, trans:e) => :If(cond, t, e)
+    trans = [:Binary, :+, [:Int, any:a], [:Int, any:b]] => [:Int, a + b]
+          | [:Binary, :-, [:Int, any:a], [:Int, any:b]] => [:Int, a - b]
+          | [:Binary, :*, [:Int, any:a], [:Int, any:b]] => [:Int, a * b]
+          | [:Binary, :/, [:Int, any:a], [:Int, any:b]] &{ b != 0 } => [:Int, a / b]
+          | [:Binary, :%, [:Int, any:a], [:Int, any:b]] &{ b != 0 } => [:Int, a % b]
+          | [:Binary, :<,  [:Int, any:a], [:Int, any:b]] => [:Bool, a < b]
+          | [:Binary, :>,  [:Int, any:a], [:Int, any:b]] => [:Bool, a > b]
+          | [:Binary, :<=, [:Int, any:a], [:Int, any:b]] => [:Bool, a <= b]
+          | [:Binary, :>=, [:Int, any:a], [:Int, any:b]] => [:Bool, a >= b]
+          | [:Binary, :==, [:Int, any:a], [:Int, any:b]] => [:Bool, a == b]
+          | [:Binary, :!=, [:Int, any:a], [:Int, any:b]] => [:Bool, a != b]
+          | [:Binary, :&&, [:Bool, any:a], [:Bool, any:b]] => [:Bool, a && b]
+          | [:Binary, :||, [:Bool, any:a], [:Bool, any:b]] => [:Bool, a || b]
+          | [:Unary, :-, [:Int, any:a]] &{ a > 0 - 9223372036854775807 - 1 } => [:Int, 0 - a]
+          | [:Unary, :!, [:Bool, any:a]] => [:Bool, !a]
+          | [:If, [:Bool, true], trans:t, trans:e] => t
+          | [:If, [:Bool, false], trans:t, trans:e] => e
+          | [:Binary, :+,  trans:a, trans:b] => [:Binary, :+,  a, b]
+          | [:Binary, :-,  trans:a, trans:b] => [:Binary, :-,  a, b]
+          | [:Binary, :*,  trans:a, trans:b] => [:Binary, :*,  a, b]
+          | [:Binary, :/,  trans:a, trans:b] => [:Binary, :/,  a, b]
+          | [:Binary, :%,  trans:a, trans:b] => [:Binary, :%,  a, b]
+          | [:Binary, :<,  trans:a, trans:b] => [:Binary, :<,  a, b]
+          | [:Binary, :>,  trans:a, trans:b] => [:Binary, :>,  a, b]
+          | [:Binary, :<=, trans:a, trans:b] => [:Binary, :<=, a, b]
+          | [:Binary, :>=, trans:a, trans:b] => [:Binary, :>=, a, b]
+          | [:Binary, :==, trans:a, trans:b] => [:Binary, :==, a, b]
+          | [:Binary, :!=, trans:a, trans:b] => [:Binary, :!=, a, b]
+          | [:Binary, :&&, trans:a, trans:b] => [:Binary, :&&, a, b]
+          | [:Binary, :||, trans:a, trans:b] => [:Binary, :||, a, b]
+          | [:Unary, :-,  trans:a] => [:Unary, :-, a]
+          | [:Unary, :!,  trans:a] => [:Unary, :!, a]
+          | [:If, trans:cond, trans:t, trans:e] => [:If, cond, t, e]
+          -- TODO(AC-7 / ITER-0004c): Pass-through nodes — :Lambda, :Let, :Match,
+          -- :Call, :List, :Map, :Block. The optimizer does not currently recurse
+          -- into these; the corresponding scenario_0103 test asserts structural
+          -- identity for each kind. If recurse-into rules are added, update both
+          -- this comment and the test enumeration in lockstep.
           | _:x => x
 };
 
 let algebraic_simp = grammar algebraic_simp {
-    trans = :Binary(:+, _:x, :Int(0)) => x
-          | :Binary(:+, :Int(0), _:x) => x
-          | :Binary(:*, _:x, :Int(1)) => x
-          | :Binary(:*, :Int(1), _:x) => x
-          | :Binary(:*, _:x, :Int(0)) => :Int(0)
-          | :Binary(:*, :Int(0), _:x) => :Int(0)
-          | :Binary(:-, _:x, :Int(0)) => x
-          | :Binary(:/, _:x, :Int(1)) => x
-          | :Binary(:&&, :Bool(false), _:x) => :Bool(false)
-          | :Binary(:&&, :Bool(true), _:x) => x
-          | :Binary(:||, :Bool(true), _:x) => :Bool(true)
-          | :Binary(:||, :Bool(false), _:x) => x
-          | :Unary(:-, :Unary(:-, _:x)) => x
-          | :Binary(:+,  trans:a, trans:b) => :Binary(:+,  a, b)
-          | :Binary(:-,  trans:a, trans:b) => :Binary(:-,  a, b)
-          | :Binary(:*,  trans:a, trans:b) => :Binary(:*,  a, b)
-          | :Binary(:/,  trans:a, trans:b) => :Binary(:/,  a, b)
-          | :Binary(:%,  trans:a, trans:b) => :Binary(:%,  a, b)
-          | :Binary(:<,  trans:a, trans:b) => :Binary(:<,  a, b)
-          | :Binary(:>,  trans:a, trans:b) => :Binary(:>,  a, b)
-          | :Binary(:<=, trans:a, trans:b) => :Binary(:<=, a, b)
-          | :Binary(:>=, trans:a, trans:b) => :Binary(:>=, a, b)
-          | :Binary(:==, trans:a, trans:b) => :Binary(:==, a, b)
-          | :Binary(:!=, trans:a, trans:b) => :Binary(:!=, a, b)
-          | :Binary(:&&, trans:a, trans:b) => :Binary(:&&, a, b)
-          | :Binary(:||, trans:a, trans:b) => :Binary(:||, a, b)
-          | :Unary(:-,  trans:a) => :Unary(:-, a)
-          | :Unary(:!,  trans:a) => :Unary(:!, a)
-          | :If(trans:cond, trans:t, trans:e) => :If(cond, t, e)
+    trans = [:Binary, :+, _:x, [:Int, 0]] => x
+          | [:Binary, :+, [:Int, 0], _:x] => x
+          | [:Binary, :*, _:x, [:Int, 1]] => x
+          | [:Binary, :*, [:Int, 1], _:x] => x
+          | [:Binary, :*, _:x, [:Int, 0]] => [:Int, 0]
+          | [:Binary, :*, [:Int, 0], _:x] => [:Int, 0]
+          | [:Binary, :-, _:x, [:Int, 0]] => x
+          | [:Binary, :/, _:x, [:Int, 1]] => x
+          | [:Binary, :&&, [:Bool, false], _:x] => [:Bool, false]
+          | [:Binary, :&&, [:Bool, true], _:x] => x
+          | [:Binary, :||, [:Bool, true], _:x] => [:Bool, true]
+          | [:Binary, :||, [:Bool, false], _:x] => x
+          | [:Unary, :-, [:Unary, :-, _:x]] => x
+          | [:Binary, :+,  trans:a, trans:b] => [:Binary, :+,  a, b]
+          | [:Binary, :-,  trans:a, trans:b] => [:Binary, :-,  a, b]
+          | [:Binary, :*,  trans:a, trans:b] => [:Binary, :*,  a, b]
+          | [:Binary, :/,  trans:a, trans:b] => [:Binary, :/,  a, b]
+          | [:Binary, :%,  trans:a, trans:b] => [:Binary, :%,  a, b]
+          | [:Binary, :<,  trans:a, trans:b] => [:Binary, :<,  a, b]
+          | [:Binary, :>,  trans:a, trans:b] => [:Binary, :>,  a, b]
+          | [:Binary, :<=, trans:a, trans:b] => [:Binary, :<=, a, b]
+          | [:Binary, :>=, trans:a, trans:b] => [:Binary, :>=, a, b]
+          | [:Binary, :==, trans:a, trans:b] => [:Binary, :==, a, b]
+          | [:Binary, :!=, trans:a, trans:b] => [:Binary, :!=, a, b]
+          | [:Binary, :&&, trans:a, trans:b] => [:Binary, :&&, a, b]
+          | [:Binary, :||, trans:a, trans:b] => [:Binary, :||, a, b]
+          | [:Unary, :-,  trans:a] => [:Unary, :-, a]
+          | [:Unary, :!,  trans:a] => [:Unary, :!, a]
+          | [:If, trans:cond, trans:t, trans:e] => [:If, cond, t, e]
+          -- TODO(AC-7 / ITER-0004c): Same pass-through enumeration as
+          -- constant_fold — :Lambda, :Let, :Match, :Call, :List, :Map, :Block.
           | _:x => x
 };
 
