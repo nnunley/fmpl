@@ -17,6 +17,7 @@ pub mod compiler;
 #[cfg(feature = "cross_compile")]
 pub mod cross_compile;
 pub mod debug;
+pub mod diagnostics;
 pub mod error;
 pub mod grammar;
 pub mod instructions;
