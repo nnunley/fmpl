@@ -467,11 +467,12 @@
 - Both produce identical map value
 - All parity tests pass, confirming ast_to_ir.fmpl matches Rust compiler output for core constructs
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** automated (ITER-0004c, sentinel)
+**Execution command:** `cargo test -p fmpl-core --test ast_to_ir_parity`
 
 **Sources:**
 - `docs/plans/2026-03-03-self-hosting-bootstrap-implementation.md:63-192`
+- ITER-0004c kept SCENARIO-0016 as the optimizer-disabled parity gate; SCENARIO-0103 is the sibling optimizer-enabled gate. This separation prevents silent degradation if a future optimizer change folds away inputs that the ast_to_ir.fmpl rules need to be exercised against.
 
 ## SCENARIO-0017 — ObjectDb round-trip through Fjall persistence
 
@@ -1992,12 +1993,13 @@
 - At least one parity input demonstrably produces folded IR (verifiable by inspecting the IR before `ir::compile`) — proves the optimizer is wired into the actual pipeline, not silently bypassed
 - No panics or compile-time errors from `INT_MIN` overflow or division-by-zero folds (corpus must include cases that exercise these guards)
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** automated (ITER-0004c)
+**Execution command:** `cargo test -p fmpl-core --test scenario_0103_optimizer_pipeline`
 
 **Sources:**
 - `docs/superpowers/iterations/requirements/EPIC-002.md` (STORY-0010)
 - ITER-0004b PAR scope review (2026-05-08)
+- ITER-0004c implementation (2026-05-10) — `fmpl-core/tests/scenario_0103_optimizer_pipeline.rs` provides 4 observables (parity, slot, fold-fires, guards) across 32 passing tests + 1 ignored (INT_MIN deferred to ITER-0004g per lexer limitation).
 
 ## SCENARIO-0099 — Loader skips records with incompatible VM version
 

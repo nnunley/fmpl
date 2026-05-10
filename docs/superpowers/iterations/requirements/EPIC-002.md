@@ -3,7 +3,7 @@
 **Summary:** Compiler Cutover
 **Stories:** STORY-0005, STORY-0006, STORY-0007, STORY-0008, STORY-0009, STORY-0010, STORY-0011, STORY-0012
 **Primary sources:** `docs/plans/2026-03-03-self-hosting-bootstrap-design.md`, `docs/plans/2026-03-03-self-hosting-bootstrap-implementation.md`
-**Status:** 3/8 done
+**Status:** 3/8 done; STORY-0010 Phase A (AC-3..AC-7 + AC-13) shipped in ITER-0004c, Phase B pending in ITER-0004d
 
 ## STORY-0005
 
@@ -170,7 +170,7 @@ The bulk rewrite (~349 sites) is mechanical and gets done by two transformers, n
 - `fmpl-core/src/grammar/runtime.rs:794` (`Pattern::TagMatch` handler; delete)
 - `fmpl-core/src/vm.rs:1176, 1195` (`ExtractTaggedChild`/`MatchTag`; delete or rename)
 
-**Status:** pending
+**Status:** Phase A done:ITER-0004c (AC-3 through AC-7 + AC-13). AC-1, AC-2, AC-8, AC-15 already satisfied by ITER-0004b's runtime burn. Phase B (AC-9, AC-10, AC-11, AC-12, AC-14) pending in ITER-0004d.
 
 ## STORY-0011
 

@@ -79,7 +79,7 @@
 | SCENARIO-0075 |  | integration | iteration | TBD | STORY-0001 |
 | SCENARIO-0076 |  | integration | iteration | TBD | STORY-0001 |
 | SCENARIO-0077 |  | app-level | iteration | TBD | STORY-0038 |
-| SCENARIO-0103 | Full parity corpus passes with optimizer enabled | integration | sentinel | TBD | STORY-0010 |
+| SCENARIO-0103 | Full parity corpus passes with optimizer enabled | integration | sentinel | `cargo test -p fmpl-core --test scenario_0103_optimizer_pipeline` | STORY-0010 |
 | SCENARIO-0099 | Loader skips records with incompatible VM version | integration | iteration | TBD | STORY-0099 |
 | SCENARIO-0100 | Bytecode persists with content-addressed source reference | integration | iteration | TBD | STORY-0100 |
 | SCENARIO-0101 | Sourceless artifact gets synthesized constructor expression | integration | iteration | TBD | STORY-0100 |
