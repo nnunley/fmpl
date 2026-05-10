@@ -1,11 +1,12 @@
 -- IR to execution_tape Asm transpiler
--- Transforms FMPL IR tagged values to execution_tape Asm builder calls
+-- Transforms FMPL IR list-shaped values to execution_tape Asm builder calls
 -- Requires: lib/core/prelude.fmpl loaded first
 --
 -- This generates Rust source code that uses the execution_tape::asm::Asm API
 -- to build register-based bytecode for the execution_tape VM.
 --
--- Flow: FMPL source → AST → IR (tagged) → this file → Rust source (Asm calls) → execution_tape VM
+-- Flow: FMPL source → AST → IR (list-shaped) → this file → Rust source (Asm calls) → execution_tape VM
+-- ITER-0004c: migrated from legacy tag-paren syntax to canonical list-pattern syntax.
 
 -- Helper to sanitize identifiers for Rust
 let sanitize_ident = \name
@@ -37,11 +38,11 @@ let alloc_reg = \state
     { next_reg: next + 1, code: "r" ++ int.to_string(next) }
 
 -- Compile IR to execution_tape Asm calls
--- Input: IR tagged value
+-- Input: IR list-shaped value
 -- Output: (state_with_result_register, rust_code_string)
 let ir_to_asm = \ir ir @ {
     -- Literals - emit const instructions
-    :LoadNull() => {
+    [:LoadNull] => {
         let state = alloc_reg(ir.state)
         let reg = state.code
         {
@@ -49,7 +50,7 @@ let ir_to_asm = \ir ir @ {
             code: "a.const_unit(" ++ reg ++ ");\n"
         }
     }
-    :LoadBool(true) => {
+    [:LoadBool, true] => {
         let state = alloc_reg(ir.state)
         let reg = state.code
         {
@@ -57,7 +58,7 @@ let ir_to_asm = \ir ir @ {
             code: "a.const_bool(" ++ reg ++ ", true);\n"
         }
     }
-    :LoadBool(false) => {
+    [:LoadBool, false] => {
         let state = alloc_reg(ir.state)
         let reg = state.code
         {
@@ -65,7 +66,7 @@ let ir_to_asm = \ir ir @ {
             code: "a.const_bool(" ++ reg ++ ", false);\n"
         }
     }
-    :LoadInt(n) => {
+    [:LoadInt, n] => {
         let state = alloc_reg(ir.state)
         let reg = state.code
         {
@@ -73,7 +74,7 @@ let ir_to_asm = \ir ir @ {
             code: "a.const_i64(" ++ reg ++ ", " ++ int.to_string(n) ++ ");\n"
         }
     }
-    :LoadFloat(f) => {
+    [:LoadFloat, f] => {
         let state = alloc_reg(ir.state)
         let reg = state.code
         {
@@ -81,7 +82,7 @@ let ir_to_asm = \ir ir @ {
             code: "a.const_f64(" ++ reg ++ ", " ++ float.to_string(f) ++ ");\n"
         }
     }
-    :LoadString(s) => {
+    [:LoadString, s] => {
         let state = alloc_reg(ir.state)
         let reg = state.code
         {
@@ -91,7 +92,7 @@ let ir_to_asm = \ir ir @ {
     }
 
     -- Variables - load from environment (simplified: assume predefined)
-    :Var(name) => {
+    [:Var, name] => {
         let state = alloc_reg(ir.state)
         let reg = state.code
         let var_name = sanitize_ident(symbol.to_string(name))
@@ -102,7 +103,7 @@ let ir_to_asm = \ir ir @ {
     }
 
     -- Binary operations - compile operands, then emit op
-    :Add(l, r) => {
+    [:Add, l, r] => {
         let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
         let right = ir_to_asm(r, left.state)
         let result = alloc_reg(right.state)
@@ -111,7 +112,7 @@ let ir_to_asm = \ir ir @ {
             code: left.code ++ right.code ++ "a.i64_add(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
         }
     }
-    :Sub(l, r) => {
+    [:Sub, l, r] => {
         let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
         let right = ir_to_asm(r, left.state)
         let result = alloc_reg(right.state)
@@ -120,7 +121,7 @@ let ir_to_asm = \ir ir @ {
             code: left.code ++ right.code ++ "a.i64_sub(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
         }
     }
-    :Mul(l, r) => {
+    [:Mul, l, r] => {
         let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
         let right = ir_to_asm(r, left.state)
         let result = alloc_reg(right.state)
@@ -129,7 +130,7 @@ let ir_to_asm = \ir ir @ {
             code: left.code ++ right.code ++ "a.i64_mul(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
         }
     }
-    :Div(l, r) => {
+    [:Div, l, r] => {
         let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
         let right = ir_to_asm(r, left.state)
         let result = alloc_reg(right.state)
@@ -140,7 +141,7 @@ let ir_to_asm = \ir ir @ {
     }
 
     -- Comparison operations
-    :Eq(l, r) => {
+    [:Eq, l, r] => {
         let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
         let right = ir_to_asm(r, left.state)
         let result = alloc_reg(right.state)
@@ -149,7 +150,7 @@ let ir_to_asm = \ir ir @ {
             code: left.code ++ right.code ++ "a.eq(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
         }
     }
-    :Lt(l, r) => {
+    [:Lt, l, r] => {
         let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
         let right = ir_to_asm(r, left.state)
         let result = alloc_reg(right.state)
@@ -158,7 +159,7 @@ let ir_to_asm = \ir ir @ {
             code: left.code ++ right.code ++ "a.i64_lt(" ++ result.code ++ ", " ++ left.state.code ++ ", " ++ right.state.code ++ ");\n"
         }
     }
-    :Gt(l, r) => {
+    [:Gt, l, r] => {
         let left = ir_to_asm(l, { next_reg: ir.state.next_reg, code: "" })
         let right = ir_to_asm(r, left.state)
         let result = alloc_reg(right.state)
@@ -169,7 +170,7 @@ let ir_to_asm = \ir ir @ {
     }
 
     -- Unary operations
-    :Neg(e) => {
+    [:Neg, e] => {
         let operand = ir_to_asm(e, { next_reg: ir.state.next_reg, code: "" })
         let result = alloc_reg(operand.state)
         {
@@ -177,7 +178,7 @@ let ir_to_asm = \ir ir @ {
             code: operand.code ++ "a.i64_neg(" ++ result.code ++ ", " ++ operand.state.code ++ ");\n"
         }
     }
-    :Not(e) => {
+    [:Not, e] => {
         let operand = ir_to_asm(e, { next_reg: ir.state.next_reg, code: "" })
         let result = alloc_reg(operand.state)
         {
@@ -187,7 +188,7 @@ let ir_to_asm = \ir ir @ {
     }
 
     -- Control flow (if-then-else)
-    :If(c, t, e) => {
+    [:If, c, t, e] => {
         -- Compile condition
         let cond = ir_to_asm(c, { next_reg: ir.state.next_reg, code: "" })
         -- Compile then branch
@@ -203,7 +204,7 @@ let ir_to_asm = \ir ir @ {
     }
 
     -- Lists
-    :MakeList(items) => {
+    [:MakeList, items] => {
         -- Compile all elements
         let compiled = reduce(\acc \item
             let item_result = ir_to_asm(item, { next_reg: acc.next_reg, code: "" })
@@ -219,7 +220,7 @@ let ir_to_asm = \ir ir @ {
     }
 
     -- Function calls (simplified)
-    :Call(func, args) => {
+    [:Call, func, args] => {
         let func_result = ir_to_asm(func, { next_reg: ir.state.next_reg, code: "" })
         let args_result = reduce(\acc \arg
             let arg_result = ir_to_asm(arg, { next_reg: acc.next_reg, code: "" })
