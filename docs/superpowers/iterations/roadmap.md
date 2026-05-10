@@ -432,6 +432,46 @@ These gates are NOT new work — they are the existing iteration gates, framed u
 - SCENARIO-0103 still passes against the new shape.
 - AC-13 invariant from ITER-0004c remains satisfied (grep for `:[A-Z][a-zA-Z_]*\(` returns 0).
 
+### ITER-0004g — Lexer: Handle INT_MIN Literal in Negation Context
+
+**Stories:** No new STORY-0010 ACs — surfaced 2026-05-10 during ITER-0004c item 8 implementation. The user pushed back on the AST-construction workaround in `ac3_int_min_negation_does_not_panic`: source-form `"0 - (-9223372036854775808)"` should be lexable, but currently the FMPL lexer (`fmpl-core/src/lexer.rs:117`) silently drops the `9223372036854775808` token because `parse::<i64>().ok()` returns `None` for any value greater than `i64::MAX`. The negation rewrite happens at the AST stage, so the lexer never sees the value as INT_MIN — only as an out-of-range positive integer.
+
+**Rationale:** A user who writes `let x = -9223372036854775808` reasonably expects FMPL to interpret this as `i64::MIN`. Currently the lexer drops the literal. This is a parser-surface bug that affects any program touching INT_MIN, not just the optimizer test. Two fix approaches:
+
+1. **Two-token approach (simpler):** Lex the leading `-` as a separate `Minus` token (which the lexer already does). When the integer-parse fails because the value equals `i64::MAX + 1`, check the previous token in the lexer (or in a post-pass) — if it's `Minus`, replace both tokens with a single `Int(i64::MIN)` token. This requires lookback in the lexer or a token post-processing pass.
+
+2. **Negative-aware integer regex (cleaner):** Rewrite the integer regex to optionally consume a leading `-`, then parse the slice as `i64`. Requires care because `1 - 2` should still be three tokens (`Int(1)`, `Minus`, `Int(2)`), not two (`Int(1)`, `Int(-2)`). Disambiguation: only consume the `-` when the previous token is not `Int`/`Var`/`)`/`]`/`}`/etc. (i.e., the `-` is unary, not binary). This is essentially context-sensitive lexing.
+
+3. **String-then-coerce approach (deferred-fix):** Store integer tokens as their literal source string, defer the i64 conversion to the parser/AST stage where unary-negation context is visible. Largest change but most flexible (also opens the door to `i128` literals later).
+
+**Status:** pending
+**Depends on:** None (touches lexer only); ITER-0004c item 8 currently works around this via direct AST construction.
+**Look-ahead check:** Unblocks rewriting `ac3_int_min_negation_does_not_panic` to use source-form input (`"0 - (-9223372036854775808)"` becomes parseable). Does not block any other iteration.
+
+**Files in scope:**
+- `fmpl-core/src/lexer.rs` (line 117 region) — integer regex / parse logic
+- `fmpl-core/tests/lexer_*.rs` (or `tests/lexer.rs` if such a file exists) — add tests for INT_MIN literal handling
+- `fmpl-core/tests/optimizer_integration.rs` — once the lexer fix lands, rewrite `ac3_int_min_negation_does_not_panic` to use source-form `"0 - (-9223372036854775808)"` and remove the TODO(ITER-0004g) comment
+
+**Scope:**
+
+1. Decide between approaches (1), (2), (3) — recommend (2) negative-aware regex as a balance of simplicity and correctness.
+2. Implement the chosen approach in `fmpl-core/src/lexer.rs`.
+3. Add direct lexer tests:
+   - `lex("9223372036854775807")` succeeds (i64::MAX)
+   - `lex("-9223372036854775808")` succeeds as `Int(i64::MIN)` OR as two-token `Minus, Int(i64::MAX+1?)` depending on chosen approach
+   - `lex("9223372036854775808")` (one over i64::MAX, no leading `-`) returns a clear error
+   - `lex("1 - 2")` returns three tokens (not `Int(1), Int(-2)`)
+   - `lex("(- 5)")` returns four tokens (`LParen, Minus, Int(5), RParen`) — unary negation with whitespace
+4. Update `ac3_int_min_negation_does_not_panic` in `optimizer_integration.rs` to use the source-form `"0 - (-9223372036854775808)"`. Remove the AST-construction workaround. Remove the `TODO(ITER-0004g)` comment.
+5. Run `cargo test --workspace` and verify no regressions.
+
+**Verification gates:**
+- All new lexer tests pass.
+- `ac3_int_min_negation_does_not_panic` passes with source-form input.
+- `cargo test --workspace` passes overall.
+- No new ignored or failing tests.
+
 ### ITER-0005 — Image Persistence (Consolidated)
 
 **Stories:** STORY-0099, STORY-0100, STORY-0013, STORY-0014, STORY-0015, STORY-0019, STORY-0021, STORY-0069, STORY-0016, STORY-0017, STORY-0018, STORY-0020
