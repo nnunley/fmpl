@@ -341,7 +341,7 @@ mod single_element_stream {
     #[test]
     fn tagged_pattern_extraction() {
         let mut vm = Vm::new();
-        let result = eval_legacy(&mut vm, r#":Some(42) @ { :Some(v) => v }"#).unwrap();
+        let result = eval_legacy(&mut vm, r#"[:Some, 42] @ { :Some(v) => v }"#).unwrap();
         assert!(
             matches!(result, Value::Int(42)),
             "expected 42, got {:?}",
@@ -354,7 +354,7 @@ mod single_element_stream {
         let mut vm = Vm::new();
         let result = eval_legacy(
             &mut vm,
-            r#":Binary(:plus, :Int(1), :Int(2)) @ { :Binary(op, :Int(a), :Int(b)) => [op, a, b] }"#,
+            r#"[:Binary, :plus, [:Int, 1], [:Int, 2]] @ { :Binary(op, :Int(a), :Int(b)) => [op, a, b] }"#,
         )
         .unwrap();
         if let Value::List(items) = result {
@@ -532,7 +532,8 @@ mod grammar_with_input_types {
     #[test]
     fn tagged_input_to_pattern() {
         let mut vm = Vm::new();
-        let result = eval_legacy(&mut vm, r#":Point(10, 20) @ { :Point(x, y) => x + y }"#).unwrap();
+        let result =
+            eval_legacy(&mut vm, r#"[:Point, 10, 20] @ { :Point(x, y) => x + y }"#).unwrap();
         assert!(
             matches!(result, Value::Int(30)),
             "expected 30, got {:?}",

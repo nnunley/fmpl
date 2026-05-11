@@ -145,7 +145,7 @@ fn fmpl_pipeline_compiles_lambda_call() {
 }
 
 /// Compare default-parser AST against legacy-parser AST for a corpus of inputs.
-/// Both should produce the same `:Int(42)` etc. tagged AST.
+/// Both should produce the same `[:Int, 42]` etc. tagged AST.
 ///
 /// Currently passes for basic expressions (the corpus); failures show up in
 /// grammar-literal-heavy code like ast_to_ir.fmpl.

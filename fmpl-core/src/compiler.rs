@@ -2546,6 +2546,23 @@ impl Compiler {
                         expected_arity: Some(children.len()),
                     }))
                 }
+                // List-pattern with leading symbol: [:Tag, a, b] — same
+                // bytecode as legacy `:Tag(a, b)` (Tagged values are
+                // `[Symbol(tag), child1, ...]`).
+                Pattern::List(elements, None)
+                    if matches!(elements.first(), Some(Pattern::Symbol(_))) =>
+                {
+                    let tag = match &elements[0] {
+                        Pattern::Symbol(t) => t.clone(),
+                        _ => unreachable!(),
+                    };
+                    Some(self.code.emit(Instruction::MatchTag {
+                        value: scrutinee_idx,
+                        tag,
+                        fail_target: InstrIndex(0), // placeholder — patched to next case
+                        expected_arity: Some(elements.len() - 1),
+                    }))
+                }
                 // Var and Wildcard always match — no check needed
                 Pattern::Var(_) | Pattern::Wildcard => None,
                 _ => {
@@ -2660,6 +2677,24 @@ impl Compiler {
                             fail_jumps.push(nested_check);
                             self.compile_match_bindings(extracted, child, fail_jumps)?;
                         }
+                        Pattern::List(grand_elems, None)
+                            if matches!(grand_elems.first(), Some(Pattern::Symbol(_))) =>
+                        {
+                            // Nested list-pattern with leading symbol: same as nested
+                            // constructor — emit MatchTag, then recurse.
+                            let tag = match &grand_elems[0] {
+                                Pattern::Symbol(t) => t.clone(),
+                                _ => unreachable!(),
+                            };
+                            let nested_check = self.code.emit(Instruction::MatchTag {
+                                value: extracted,
+                                tag,
+                                fail_target: InstrIndex(0), // patched by caller
+                                expected_arity: Some(grand_elems.len() - 1),
+                            });
+                            fail_jumps.push(nested_check);
+                            self.compile_match_bindings(extracted, child, fail_jumps)?;
+                        }
                         Pattern::Symbol(tag) => {
                             // Nested bare symbol: emit MatchTag check
                             let nested_check = self.code.emit(Instruction::MatchTag {
@@ -2672,6 +2707,61 @@ impl Compiler {
                         }
                         _ => {
                             // Var, Wildcard, etc. — recurse for uniform handling
+                            self.compile_match_bindings(extracted, child, fail_jumps)?;
+                        }
+                    }
+                }
+            }
+            // List-pattern with leading symbol: [:Tag, a, b] — identical
+            // semantics to Pattern::Constructor (head symbol already checked
+            // by MatchTag at the outer level / by caller). Walk remaining
+            // elements positionally using ExtractTaggedChild.
+            Pattern::List(elements, None)
+                if matches!(elements.first(), Some(Pattern::Symbol(_))) =>
+            {
+                // elements[0] is the tag symbol (already matched at outer level);
+                // bind/check elements[1..] as positional children at index 0..n-1.
+                for (i, child) in elements.iter().skip(1).enumerate() {
+                    let extracted = self
+                        .code
+                        .emit(Instruction::ExtractTaggedChild { source, index: i });
+                    match child {
+                        Pattern::Constructor(tag, grandchildren) => {
+                            let nested_check = self.code.emit(Instruction::MatchTag {
+                                value: extracted,
+                                tag: tag.clone(),
+                                fail_target: InstrIndex(0), // patched by caller
+                                expected_arity: Some(grandchildren.len()),
+                            });
+                            fail_jumps.push(nested_check);
+                            self.compile_match_bindings(extracted, child, fail_jumps)?;
+                        }
+                        Pattern::List(grand_elems, None)
+                            if matches!(grand_elems.first(), Some(Pattern::Symbol(_))) =>
+                        {
+                            let tag = match &grand_elems[0] {
+                                Pattern::Symbol(t) => t.clone(),
+                                _ => unreachable!(),
+                            };
+                            let nested_check = self.code.emit(Instruction::MatchTag {
+                                value: extracted,
+                                tag,
+                                fail_target: InstrIndex(0), // patched by caller
+                                expected_arity: Some(grand_elems.len() - 1),
+                            });
+                            fail_jumps.push(nested_check);
+                            self.compile_match_bindings(extracted, child, fail_jumps)?;
+                        }
+                        Pattern::Symbol(tag) => {
+                            let nested_check = self.code.emit(Instruction::MatchTag {
+                                value: extracted,
+                                tag: tag.clone(),
+                                fail_target: InstrIndex(0), // patched by caller
+                                expected_arity: None,
+                            });
+                            fail_jumps.push(nested_check);
+                        }
+                        _ => {
                             self.compile_match_bindings(extracted, child, fail_jumps)?;
                         }
                     }
@@ -2945,6 +3035,21 @@ impl Compiler {
                         key: key.clone(),
                     });
                     self.compile_pattern_binding(value_pattern, extracted)?;
+                }
+            }
+            Pattern::List(patterns, None)
+                if matches!(patterns.first(), Some(Pattern::Symbol(_))) =>
+            {
+                // List-pattern with leading symbol: [:Tag, a, b] = tagged-value.
+                // Identical to Pattern::Constructor — extract children
+                // positionally using ExtractTaggedChild. The head symbol is
+                // assumed to match (let bindings don't tag-check, matching
+                // legacy `:Tag(a, b)` let-binding semantics).
+                for (i, pat) in patterns.iter().skip(1).enumerate() {
+                    let extracted = self
+                        .code
+                        .emit(Instruction::ExtractTaggedChild { source, index: i });
+                    self.compile_pattern_binding(pat, extracted)?;
                 }
             }
             Pattern::List(patterns, None) => {

@@ -39,7 +39,7 @@ fn test_simple_anonymous_grammar() {
     let result = eval(
         &mut vm,
         r#"
-        let x = :Binary(:+, :Int(1), :Int(2))
+        let x = [:Binary, :+, [:Int, 1], [:Int, 2]]
         x @ {
             :Binary(op, a, b) => [op, a, b]
         }
@@ -63,7 +63,7 @@ fn test_grammar_apply_with_sink_syntax() {
         let s = stream { 1 }
         -- For now, just verify the syntax compiles
         -- The sink will close without a receiver, but that's expected
-        let x = :Binary(:+, :Int(1), :Int(2))
+        let x = [:Binary, :+, [:Int, 1], [:Int, 2]]
         x @ {
             :Binary(op, a, b) => [op, a, b]
         }

@@ -1,0 +1,53 @@
+{
+  "id": "d70b43dec510",
+  "key": "pattern_ast_optimizer_list-pattern_transformer_d70b43",
+  "name": "pattern_ast_optimizer_list-pattern_transformer_d70b43",
+  "claim": "High-stakes op completed (migration): python3 .agent/tools/recall.py \"ITER-0004c FMPL stdlib migration to list-pattern syntax + wire ast_o",
+  "conditions": [
+    "agent",
+    "ast_optimizer",
+    "bash",
+    "cmd",
+    "consulted",
+    "fmpl",
+    "intent",
+    "into",
+    "lessons",
+    "list-pattern",
+    "out",
+    "python3",
+    "recall",
+    "stdlib",
+    "syntax",
+    "tools",
+    "transformer",
+    "wire"
+  ],
+  "evidence_ids": [
+    "2026-05-10T15:43:16.274251+00:00",
+    "2026-05-10T16:56:13.086653+00:00"
+  ],
+  "cluster_size": 2,
+  "canonical_salience": 9.0,
+  "staged_at": "2026-05-10T20:40:55.273983+00:00",
+  "status": "rejected",
+  "decisions": [
+    {
+      "ts": "2026-05-10T20:40:55.273983+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T20:44:15.802844+00:00",
+      "action": "rejected",
+      "reviewer": "host-agent",
+      "notes": "Raw 'recall.py invocation' event captured as a high-stakes op because of 'migration' keyword. The recall command itself is not a lesson \u2014 what it surfaced may be, but that lives in the recall results.",
+      "evidence_snapshot": [
+        "2026-05-10T15:43:16.274251+00:00",
+        "2026-05-10T16:56:13.086653+00:00"
+      ],
+      "lessons_sha": "ffa707c11f53"
+    }
+  ],
+  "rejection_count": 1
+}

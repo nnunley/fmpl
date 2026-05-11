@@ -1,0 +1,233 @@
+{
+  "id": "65dca9e74421",
+  "key": "pattern_rejection_count_rejected_python3_65dca9",
+  "name": "pattern_rejection_count_rejected_python3_65dca9",
+  "claim": "High-stakes op completed (schema): python3 .agent/tools/reject.py 50986dd6bff7 --reason \"'High-stakes op completed (schema)' \u2014 bench-ru",
+  "conditions": [
+    "agent",
+    "bash",
+    "cmd",
+    "out",
+    "python3",
+    "reason",
+    "reject",
+    "rejected",
+    "rejection_count",
+    "tools"
+  ],
+  "evidence_ids": [
+    "2026-05-10T20:44:14.144424+00:00",
+    "2026-05-10T20:44:14.318653+00:00",
+    "2026-05-10T20:44:14.492496+00:00",
+    "2026-05-10T20:44:14.665237+00:00",
+    "2026-05-10T20:44:14.831645+00:00",
+    "2026-05-10T20:44:15.001415+00:00",
+    "2026-05-10T20:44:15.166597+00:00",
+    "2026-05-10T20:44:15.331529+00:00",
+    "2026-05-10T20:44:15.502243+00:00",
+    "2026-05-10T20:44:15.669375+00:00",
+    "2026-05-10T20:44:15.838621+00:00"
+  ],
+  "cluster_size": 11,
+  "canonical_salience": 13.5,
+  "staged_at": "2026-05-10T20:51:57.302342+00:00",
+  "status": "staged",
+  "decisions": [
+    {
+      "ts": "2026-05-10T20:51:57.302342+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T20:58:12.308136+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T21:02:35.891006+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T21:17:23.893575+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T21:25:17.304412+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:06:41.827915+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:13:25.326533+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:19:30.364663+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:45:53.781018+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:00.080285+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:08.574424+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:15.056406+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:21.670474+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:28.621013+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:34.843211+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:40.091070+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:45.263523+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:46:51.742281+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:01.585314+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:07.600366+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:12.029671+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:16.635821+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:22.964968+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:31.250664+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:37.870058+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:44.210901+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T23:47:51.679395+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:21:32.253856+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:25:19.717763+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:25:25.416965+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:25:31.251038+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:25:37.795608+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:25:43.887231+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:25:52.846486+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:25:58.328491+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:26:04.546784+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:26:11.678861+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T02:26:49.003892+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-11T03:01:13.767065+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    }
+  ],
+  "rejection_count": 0
+}

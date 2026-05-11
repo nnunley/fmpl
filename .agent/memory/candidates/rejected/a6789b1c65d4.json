@@ -49,13 +49,30 @@
   "cluster_size": 8,
   "canonical_salience": 13.5,
   "staged_at": "2026-05-10T16:53:33.684595+00:00",
-  "status": "staged",
+  "status": "rejected",
   "decisions": [
     {
       "ts": "2026-05-10T16:53:33.684595+00:00",
       "action": "staged",
       "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-10T20:44:15.296878+00:00",
+      "action": "rejected",
+      "reviewer": "host-agent",
+      "notes": "Same as 1ee1e88edac8 \u2014 bare 'Tool Agent completed successfully'. No rule.",
+      "evidence_snapshot": [
+        "2026-05-10T15:54:55.375423+00:00",
+        "2026-05-10T16:02:24.392801+00:00",
+        "2026-05-10T16:08:47.290148+00:00",
+        "2026-05-10T16:15:02.728004+00:00",
+        "2026-05-10T16:21:16.390131+00:00",
+        "2026-05-10T16:30:07.838614+00:00",
+        "2026-05-10T16:35:14.513566+00:00",
+        "2026-05-10T16:43:17.348943+00:00"
+      ],
+      "lessons_sha": "ffa707c11f53"
     }
   ],
-  "rejection_count": 0
+  "rejection_count": 1
 }

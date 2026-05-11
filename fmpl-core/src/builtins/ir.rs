@@ -740,67 +740,62 @@ impl IrCompiler {
                                     // Check tag matches, then bind children
                                     let expected_tag = self.expect_symbol(&pat_children[0])?;
                                     let sub_patterns = self.expect_list(&pat_children[1])?;
-
-                                    // Load the match value and get its tag
-                                    let val_ref =
-                                        self.emit(Instruction::LoadVar(match_val_var.clone()));
-                                    let tag_ref = self.emit(Instruction::GetProp {
-                                        object: val_ref,
-                                        name: SmolStr::new("tag"),
+                                    self.emit_tagged_pattern_match(
+                                        expected_tag,
+                                        &sub_patterns,
+                                        body_ir,
+                                        &match_val_var,
+                                        &result_var,
+                                        &mut jump_to_end_indices,
+                                    )?;
+                                }
+                                // ITER-0004d.1 T2b: list-pattern syntax
+                                // `[:Tag, x, y]` produces `Pattern::List` whose first
+                                // element is `Pattern::Symbol`. Treat identically to
+                                // `PatConstructor` (Tagged values are list-shaped
+                                // nodes `[Symbol(tag), child1, ...]`).
+                                "PatList" if !pat_children.is_empty() => {
+                                    let elements = self.expect_list(&pat_children[0])?;
+                                    // Detect leading PatSymbol head — only then is this
+                                    // a tagged-constructor pattern.
+                                    let head_tag = elements.first().and_then(|e| {
+                                        e.as_node().and_then(|(t, c)| {
+                                            if t.as_str() == "PatSymbol" && !c.is_empty() {
+                                                if let Value::Symbol(s) = &c[0] {
+                                                    Some(s.clone())
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        })
                                     });
-                                    let expected_tag_idx =
-                                        self.emit(Instruction::LoadSymbol(expected_tag));
-                                    let tag_matches = self.emit(Instruction::Eq {
-                                        lhs: tag_ref,
-                                        rhs: expected_tag_idx,
-                                    });
-
-                                    // If tag doesn't match, skip to next case
-                                    let skip_idx = self.code.instructions.len();
-                                    self.emit(Instruction::JumpIfFalse {
-                                        cond: tag_matches,
-                                        target: InstrIndex(0), // placeholder
-                                    });
-
-                                    // Tag matches — bind children by index.
-                                    // Use ExtractTaggedChild which knows to skip
-                                    // the head symbol of a list-shaped node.
-                                    let val_ref2 =
-                                        self.emit(Instruction::LoadVar(match_val_var.clone()));
-                                    for (idx, sub_pat) in sub_patterns.iter().enumerate() {
-                                        if let Some((sp_tag, sp_children)) = sub_pat.as_node()
-                                            && sp_tag.as_str() == "PatVar"
-                                            && !sp_children.is_empty()
-                                        {
-                                            let var_name = self.expect_symbol(&sp_children[0])?;
-                                            let elem = self.emit(Instruction::ExtractTaggedChild {
-                                                source: val_ref2,
-                                                index: idx,
-                                            });
-                                            self.emit(Instruction::StoreVar {
-                                                name: var_name,
-                                                value: elem,
-                                            });
-                                        }
-                                    }
-
-                                    let body_result = self.compile_ir(body_ir)?;
-                                    self.emit(Instruction::StoreVar {
-                                        name: result_var.clone(),
-                                        value: body_result,
-                                    });
-                                    let jmp_idx = self.code.instructions.len();
-                                    self.emit(Instruction::Jump {
-                                        target: InstrIndex(0),
-                                    });
-                                    jump_to_end_indices.push(jmp_idx);
-
-                                    // Patch skip target
-                                    let next_case = InstrIndex(self.code.instructions.len());
-                                    if let Instruction::JumpIfFalse { target, .. } =
-                                        &mut self.code.instructions[skip_idx]
-                                    {
-                                        *target = next_case;
+                                    if let Some(expected_tag) = head_tag {
+                                        // Sub-patterns are elements[1..].
+                                        let sub_patterns: Vec<Value> =
+                                            elements.iter().skip(1).cloned().collect();
+                                        self.emit_tagged_pattern_match(
+                                            expected_tag,
+                                            &sub_patterns,
+                                            body_ir,
+                                            &match_val_var,
+                                            &result_var,
+                                            &mut jump_to_end_indices,
+                                        )?;
+                                    } else {
+                                        // List pattern without leading symbol: fall back
+                                        // to wildcard for now (no plain-list match support).
+                                        let body = self.compile_ir(body_ir)?;
+                                        self.emit(Instruction::StoreVar {
+                                            name: result_var.clone(),
+                                            value: body,
+                                        });
+                                        let jmp_idx = self.code.instructions.len();
+                                        self.emit(Instruction::Jump {
+                                            target: InstrIndex(0),
+                                        });
+                                        jump_to_end_indices.push(jmp_idx);
                                     }
                                 }
                                 _ => {
@@ -941,6 +936,78 @@ impl IrCompiler {
             }
             _ => Err(Error::Runtime(format!("Unknown IR node: {}", tag))),
         }
+    }
+
+    /// Emit bytecode for a tagged-constructor pattern in a match arm.
+    /// Used by both `PatConstructor(:Tag, [...])` and the equivalent
+    /// `PatList([:PatSymbol(:Tag), ...])` shape (introduced by ITER-0004d.1).
+    /// Both shapes share identical bytecode semantics.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_tagged_pattern_match(
+        &mut self,
+        expected_tag: SmolStr,
+        sub_patterns: &[Value],
+        body_ir: &Value,
+        match_val_var: &SmolStr,
+        result_var: &SmolStr,
+        jump_to_end_indices: &mut Vec<usize>,
+    ) -> Result<()> {
+        // Load the match value and get its tag.
+        let val_ref = self.emit(Instruction::LoadVar(match_val_var.clone()));
+        let tag_ref = self.emit(Instruction::GetProp {
+            object: val_ref,
+            name: SmolStr::new("tag"),
+        });
+        let expected_tag_idx = self.emit(Instruction::LoadSymbol(expected_tag));
+        let tag_matches = self.emit(Instruction::Eq {
+            lhs: tag_ref,
+            rhs: expected_tag_idx,
+        });
+
+        // If tag doesn't match, skip to next case.
+        let skip_idx = self.code.instructions.len();
+        self.emit(Instruction::JumpIfFalse {
+            cond: tag_matches,
+            target: InstrIndex(0), // placeholder
+        });
+
+        // Tag matches — bind children by index using ExtractTaggedChild
+        // (which skips the head symbol of a list-shaped node).
+        let val_ref2 = self.emit(Instruction::LoadVar(match_val_var.clone()));
+        for (idx, sub_pat) in sub_patterns.iter().enumerate() {
+            if let Some((sp_tag, sp_children)) = sub_pat.as_node()
+                && sp_tag.as_str() == "PatVar"
+                && !sp_children.is_empty()
+            {
+                let var_name = self.expect_symbol(&sp_children[0])?;
+                let elem = self.emit(Instruction::ExtractTaggedChild {
+                    source: val_ref2,
+                    index: idx,
+                });
+                self.emit(Instruction::StoreVar {
+                    name: var_name,
+                    value: elem,
+                });
+            }
+        }
+
+        let body_result = self.compile_ir(body_ir)?;
+        self.emit(Instruction::StoreVar {
+            name: result_var.clone(),
+            value: body_result,
+        });
+        let jmp_idx = self.code.instructions.len();
+        self.emit(Instruction::Jump {
+            target: InstrIndex(0),
+        });
+        jump_to_end_indices.push(jmp_idx);
+
+        // Patch skip target to fall through to next case.
+        let next_case = InstrIndex(self.code.instructions.len());
+        if let Instruction::JumpIfFalse { target, .. } = &mut self.code.instructions[skip_idx] {
+            *target = next_case;
+        }
+        Ok(())
     }
 
     fn expect_bool(&self, val: &Value) -> Result<bool> {

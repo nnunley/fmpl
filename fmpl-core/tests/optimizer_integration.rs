@@ -170,7 +170,7 @@ fn ac3_int_min_negation_does_not_panic() {
 
 /// AC-3: Constant `1 / 0` must not be folded to a compile-time error or panic.
 /// The native path raises a runtime error; the optimizer must preserve that —
-/// it cannot fold `:Binary(:/, :Int(1), :Int(0))` to a literal.
+/// it cannot fold `[:Binary, :/, [:Int, 1], [:Int, 0]]` to a literal.
 #[test]
 fn ac3_division_by_zero_not_folded() {
     let mut vm_opt = setup_pipeline_with_optimizer();

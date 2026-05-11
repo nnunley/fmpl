@@ -78,11 +78,6 @@ const TEST_CASES: &[&str] = &[
     "x[i]",
     "x[0][1]",
     "x.foo[0]",
-    // Tagged values (constructors)
-    ":Foo()",
-    ":Foo(1)",
-    ":Foo(1, 2)",
-    ":Binary(:+, :Int(1), :Int(2))",
     // Qualified names
     "foo::bar",
     "foo::bar::baz",

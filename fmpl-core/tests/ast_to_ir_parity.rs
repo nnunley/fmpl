@@ -85,29 +85,29 @@ mod literals {
 
     #[test]
     fn integer() {
-        assert_ir_parity("42", r#"code::eval(ir::compile(:LoadInt(42)))"#);
+        assert_ir_parity("42", r#"code::eval(ir::compile([:LoadInt, 42]))"#);
     }
 
     #[test]
     fn bool_true() {
-        assert_ir_parity("true", r#"code::eval(ir::compile(:LoadBool(true)))"#);
+        assert_ir_parity("true", r#"code::eval(ir::compile([:LoadBool, true]))"#);
     }
 
     #[test]
     fn bool_false() {
-        assert_ir_parity("false", r#"code::eval(ir::compile(:LoadBool(false)))"#);
+        assert_ir_parity("false", r#"code::eval(ir::compile([:LoadBool, false]))"#);
     }
 
     #[test]
     fn null_value() {
-        assert_ir_parity("null", r#"code::eval(ir::compile(:LoadNull()))"#);
+        assert_ir_parity("null", r#"code::eval(ir::compile([:LoadNull]))"#);
     }
 
     #[test]
     fn string_literal() {
         assert_ir_parity(
             "\"hello world\"",
-            r#"code::eval(ir::compile(:LoadString("hello world")))"#,
+            r#"code::eval(ir::compile([:LoadString, "hello world"]))"#,
         );
     }
 }
@@ -119,7 +119,7 @@ mod arithmetic {
     fn addition() {
         assert_ir_parity(
             "1 + 2",
-            r#"code::eval(ir::compile(:Add(:LoadInt(1), :LoadInt(2))))"#,
+            r#"code::eval(ir::compile([:Add, [:LoadInt, 1], [:LoadInt, 2]]))"#,
         );
     }
 
@@ -127,7 +127,7 @@ mod arithmetic {
     fn subtraction() {
         assert_ir_parity(
             "10 - 3",
-            r#"code::eval(ir::compile(:Sub(:LoadInt(10), :LoadInt(3))))"#,
+            r#"code::eval(ir::compile([:Sub, [:LoadInt, 10], [:LoadInt, 3]]))"#,
         );
     }
 
@@ -135,7 +135,7 @@ mod arithmetic {
     fn multiplication() {
         assert_ir_parity(
             "4 * 5",
-            r#"code::eval(ir::compile(:Mul(:LoadInt(4), :LoadInt(5))))"#,
+            r#"code::eval(ir::compile([:Mul, [:LoadInt, 4], [:LoadInt, 5]]))"#,
         );
     }
 
@@ -143,7 +143,7 @@ mod arithmetic {
     fn division() {
         assert_ir_parity(
             "20 / 4",
-            r#"code::eval(ir::compile(:Div(:LoadInt(20), :LoadInt(4))))"#,
+            r#"code::eval(ir::compile([:Div, [:LoadInt, 20], [:LoadInt, 4]]))"#,
         );
     }
 
@@ -151,13 +151,13 @@ mod arithmetic {
     fn modulo() {
         assert_ir_parity(
             "17 % 5",
-            r#"code::eval(ir::compile(:Mod(:LoadInt(17), :LoadInt(5))))"#,
+            r#"code::eval(ir::compile([:Mod, [:LoadInt, 17], [:LoadInt, 5]]))"#,
         );
     }
 
     #[test]
     fn negation() {
-        assert_ir_parity("-42", r#"code::eval(ir::compile(:Neg(:LoadInt(42))))"#);
+        assert_ir_parity("-42", r#"code::eval(ir::compile([:Neg, [:LoadInt, 42]]))"#);
     }
 }
 
@@ -168,7 +168,7 @@ mod comparisons {
     fn equality() {
         assert_ir_parity(
             "5 == 5",
-            r#"code::eval(ir::compile(:Eq(:LoadInt(5), :LoadInt(5))))"#,
+            r#"code::eval(ir::compile([:Eq, [:LoadInt, 5], [:LoadInt, 5]]))"#,
         );
     }
 
@@ -176,7 +176,7 @@ mod comparisons {
     fn inequality() {
         assert_ir_parity(
             "5 != 3",
-            r#"code::eval(ir::compile(:NotEq(:LoadInt(5), :LoadInt(3))))"#,
+            r#"code::eval(ir::compile([:NotEq, [:LoadInt, 5], [:LoadInt, 3]]))"#,
         );
     }
 
@@ -184,7 +184,7 @@ mod comparisons {
     fn less_than() {
         assert_ir_parity(
             "3 < 5",
-            r#"code::eval(ir::compile(:Lt(:LoadInt(3), :LoadInt(5))))"#,
+            r#"code::eval(ir::compile([:Lt, [:LoadInt, 3], [:LoadInt, 5]]))"#,
         );
     }
 
@@ -192,7 +192,7 @@ mod comparisons {
     fn greater_than() {
         assert_ir_parity(
             "5 > 3",
-            r#"code::eval(ir::compile(:Gt(:LoadInt(5), :LoadInt(3))))"#,
+            r#"code::eval(ir::compile([:Gt, [:LoadInt, 5], [:LoadInt, 3]]))"#,
         );
     }
 
@@ -200,7 +200,7 @@ mod comparisons {
     fn less_than_equal() {
         assert_ir_parity(
             "5 <= 5",
-            r#"code::eval(ir::compile(:LtEq(:LoadInt(5), :LoadInt(5))))"#,
+            r#"code::eval(ir::compile([:LtEq, [:LoadInt, 5], [:LoadInt, 5]]))"#,
         );
     }
 
@@ -208,7 +208,7 @@ mod comparisons {
     fn greater_than_equal() {
         assert_ir_parity(
             "5 >= 5",
-            r#"code::eval(ir::compile(:GtEq(:LoadInt(5), :LoadInt(5))))"#,
+            r#"code::eval(ir::compile([:GtEq, [:LoadInt, 5], [:LoadInt, 5]]))"#,
         );
     }
 }
@@ -220,7 +220,7 @@ mod logical {
     fn and_operator() {
         assert_ir_parity(
             "true && true",
-            r#"code::eval(ir::compile(:And(:LoadBool(true), :LoadBool(true))))"#,
+            r#"code::eval(ir::compile([:And, [:LoadBool, true], [:LoadBool, true]]))"#,
         );
     }
 
@@ -228,13 +228,16 @@ mod logical {
     fn or_operator() {
         assert_ir_parity(
             "false || true",
-            r#"code::eval(ir::compile(:Or(:LoadBool(false), :LoadBool(true))))"#,
+            r#"code::eval(ir::compile([:Or, [:LoadBool, false], [:LoadBool, true]]))"#,
         );
     }
 
     #[test]
     fn not_operator() {
-        assert_ir_parity("!true", r#"code::eval(ir::compile(:Not(:LoadBool(true))))"#);
+        assert_ir_parity(
+            "!true",
+            r#"code::eval(ir::compile([:Not, [:LoadBool, true]]))"#,
+        );
     }
 }
 
@@ -245,7 +248,7 @@ mod control_flow {
     fn if_true() {
         assert_ir_parity(
             "if true then 1 else 2",
-            r#"code::eval(ir::compile(:If(:LoadBool(true), :LoadInt(1), :LoadInt(2))))"#,
+            r#"code::eval(ir::compile([:If, [:LoadBool, true], [:LoadInt, 1], [:LoadInt, 2]]))"#,
         );
     }
 
@@ -253,7 +256,7 @@ mod control_flow {
     fn if_false() {
         assert_ir_parity(
             "if false then 1 else 2",
-            r#"code::eval(ir::compile(:If(:LoadBool(false), :LoadInt(1), :LoadInt(2))))"#,
+            r#"code::eval(ir::compile([:If, [:LoadBool, false], [:LoadInt, 1], [:LoadInt, 2]]))"#,
         );
     }
 }
@@ -265,7 +268,7 @@ mod let_bindings {
     fn simple_let() {
         assert_ir_parity(
             "let (x = 5) x",
-            r#"code::eval(ir::compile(:Let(:x, :LoadInt(5), :Var(:x))))"#,
+            r#"code::eval(ir::compile([:Let, :x, [:LoadInt, 5], [:Var, :x]]))"#,
         );
     }
 
@@ -273,7 +276,7 @@ mod let_bindings {
     fn let_with_arithmetic() {
         assert_ir_parity(
             "let (x = 5) x + 3",
-            r#"code::eval(ir::compile(:Let(:x, :LoadInt(5), :Add(:Var(:x), :LoadInt(3)))))"#,
+            r#"code::eval(ir::compile([:Let, :x, [:LoadInt, 5], [:Add, [:Var, :x], [:LoadInt, 3]]]))"#,
         );
     }
 }
@@ -283,27 +286,27 @@ mod data_structures {
 
     #[test]
     fn empty_list() {
-        assert_ir_parity("[]", r#"code::eval(ir::compile(:MakeList([])))"#);
+        assert_ir_parity("[]", r#"code::eval(ir::compile([:MakeList, []]))"#);
     }
 
     #[test]
     fn list_of_ints() {
         assert_ir_parity(
             "[1, 2, 3]",
-            r#"code::eval(ir::compile(:MakeList([:LoadInt(1), :LoadInt(2), :LoadInt(3)])))"#,
+            r#"code::eval(ir::compile([:MakeList, [[:LoadInt, 1], [:LoadInt, 2], [:LoadInt, 3]]]))"#,
         );
     }
 
     #[test]
     fn empty_map() {
-        assert_ir_parity("%{}", r#"code::eval(ir::compile(:MakeMap([])))"#);
+        assert_ir_parity("%{}", r#"code::eval(ir::compile([:MakeMap, []]))"#);
     }
 
     #[test]
     fn map_literal() {
         assert_ir_parity(
             "%{a: 1}",
-            r#"code::eval(ir::compile(:MakeMap([[:LoadString("a"), :LoadInt(1)]])))"#,
+            r#"code::eval(ir::compile([:MakeMap, [[[:LoadString, "a"], [:LoadInt, 1]]]]))"#,
         );
     }
 }
@@ -315,7 +318,7 @@ mod functions {
     fn lambda_call() {
         assert_ir_parity(
             "(\\x x + 1)(5)",
-            r#"code::eval(ir::compile(:Call(:Lambda([:x], :Add(:Var(:x), :LoadInt(1))), [:LoadInt(5)])))"#,
+            r#"code::eval(ir::compile([:Call, [:Lambda, [:x], [:Add, [:Var, :x], [:LoadInt, 1]]], [[:LoadInt, 5]]]))"#,
         );
     }
 }
@@ -381,7 +384,7 @@ mod full_pipeline {
 
     #[test]
     fn parity_tagged() {
-        assert_pipeline_parity(":Point(1, 2)");
+        assert_pipeline_parity("[:Point, 1, 2]");
     }
 
     #[test]
@@ -470,7 +473,42 @@ mod full_pipeline_advanced {
 
     #[test]
     fn parity_match_tagged() {
-        assert_pipeline_parity(":Point(1, 2) @ { :Point(x, y) => [x, y], _ => [] }");
+        // ITER-0004d.1 T2b: list-pattern syntax `[:Tag, ...]` is now
+        // recognized in match arms (parser heuristic) and let destructuring
+        // (compiler arm). Bytecode is identical to the legacy
+        // tagged-constructor form (same MatchTag + ExtractTaggedChild).
+        assert_pipeline_parity("[:Point, 1, 2] @ { [:Point, x, y] => [x, y], _ => [] }");
+    }
+
+    #[test]
+    fn parity_match_tagged_empty_constructor() {
+        // ITER-0004d.1 T2b: [:Tag] (no children) must match a zero-arity tagged value.
+        assert_pipeline_parity("[:None] @ { [:None] => 0, _ => 1 }");
+    }
+
+    #[test]
+    fn parity_match_tagged_tag_mismatch_routes_to_fallthrough() {
+        // ITER-0004d.1 T2b: tag mismatch falls through to next arm.
+        assert_pipeline_parity("[:Bar, 1] @ { [:Foo, x] => 99, [:Bar, x] => x, _ => 0 }");
+    }
+
+    // ITER-0004d.1 T2b: arity-check semantics diverge between legacy compiler
+    // (strict-arity MatchTag) and FMPL ir::compile (tag-only). Pre-existing
+    // divergence; same gap for legacy tagged-constructor patterns too.
+    // Follow-up tracked in task #30.
+    #[test]
+    #[ignore = "pipeline divergence — see task #30"]
+    fn parity_match_tagged_arity_mismatch_routes_to_fallthrough() {
+        assert_pipeline_parity("[:Point, 1, 2, 3] @ { [:Point, x, y] => 99, _ => 0 }");
+    }
+
+    // ITER-0004d.1 T2b: nested list-pattern children unsupported by FMPL
+    // ir::compile pipeline. Pre-existing gap; same for nested legacy patterns.
+    // Follow-up tracked in task #30.
+    #[test]
+    #[ignore = "ir::compile lacks nested pattern support — see task #30"]
+    fn parity_match_tagged_nested() {
+        assert_pipeline_parity("[:Outer, [:Inner, 7]] @ { [:Outer, [:Inner, n]] => n, _ => -1 }");
     }
 
     #[test]

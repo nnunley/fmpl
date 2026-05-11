@@ -33,7 +33,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("42"))
-            let (ir = ast @ { :Int(n) => :LoadInt(n) })
+            let (ir = ast @ { :Int(n) => [:LoadInt, n] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -49,8 +49,8 @@ mod phase1_literals {
             r#"
             let (ast = ast::parse("-5"))
             let (ir = ast @ {
-                :Unary(:-, :Int(n)) => :Neg(:LoadInt(n))
-                :Int(n) => :LoadInt(n)
+                :Unary(:-, :Int(n)) => [:Neg, [:LoadInt, n]]
+                :Int(n) => [:LoadInt, n]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -66,7 +66,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("true"))
-            let (ir = ast @ { :Bool(b) => :LoadBool(b) })
+            let (ir = ast @ { :Bool(b) => [:LoadBool, b] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -81,7 +81,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("false"))
-            let (ir = ast @ { :Bool(b) => :LoadBool(b) })
+            let (ir = ast @ { :Bool(b) => [:LoadBool, b] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -98,7 +98,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("null"))
-            let (ir = ast @ { :Null() => :LoadNull() })
+            let (ir = ast @ { :Null() => [:LoadNull] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -113,7 +113,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("\"hello\""))
-            let (ir = ast @ { :String(s) => :LoadString(s) })
+            let (ir = ast @ { :String(s) => [:LoadString, s] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -137,7 +137,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("1 + 2"))
             let (ir = ast @ {
-                :Binary(:+, :Int(a), :Int(b)) => :Add(:LoadInt(a), :LoadInt(b))
+                :Binary(:+, :Int(a), :Int(b)) => [:Add, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -154,7 +154,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("10 - 4"))
             let (ir = ast @ {
-                :Binary(:-, :Int(a), :Int(b)) => :Sub(:LoadInt(a), :LoadInt(b))
+                :Binary(:-, :Int(a), :Int(b)) => [:Sub, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -171,7 +171,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("3 * 4"))
             let (ir = ast @ {
-                :Binary(:*, :Int(a), :Int(b)) => :Mul(:LoadInt(a), :LoadInt(b))
+                :Binary(:*, :Int(a), :Int(b)) => [:Mul, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -188,7 +188,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("20 / 5"))
             let (ir = ast @ {
-                :Binary(:/, :Int(a), :Int(b)) => :Div(:LoadInt(a), :LoadInt(b))
+                :Binary(:/, :Int(a), :Int(b)) => [:Div, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -205,7 +205,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("17 % 5"))
             let (ir = ast @ {
-                :Binary(:%, :Int(a), :Int(b)) => :Mod(:LoadInt(a), :LoadInt(b))
+                :Binary(:%, :Int(a), :Int(b)) => [:Mod, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -226,7 +226,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 == 5"))
             let (ir = ast @ {
-                :Binary(:==, :Int(a), :Int(b)) => :Eq(:LoadInt(a), :LoadInt(b))
+                :Binary(:==, :Int(a), :Int(b)) => [:Eq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -243,7 +243,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 == 3"))
             let (ir = ast @ {
-                :Binary(:==, :Int(a), :Int(b)) => :Eq(:LoadInt(a), :LoadInt(b))
+                :Binary(:==, :Int(a), :Int(b)) => [:Eq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -260,7 +260,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 != 3"))
             let (ir = ast @ {
-                :Binary(:!=, :Int(a), :Int(b)) => :NotEq(:LoadInt(a), :LoadInt(b))
+                :Binary(:!=, :Int(a), :Int(b)) => [:NotEq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -277,7 +277,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("3 < 5"))
             let (ir = ast @ {
-                :Binary(:<, :Int(a), :Int(b)) => :Lt(:LoadInt(a), :LoadInt(b))
+                :Binary(:<, :Int(a), :Int(b)) => [:Lt, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -294,7 +294,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 > 3"))
             let (ir = ast @ {
-                :Binary(:>, :Int(a), :Int(b)) => :Gt(:LoadInt(a), :LoadInt(b))
+                :Binary(:>, :Int(a), :Int(b)) => [:Gt, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -311,7 +311,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 <= 5"))
             let (ir = ast @ {
-                :Binary(:<=, :Int(a), :Int(b)) => :LtEq(:LoadInt(a), :LoadInt(b))
+                :Binary(:<=, :Int(a), :Int(b)) => [:LtEq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -328,7 +328,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 >= 3"))
             let (ir = ast @ {
-                :Binary(:>=, :Int(a), :Int(b)) => :GtEq(:LoadInt(a), :LoadInt(b))
+                :Binary(:>=, :Int(a), :Int(b)) => [:GtEq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -349,7 +349,7 @@ mod phase1_if_then_else {
             r#"
             let (ast = ast::parse("if true then 1 else 2"))
             let (ir = ast @ {
-                :If(:Bool(c), :Int(t), :Int(e)) => :If(:LoadBool(c), :LoadInt(t), :LoadInt(e))
+                :If(:Bool(c), :Int(t), :Int(e)) => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -366,7 +366,7 @@ mod phase1_if_then_else {
             r#"
             let (ast = ast::parse("if false then 1 else 2"))
             let (ir = ast @ {
-                :If(:Bool(c), :Int(t), :Int(e)) => :If(:LoadBool(c), :LoadInt(t), :LoadInt(e))
+                :If(:Bool(c), :Int(t), :Int(e)) => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -382,7 +382,7 @@ mod phase1_if_then_else {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :If(:Lt(:LoadInt(3), :LoadInt(5)), :LoadInt(10), :LoadInt(20)))
+            let (ir = [:If, [:Lt, [:LoadInt, 3], [:LoadInt, 5]], [:LoadInt, 10], [:LoadInt, 20]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -401,7 +401,7 @@ mod phase1_let_bindings {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Let(:x, :LoadInt(42), :Var(:x)))
+            let (ir = [:Let, :x, [:LoadInt, 42], [:Var, :x]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -416,7 +416,7 @@ mod phase1_let_bindings {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Let(:x, :LoadInt(10), :Add(:Var(:x), :LoadInt(1))))
+            let (ir = [:Let, :x, [:LoadInt, 10], [:Add, [:Var, :x], [:LoadInt, 1]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -431,9 +431,9 @@ mod phase1_let_bindings {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Let(:x, :LoadInt(5),
-                       :Let(:y, :LoadInt(3),
-                            :Add(:Var(:x), :Var(:y)))))
+            let (ir = [:Let, :x, [:LoadInt, 5],
+                       [:Let, :y, [:LoadInt, 3],
+                            [:Add, [:Var, :x], [:Var, :y]]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -459,7 +459,7 @@ mod recursive_transform {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Add(:Add(:LoadInt(1), :LoadInt(2)), :LoadInt(3)))
+            let (ir = [:Add, [:Add, [:LoadInt, 1], [:LoadInt, 2]], [:LoadInt, 3]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -474,8 +474,8 @@ mod recursive_transform {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Add(:Mul(:LoadInt(5), :LoadInt(2)),
-                           :Div(:LoadInt(10), :LoadInt(2))))
+            let (ir = [:Add, [:Mul, [:LoadInt, 5], [:LoadInt, 2]],
+                           [:Div, [:LoadInt, 10], [:LoadInt, 2]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -490,9 +490,9 @@ mod recursive_transform {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :If(:Lt(:LoadInt(3), :LoadInt(5)),
-                          :Mul(:LoadInt(10), :LoadInt(2)),
-                          :LoadInt(0)))
+            let (ir = [:If, [:Lt, [:LoadInt, 3], [:LoadInt, 5]],
+                          [:Mul, [:LoadInt, 10], [:LoadInt, 2]],
+                          [:LoadInt, 0]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -507,10 +507,10 @@ mod recursive_transform {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Let(:x, :LoadInt(10),
-                       :If(:Gt(:Var(:x), :LoadInt(5)),
-                           :Mul(:Var(:x), :LoadInt(2)),
-                           :Var(:x))))
+            let (ir = [:Let, :x, [:LoadInt, 10],
+                       [:If, [:Gt, [:Var, :x], [:LoadInt, 5]],
+                           [:Mul, [:Var, :x], [:LoadInt, 2]],
+                           [:Var, :x]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -537,7 +537,7 @@ mod full_pipeline {
             r#"
             let (ast = ast::parse("1 + 2"))
             let (ir = ast @ {
-                :Binary(:+, :Int(a), :Int(b)) => :Add(:LoadInt(a), :LoadInt(b))
+                :Binary(:+, :Int(a), :Int(b)) => [:Add, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -555,7 +555,7 @@ mod full_pipeline {
             r#"
             let (ast = ast::parse("if true then 42 else 0"))
             let (ir = ast @ {
-                :If(:Bool(c), :Int(t), :Int(e)) => :If(:LoadBool(c), :LoadInt(t), :LoadInt(e))
+                :If(:Bool(c), :Int(t), :Int(e)) => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -576,7 +576,7 @@ mod full_pipeline {
         let interpreted_result = eval(
             &mut vm,
             r#"
-            let (ir = :Mul(:LoadInt(5), :LoadInt(3)))
+            let (ir = [:Mul, [:LoadInt, 5], [:LoadInt, 3]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -600,7 +600,7 @@ mod phase2_lists {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MakeList([]))
+            let (ir = [:MakeList, []])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -618,7 +618,7 @@ mod phase2_lists {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MakeList([:LoadInt(1), :LoadInt(2), :LoadInt(3)]))
+            let (ir = [:MakeList, [[:LoadInt, 1], [:LoadInt, 2], [:LoadInt, 3]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -640,8 +640,8 @@ mod phase2_lists {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MakeList([:Add(:LoadInt(1), :LoadInt(2)),
-                                 :Mul(:LoadInt(3), :LoadInt(4))]))
+            let (ir = [:MakeList, [[:Add, [:LoadInt, 1], [:LoadInt, 2]],
+                                 [:Mul, [:LoadInt, 3], [:LoadInt, 4]]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -662,8 +662,8 @@ mod phase2_lists {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Index(:MakeList([:LoadInt(10), :LoadInt(20), :LoadInt(30)]),
-                             :LoadInt(1)))
+            let (ir = [:Index, [:MakeList, [[:LoadInt, 10], [:LoadInt, 20], [:LoadInt, 30]]],
+                             [:LoadInt, 1]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -678,10 +678,10 @@ mod phase2_lists {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MakeList([
-                :MakeList([:LoadInt(1), :LoadInt(2)]),
-                :MakeList([:LoadInt(3), :LoadInt(4)])
-            ]))
+            let (ir = [:MakeList, [
+                [:MakeList, [[:LoadInt, 1], [:LoadInt, 2]]],
+                [:MakeList, [[:LoadInt, 3], [:LoadInt, 4]]]
+            ]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -710,7 +710,7 @@ mod phase2_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MakeMap([]))
+            let (ir = [:MakeMap, []])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -729,10 +729,10 @@ mod phase2_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MakeMap([
-                [:LoadString("a"), :LoadInt(1)],
-                [:LoadString("b"), :LoadInt(2)]
-            ]))
+            let (ir = [:MakeMap, [
+                [[:LoadString, "a"], [:LoadInt, 1]],
+                [[:LoadString, "b"], [:LoadInt, 2]]
+            ]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -754,10 +754,10 @@ mod phase2_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Index(
-                :MakeMap([[:LoadString("x"), :LoadInt(42)]]),
-                :LoadString("x")
-            ))
+            let (ir = [:Index, 
+                [:MakeMap, [[[:LoadString, "x"], [:LoadInt, 42]]]],
+                [:LoadString, "x"]
+            ])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -772,10 +772,10 @@ mod phase2_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MakeMap([
-                [:LoadString("sum"), :Add(:LoadInt(1), :LoadInt(2))],
-                [:LoadString("product"), :Mul(:LoadInt(3), :LoadInt(4))]
-            ]))
+            let (ir = [:MakeMap, [
+                [[:LoadString, "sum"], [:Add, [:LoadInt, 1], [:LoadInt, 2]]],
+                [[:LoadString, "product"], [:Mul, [:LoadInt, 3], [:LoadInt, 4]]]
+            ]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -851,11 +851,11 @@ mod phase3_calls {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MethodCall(
-                :MakeList([:LoadInt(1), :LoadInt(2), :LoadInt(3)]),
+            let (ir = [:MethodCall, 
+                [:MakeList, [[:LoadInt, 1], [:LoadInt, 2], [:LoadInt, 3]]],
                 :len,
                 []
-            ))
+            ])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -871,7 +871,7 @@ mod phase3_calls {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :MethodCall(:LoadString("hello"), :len, []))
+            let (ir = [:MethodCall, [:LoadString, "hello"], :len, []])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1078,7 +1078,7 @@ mod phase5_pattern_matching {
     fn match_tagged_value() {
         let mut vm = Vm::new();
         // Match a tagged value with constructor pattern
-        let result = eval(&mut vm, r#":Int(5) @ { :Int(n) => n * 2 }"#).unwrap();
+        let result = eval(&mut vm, r#"[:Int, 5] @ { :Int(n) => n * 2 }"#).unwrap();
         assert_eq!(result, Value::Int(10));
     }
 
@@ -1127,7 +1127,7 @@ mod phase5_pattern_matching {
             &mut vm,
             r#"
             let (ast = ast::parse("5"))
-            let (ir = ast @ { :Int(n) => :LoadInt(n) })
+            let (ir = ast @ { :Int(n) => [:LoadInt, n] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1145,7 +1145,7 @@ mod phase5_pattern_matching {
             r#"
             let (ast = ast::parse("1 + 2"))
             let (ir = ast @ {
-                :Binary(:+, :Int(a), :Int(b)) => :Add(:LoadInt(a), :LoadInt(b))
+                :Binary(:+, :Int(a), :Int(b)) => [:Add, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -1724,8 +1724,8 @@ mod full_pipeline_lists_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Index(:MakeList([:LoadInt(10), :LoadInt(20), :LoadInt(30)]),
-                             :LoadInt(1)))
+            let (ir = [:Index, [:MakeList, [[:LoadInt, 10], [:LoadInt, 20], [:LoadInt, 30]]],
+                             [:LoadInt, 1]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1741,10 +1741,10 @@ mod full_pipeline_lists_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (inner0 = :MakeList([:LoadInt(1), :LoadInt(2)]))
-            let (inner1 = :MakeList([:LoadInt(3), :LoadInt(4)]))
-            let (outer = :MakeList([inner0, inner1]))
-            let (ir = :Index(:Index(outer, :LoadInt(0)), :LoadInt(1)))
+            let (inner0 = [:MakeList, [[:LoadInt, 1], [:LoadInt, 2]]])
+            let (inner1 = [:MakeList, [[:LoadInt, 3], [:LoadInt, 4]]])
+            let (outer = [:MakeList, [inner0, inner1]])
+            let (ir = [:Index, [:Index, outer, [:LoadInt, 0]], [:LoadInt, 1]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1760,9 +1760,9 @@ mod full_pipeline_lists_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (elem0 = :Add(:LoadInt(1), :LoadInt(2)))
-            let (elem1 = :Mul(:LoadInt(3), :LoadInt(4)))
-            let (ir = :Index(:MakeList([elem0, elem1]), :LoadInt(0)))
+            let (elem0 = [:Add, [:LoadInt, 1], [:LoadInt, 2]])
+            let (elem1 = [:Mul, [:LoadInt, 3], [:LoadInt, 4]])
+            let (ir = [:Index, [:MakeList, [elem0, elem1]], [:LoadInt, 0]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1778,10 +1778,10 @@ mod full_pipeline_lists_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Index(
-                :MakeMap([[:LoadString("x"), :LoadInt(42)]]),
-                :LoadString("x")
-            ))
+            let (ir = [:Index, 
+                [:MakeMap, [[[:LoadString, "x"], [:LoadInt, 42]]]],
+                [:LoadString, "x"]
+            ])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1797,10 +1797,10 @@ mod full_pipeline_lists_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Index(
-                :MakeMap([[:LoadString("sum"), :Add(:LoadInt(1), :LoadInt(2))]]),
-                :LoadString("sum")
-            ))
+            let (ir = [:Index, 
+                [:MakeMap, [[[:LoadString, "sum"], [:Add, [:LoadInt, 1], [:LoadInt, 2]]]]],
+                [:LoadString, "sum"]
+            ])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1816,11 +1816,11 @@ mod full_pipeline_lists_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (list1 = :MakeList([:LoadInt(10), :LoadInt(20)]))
-            let (list2 = :MakeList([:LoadInt(30), :LoadInt(40)]))
-            let (ir = :If(:LoadBool(true),
-                          :Index(list1, :LoadInt(0)),
-                          :Index(list2, :LoadInt(0))))
+            let (list1 = [:MakeList, [[:LoadInt, 10], [:LoadInt, 20]]])
+            let (list2 = [:MakeList, [[:LoadInt, 30], [:LoadInt, 40]]])
+            let (ir = [:If, [:LoadBool, true],
+                          [:Index, list1, [:LoadInt, 0]],
+                          [:Index, list2, [:LoadInt, 0]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1836,11 +1836,11 @@ mod full_pipeline_lists_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Let(:xs,
-                       :MakeList([:LoadInt(1), :LoadInt(2), :LoadInt(3)]),
-                       :Add(:Add(:Index(:Var(:xs), :LoadInt(0)),
-                                 :Index(:Var(:xs), :LoadInt(1))),
-                            :Index(:Var(:xs), :LoadInt(2)))))
+            let (ir = [:Let, :xs,
+                       [:MakeList, [[:LoadInt, 1], [:LoadInt, 2], [:LoadInt, 3]]],
+                       [:Add, [:Add, [:Index, [:Var, :xs], [:LoadInt, 0]],
+                                 [:Index, [:Var, :xs], [:LoadInt, 1]]],
+                            [:Index, [:Var, :xs], [:LoadInt, 2]]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1856,11 +1856,11 @@ mod full_pipeline_lists_maps {
         let result = eval(
             &mut vm,
             r#"
-            let (ir = :Let(:m,
-                       :MakeMap([[:LoadString("a"), :LoadInt(10)],
-                                [:LoadString("b"), :LoadInt(20)]]),
-                       :Add(:Index(:Var(:m), :LoadString("a")),
-                            :Index(:Var(:m), :LoadString("b")))))
+            let (ir = [:Let, :m,
+                       [:MakeMap, [[[:LoadString, "a"], [:LoadInt, 10]],
+                                [[:LoadString, "b"], [:LoadInt, 20]]]],
+                       [:Add, [:Index, [:Var, :m], [:LoadString, "a"]],
+                            [:Index, [:Var, :m], [:LoadString, "b"]]]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1880,8 +1880,8 @@ mod full_pipeline_lists_maps {
         let interpreted = eval(
             &mut vm,
             r#"
-            let (ir = :Index(:MakeList([:LoadInt(10), :LoadInt(20), :LoadInt(30)]),
-                             :LoadInt(1)))
+            let (ir = [:Index, [:MakeList, [[:LoadInt, 10], [:LoadInt, 20], [:LoadInt, 30]]],
+                             [:LoadInt, 1]])
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1911,7 +1911,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :List([:Int(1), :Int(2), :Int(3)]))
+            let (ast = [:List, [[:Int, 1], [:Int, 2], [:Int, 3]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH
@@ -1947,7 +1947,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :Call(:Var(:f), [:Int(1)]))
+            let (ast = [:Call, [:Var, :f], [[:Int, 1]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH
@@ -1987,7 +1987,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :Call(:Var(:g), [:Int(1), :Int(2), :Int(3)]))
+            let (ast = [:Call, [:Var, :g], [[:Int, 1], [:Int, 2], [:Int, 3]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH
@@ -2014,7 +2014,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :MethodCall(:Var(:obj), :method, [:Int(42)]))
+            let (ast = [:MethodCall, [:Var, :obj], :method, [[:Int, 42]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH
@@ -2042,7 +2042,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :Lambda([:x], :Binary(:+, :Var(:x), :Int(1))))
+            let (ast = [:Lambda, [:x], [:Binary, :+, [:Var, :x], [:Int, 1]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH
@@ -2070,7 +2070,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :While(:Binary(:<, :Var(:x), :Int(10)), :Binary(:+, :Var(:x), :Int(1))))
+            let (ast = [:While, [:Binary, :<, [:Var, :x], [:Int, 10]], [:Binary, :+, [:Var, :x], [:Int, 1]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH
@@ -2104,7 +2104,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :Return(:Binary(:+, :Int(1), :Int(2))))
+            let (ast = [:Return, [:Binary, :+, [:Int, 1], [:Int, 2]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH
@@ -2131,7 +2131,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :AsyncCall(:Call(:Var(:fetch), [:String("url")])))
+            let (ast = [:AsyncCall, [:Call, [:Var, :fetch], [[:String, "url"]]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH
@@ -2158,7 +2158,7 @@ mod grammar_star_pattern {
             &format!(
                 r#"
             io::load("{}")
-            let (ast = :Block([:Int(1), :Int(2), :Binary(:+, :Int(3), :Int(4))]))
+            let (ast = [:Block, [[:Int, 1], [:Int, 2], [:Binary, :+, [:Int, 3], [:Int, 4]]]])
             ast @ ast_to_ir.expr
         "#,
                 AST_TO_IR_PATH

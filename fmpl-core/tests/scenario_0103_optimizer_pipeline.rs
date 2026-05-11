@@ -9,7 +9,7 @@
 //!    Provides AC-6 evidence.
 //! 2. (slot) The optimizer runs at the AST stage, NOT post-IR. Proven by an
 //!    algebraic-simp transformation that branch-eliminates
-//!    `:If(:Bool(true), t, e)` to `t` — a structural rewrite no post-IR
+//!    `[:If, [:Bool, true], t, e]` to `t` — a structural rewrite no post-IR
 //!    optimizer would replicate. Provides AC-4.
 //! 3. (fold-fires) Real `ast::parse` output, fed to `ast_optimizer.optimize`,
 //!    produces folded constants. Provides AC-5.
@@ -116,7 +116,7 @@ mod parity {
 
     #[test]
     fn parity_tagged() {
-        assert_optimizer_parity(":Point(1, 2)");
+        assert_optimizer_parity("[:Point, 1, 2]");
     }
 
     #[test]
@@ -193,7 +193,10 @@ mod parity {
 
     #[test]
     fn parity_match_tagged() {
-        assert_optimizer_parity(":Point(1, 2) @ { :Point(x, y) => [x, y], _ => [] }");
+        // ITER-0004d.1 T2b: list-pattern syntax `[:Tag, ...]` works in
+        // match arms — parser heuristic recognizes the `[:Symbol, ...]`
+        // shape, and compiler emits identical bytecode to legacy `:Tag(args)`.
+        assert_optimizer_parity("[:Point, 1, 2] @ { [:Point, x, y] => [x, y], _ => [] }");
     }
 
     #[test]
@@ -207,7 +210,7 @@ mod parity {
 // =============================================================================
 //
 // Use a transformation that NO post-IR optimizer would produce: the
-// constant_fold rule `:If(:Bool(true), trans:t, trans:e) => t` collapses an
+// constant_fold rule `[:If, [:Bool, true], trans:t, trans:e] => t` collapses an
 // :If to its true arm at the AST stage. A post-IR optimizer would receive
 // `[:Branch, [:LoadBool, true], ...]` IR and have no semantic license to
 // delete a branch arm — so seeing the AST optimizer's branch-elimination is
@@ -247,7 +250,7 @@ mod slot {
         .unwrap();
 
         // The constant_fold rule at lib/core/ast_optimizer.fmpl:17
-        //   :If(:Bool(true), trans:t, trans:e) => t
+        //   [:If, [:Bool, true], trans:t, trans:e] => t
         // should collapse this to [:Int, 99].
         let expected = eval_via_legacy_parser(&mut vm, "[:Int, 99]").unwrap();
         assert_eq!(
@@ -258,7 +261,7 @@ mod slot {
     }
 
     /// Independent check: arithmetic constant folding at AST stage
-    /// (constant_fold.trans :Binary(:+, :Int(a), :Int(b)) => :Int(a + b)).
+    /// (constant_fold.trans [:Binary, :+, [:Int, a], [:Int, b]] => [:Int, a + b]).
     #[test]
     fn arithmetic_fold_collapses_at_ast_stage() {
         ensure_workspace_cwd();
@@ -379,7 +382,7 @@ mod guards {
     }
 
     /// Exercises the div-zero guard against a *folded-constant denominator* —
-    /// `(2 - 2)` reduces to `:Int(0)` on the first pass; the second pass
+    /// `(2 - 2)` reduces to `[:Int, 0]` on the first pass; the second pass
     /// attempts division and the guard prevents the fold. This is the
     /// realistic failure mode for the optimizer's three-iteration `optimize`
     /// driver (lib/core/ast_optimizer.fmpl:76-81).
@@ -390,7 +393,7 @@ mod guards {
 
     /// INT_MIN negation guard exercise lives in optimizer_integration.rs's
     /// ac3_int_min_negation_does_not_panic (item 8 of ITER-0004c). The
-    /// "native baseline" cannot be obtained here for `:Int(i64::MIN)` via any
+    /// "native baseline" cannot be obtained here for `[:Int, i64::MIN]` via any
     /// source form because the lexer drops 9223372036854775808 (per
     /// fmpl-core/src/lexer.rs:117). See item 8 sub-task for that observable.
     #[test]

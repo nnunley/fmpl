@@ -95,7 +95,7 @@ fn test_fold_binary_empty_rest() {
     let mut vm = Vm::new();
     // fold_binary(:Int(1), []) => :Int(1)
     load_prelude(&mut vm);
-    let result = eval(&mut vm, "fold_binary(:Int(1), [])").unwrap();
+    let result = eval(&mut vm, "fold_binary([:Int, 1], [])").unwrap();
     if let Some((tag, children)) = result.as_node() {
         assert_eq!(tag.as_str(), "Int");
         assert_eq!(children[0], Value::Int(1));
@@ -107,7 +107,7 @@ fn test_fold_binary_single_op() {
     let mut vm = Vm::new();
     // fold_binary(:Int(1), [[:+, :Int(2)]]) => :Binary(:+, :Int(1), :Int(2))
     load_prelude(&mut vm);
-    let result = eval(&mut vm, "fold_binary(:Int(1), [[:+, :Int(2)]])").unwrap();
+    let result = eval(&mut vm, "fold_binary([:Int, 1], [[:+, [:Int, 2]]])").unwrap();
     if let Some((tag, children)) = result.as_node() {
         assert_eq!(tag.as_str(), "Binary");
         assert_eq!(children[0], Value::Symbol("+".into()));
@@ -122,7 +122,7 @@ fn test_fold_binary_multiple_ops() {
     load_prelude(&mut vm);
     let result = eval(
         &mut vm,
-        "fold_binary(:Int(1), [[:+, :Int(2)], [:+, :Int(3)]])",
+        "fold_binary([:Int, 1], [[:+, [:Int, 2]], [:+, [:Int, 3]]])",
     )
     .unwrap();
     if let Some((tag, children)) = result.as_node() {
@@ -750,7 +750,7 @@ fn test_full_pipeline_integer() {
         io::load("{}")
         io::load("../lib/core/fmpl_parser.fmpl")
         let (ast = "42" @ fmpl_parser.code)
-        let (ir = ast @ {{ :Int(n) => :LoadInt(n) }})
+        let (ir = ast @ {{ [:Int, n] => [:LoadInt, n] }})
         code::eval(ir::compile(ir))
     "#,
             PRELUDE_PATH
@@ -774,7 +774,7 @@ fn test_full_pipeline_addition() {
         io::load("../lib/core/fmpl_parser.fmpl")
         let (ast = "1 + 2" @ fmpl_parser.code)
         let (ir = ast @ {{
-            :Binary(:+, :Int(a), :Int(b)) => :Add(:LoadInt(a), :LoadInt(b))
+            [:Binary, :+, [:Int, a], [:Int, b]] => [:Add, [:LoadInt, a], [:LoadInt, b]]
         }})
         code::eval(ir::compile(ir))
     "#,
@@ -798,7 +798,7 @@ fn test_full_pipeline_multiplication() {
         io::load("../lib/core/fmpl_parser.fmpl")
         let (ast = "3 * 4" @ fmpl_parser.code)
         let (ir = ast @ {{
-            :Binary(:*, :Int(a), :Int(b)) => :Mul(:LoadInt(a), :LoadInt(b))
+            [:Binary, :*, [:Int, a], [:Int, b]] => [:Mul, [:LoadInt, a], [:LoadInt, b]]
         }})
         code::eval(ir::compile(ir))
     "#,
@@ -822,7 +822,7 @@ fn test_full_pipeline_comparison() {
         io::load("../lib/core/fmpl_parser.fmpl")
         let (ast = "1 < 2" @ fmpl_parser.code)
         let (ir = ast @ {{
-            :Binary(:<, :Int(a), :Int(b)) => :Lt(:LoadInt(a), :LoadInt(b))
+            [:Binary, :<, [:Int, a], [:Int, b]] => [:Lt, [:LoadInt, a], [:LoadInt, b]]
         }})
         code::eval(ir::compile(ir))
     "#,
@@ -844,7 +844,7 @@ fn test_full_pipeline_string() {
         io::load("{}")
         io::load("../lib/core/fmpl_parser.fmpl")
         let (ast = "\"hello\"" @ fmpl_parser.code)
-        let (ir = ast @ {{ :String(s) => :LoadString(s) }})
+        let (ir = ast @ {{ [:String, s] => [:LoadString, s] }})
         code::eval(ir::compile(ir))
     "#,
             PRELUDE_PATH
@@ -1761,7 +1761,7 @@ fn test_fmpl_parser_tagged_empty() {
             r#"
         io::load("{}")
         io::load("../lib/core/fmpl_parser.fmpl")
-        ":Null()" @ fmpl_parser.code
+        "[:Null]" @ fmpl_parser.code
     "#,
             PRELUDE_PATH
         ),
@@ -1785,7 +1785,7 @@ fn test_fmpl_parser_tagged_single_arg() {
             r#"
         io::load("{}")
         io::load("../lib/core/fmpl_parser.fmpl")
-        ":Int(42)" @ fmpl_parser.code
+        "[:Int, 42]" @ fmpl_parser.code
     "#,
             PRELUDE_PATH
         ),
@@ -1813,7 +1813,7 @@ fn test_fmpl_parser_tagged_multiple_args() {
             r#"
         io::load("{}")
         io::load("../lib/core/fmpl_parser.fmpl")
-        ":Binary(:+, 1, 2)" @ fmpl_parser.code
+        "[:Binary, :+, 1, 2]" @ fmpl_parser.code
     "#,
             PRELUDE_PATH
         ),
@@ -2771,10 +2771,10 @@ fn test_tree_grammar_explicit_recursion_simple() {
         &mut vm,
         r#"
         let tree_transform = grammar tree_transform {
-            expr = :Int(n) => :LoadInt(n)
-                 | :Binary(:+, expr:l, expr:r) => :Add(l, r)
+            expr = [:Int, n] => [:LoadInt, n]
+                 | [:Binary, :+, expr:l, expr:r] => [:Add, l, r]
         }
-        :Binary(:+, :Int(1), :Int(2)) @ tree_transform.expr
+        [:Binary, :+, [:Int, 1], [:Int, 2]] @ tree_transform.expr
     "#,
     )
     .unwrap();
@@ -2804,11 +2804,11 @@ fn test_tree_grammar_explicit_recursion_nested() {
         &mut vm,
         r#"
         let tree_transform = grammar tree_transform {
-            expr = :Int(n) => :LoadInt(n)
-                 | :Binary(:+, expr:l, expr:r) => :Add(l, r)
-                 | :Binary(:*, expr:l, expr:r) => :Mul(l, r)
+            expr = [:Int, n] => [:LoadInt, n]
+                 | [:Binary, :+, expr:l, expr:r] => [:Add, l, r]
+                 | [:Binary, :*, expr:l, expr:r] => [:Mul, l, r]
         }
-        :Binary(:+, :Binary(:*, :Int(1), :Int(2)), :Int(3)) @ tree_transform.expr
+        [:Binary, :+, [:Binary, :*, [:Int, 1], [:Int, 2]], [:Int, 3]] @ tree_transform.expr
     "#,
     )
     .unwrap();
@@ -2846,7 +2846,7 @@ fn test_ir_to_rust_simple_int() {
     let result = eval(
         &mut vm,
         r#"
-        ir::to_rust(:LoadInt(42))
+        ir::to_rust([:LoadInt, 42])
     "#,
     )
     .unwrap();
@@ -2868,7 +2868,7 @@ fn test_ir_to_rust_expr_only() {
     let result = eval(
         &mut vm,
         r#"
-        ir::to_rust_expr(:Add(:LoadInt(1), :LoadInt(2)))
+        ir::to_rust_expr([:Add, [:LoadInt, 1], [:LoadInt, 2]])
     "#,
     )
     .unwrap();
@@ -2890,7 +2890,7 @@ fn test_ir_to_rust_let_binding() {
     let result = eval(
         &mut vm,
         r#"
-        ir::to_rust_expr(:Let(:x, :LoadInt(10), :Var(:x)))
+        ir::to_rust_expr([:Let, :x, [:LoadInt, 10], [:Var, :x]])
     "#,
     )
     .unwrap();
@@ -2908,7 +2908,7 @@ fn test_ir_to_rust_full_pipeline() {
     let result = eval(
         &mut vm,
         r#"
-        let (ir = :Add(:LoadInt(1), :Mul(:LoadInt(2), :LoadInt(3))))
+        let (ir = [:Add, [:LoadInt, 1], [:Mul, [:LoadInt, 2], [:LoadInt, 3]]])
         ir::to_rust_expr(ir)
     "#,
     )
@@ -2931,7 +2931,7 @@ fn test_ir_to_rust_compiles_and_runs() {
     let result = eval(
         &mut vm,
         r#"
-        ir::to_rust(:Add(:LoadInt(40), :LoadInt(2)))
+        ir::to_rust([:Add, [:LoadInt, 40], [:LoadInt, 2]])
     "#,
     )
     .unwrap();

@@ -84,23 +84,25 @@ fn test_grammar_apply_syntax_variants() {
     let mut vm = Vm::new();
 
     // Test 1: No sink (normal)
+    // ITER-0004d.1 T2b: list-pattern syntax now works in match arms.
     let result1 = eval(
         &mut vm,
         r#"
-        let x = :Binary(:+, :Int(1), :Int(2))
-        x @ { :Binary(op, a, b) => [op, a, b] }
+        let x = [:Binary, :+, [:Int, 1], [:Int, 2]]
+        x @ { [:Binary, op, a, b] => [op, a, b] }
     "#,
     );
     assert!(result1.is_ok());
     println!("Test 1 (no sink): OK");
 
     // Test 2: With sink parameter (syntax check)
+    // ITER-0004d.1 T2b: list-pattern syntax now works in match arms.
     let result2 = eval(
         &mut vm,
         r#"
         let sink = stream.sink()
-        let x = :Binary(:+, :Int(1), :Int(2))
-        x @ { :Binary(op, a, b) => [op, a, b] }(sink)
+        let x = [:Binary, :+, [:Int, 1], [:Int, 2]]
+        x @ { [:Binary, op, a, b] => [op, a, b] }(sink)
     "#,
     );
     // Will fail due to closed sink, but syntax is parsed correctly

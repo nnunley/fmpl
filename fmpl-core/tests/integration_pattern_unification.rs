@@ -243,7 +243,7 @@ mod let_destructuring {
             let result = eval_legacy(
                 &mut vm,
                 r#"
-                let (:Some(x) = :Some(42))
+                let (:Some(x) = [:Some, 42])
                 x
             "#,
             )
@@ -261,7 +261,7 @@ mod let_destructuring {
             let result = eval_legacy(
                 &mut vm,
                 r#"
-                let (:Pair(a, b) = :Pair(1, 2))
+                let (:Pair(a, b) = [:Pair, 1, 2])
                 a + b
             "#,
             )
@@ -279,7 +279,7 @@ mod let_destructuring {
             let result = eval_legacy(
                 &mut vm,
                 r#"
-                let (:Binary(op, :Int(lhs), :Int(rhs)) = :Binary(:plus, :Int(10), :Int(20)))
+                let (:Binary(op, :Int(lhs), :Int(rhs)) = [:Binary, :plus, [:Int, 10], [:Int, 20]])
                 lhs + rhs
             "#,
             )
@@ -298,7 +298,7 @@ mod let_destructuring {
             let result = eval_legacy(
                 &mut vm,
                 r#"
-                let (:Node(name, :leaf) = :Node("root", :leaf))
+                let (:Node(name, :leaf) = [:Node, "root", :leaf])
                 name
             "#,
             )
@@ -317,7 +317,7 @@ mod let_destructuring {
             let result = eval_legacy(
                 &mut vm,
                 r#"
-                let (:Some(x) = :None())
+                let (:Some(x) = [:None])
                 x
             "#,
             );
@@ -370,7 +370,7 @@ mod let_destructuring {
             let result = eval_legacy(
                 &mut vm,
                 r#"
-                let ([:Some(a), :Some(b)] = [:Some(5), :Some(7)])
+                let ([:Some(a), :Some(b)] = [[:Some, 5], [:Some, 7]])
                 a + b
             "#,
             )
@@ -388,7 +388,7 @@ mod let_destructuring {
             let result = eval_legacy(
                 &mut vm,
                 r#"
-                let (:Config(%{name: n, port: p}) = :Config(%{name: "server", port: 8080}))
+                let (:Config(%{name: n, port: p}) = [:Config, %{name: "server", port: 8080}])
                 [n, p]
             "#,
             )
@@ -751,7 +751,7 @@ mod nested_patterns {
     #[test]
     fn tagged_pattern_match() {
         let mut vm = Vm::new();
-        let result = eval_legacy(&mut vm, r#":Int(42) @ { :Int(n) => n }"#).unwrap();
+        let result = eval_legacy(&mut vm, r#"[:Int, 42] @ { :Int(n) => n }"#).unwrap();
         assert!(
             matches!(result, Value::Int(42)),
             "expected 42, got {:?}",
@@ -765,7 +765,7 @@ mod nested_patterns {
         let result = eval_legacy(
             &mut vm,
             r#"
-            :Binary(:plus, :Int(1), :Int(2)) @ {
+            [:Binary, :plus, [:Int, 1], [:Int, 2]] @ {
                 :Binary(op, :Int(a), :Int(b)) => [op, a, b]
             }
         "#,

@@ -12,7 +12,7 @@ fn test_full_pipeline_simple() {
         &mut vm,
         r#"
         let (ast = ast::parse("42"))
-        let (ir = ast @ { :Int(n) => :LoadInt(n) })
+        let (ir = ast @ { :Int(n) => [:LoadInt, n] })
         let (code = ir::compile(ir))
         code::eval(code)
     "#,
@@ -35,7 +35,7 @@ fn test_full_pipeline_addition() {
     let result = eval(
         &mut vm,
         r#"
-        let (ir = :Add(:LoadInt(1), :LoadInt(2)))
+        let (ir = [:Add, [:LoadInt, 1], [:LoadInt, 2]])
         let (code = ir::compile(ir))
         code::eval(code)
     "#,
@@ -57,10 +57,10 @@ fn test_full_pipeline_with_ast_pattern_match() {
         r#"
         let (ast = ast::parse("1 + 2"))
         let (ir = ast @ {
-            :Binary(:+, :Int(a), :Int(b)) => :Add(:LoadInt(a), :LoadInt(b))
-            :Binary(:-, :Int(a), :Int(b)) => :Sub(:LoadInt(a), :LoadInt(b))
-            :Binary(:*, :Int(a), :Int(b)) => :Mul(:LoadInt(a), :LoadInt(b))
-            :Binary(:/, :Int(a), :Int(b)) => :Div(:LoadInt(a), :LoadInt(b))
+            :Binary(:+, :Int(a), :Int(b)) => [:Add, [:LoadInt, a], [:LoadInt, b]]
+            :Binary(:-, :Int(a), :Int(b)) => [:Sub, [:LoadInt, a], [:LoadInt, b]]
+            :Binary(:*, :Int(a), :Int(b)) => [:Mul, [:LoadInt, a], [:LoadInt, b]]
+            :Binary(:/, :Int(a), :Int(b)) => [:Div, [:LoadInt, a], [:LoadInt, b]]
         })
         let (code = ir::compile(ir))
         code::eval(code)
@@ -82,7 +82,7 @@ fn test_full_pipeline_bool() {
         &mut vm,
         r#"
         let (ast = ast::parse("true"))
-        let (ir = ast @ { :Bool(b) => :LoadBool(b) })
+        let (ir = ast @ { :Bool(b) => [:LoadBool, b] })
         let (code = ir::compile(ir))
         code::eval(code)
     "#,
@@ -103,7 +103,7 @@ fn test_code_eval_simple() {
     let result = eval(
         &mut vm,
         r#"
-        let (code = ir::compile(:LoadInt(42)))
+        let (code = ir::compile([:LoadInt, 42]))
         code::eval(code)
     "#,
     )
@@ -121,7 +121,7 @@ fn test_code_eval_arithmetic() {
     let result = eval(
         &mut vm,
         r#"
-        let (code = ir::compile(:Add(:LoadInt(1), :LoadInt(2))))
+        let (code = ir::compile([:Add, [:LoadInt, 1], [:LoadInt, 2]]))
         code::eval(code)
     "#,
     )
@@ -139,7 +139,7 @@ fn test_code_eval_if() {
     let result = eval(
         &mut vm,
         r#"
-        let (code = ir::compile(:If(:LoadBool(true), :LoadInt(1), :LoadInt(2))))
+        let (code = ir::compile([:If, [:LoadBool, true], [:LoadInt, 1], [:LoadInt, 2]]))
         code::eval(code)
     "#,
     )
@@ -156,7 +156,7 @@ fn test_code_eval_if() {
 #[test]
 fn test_ir_compile_load_int() {
     let mut vm = Vm::new();
-    let result = eval(&mut vm, r#"ir::compile(:LoadInt(42))"#).unwrap();
+    let result = eval(&mut vm, r#"ir::compile([:LoadInt, 42])"#).unwrap();
     assert!(
         matches!(result, Value::Code(_)),
         "expected Value::Code, got {:?}",
@@ -167,7 +167,11 @@ fn test_ir_compile_load_int() {
 #[test]
 fn test_ir_compile_add() {
     let mut vm = Vm::new();
-    let result = eval(&mut vm, r#"ir::compile(:Add(:LoadInt(1), :LoadInt(2)))"#).unwrap();
+    let result = eval(
+        &mut vm,
+        r#"ir::compile([:Add, [:LoadInt, 1], [:LoadInt, 2]])"#,
+    )
+    .unwrap();
     assert!(
         matches!(result, Value::Code(_)),
         "expected Value::Code, got {:?}",
@@ -178,7 +182,11 @@ fn test_ir_compile_add() {
 #[test]
 fn test_ir_compile_let() {
     let mut vm = Vm::new();
-    let result = eval(&mut vm, r#"ir::compile(:Let(:x, :LoadInt(42), :Var(:x)))"#).unwrap();
+    let result = eval(
+        &mut vm,
+        r#"ir::compile([:Let, :x, [:LoadInt, 42], [:Var, :x]])"#,
+    )
+    .unwrap();
     assert!(
         matches!(result, Value::Code(_)),
         "expected Value::Code, got {:?}",
@@ -191,7 +199,7 @@ fn test_ir_compile_if() {
     let mut vm = Vm::new();
     let result = eval(
         &mut vm,
-        r#"ir::compile(:If(:LoadBool(true), :LoadInt(1), :LoadInt(2)))"#,
+        r#"ir::compile([:If, [:LoadBool, true], [:LoadInt, 1], [:LoadInt, 2]])"#,
     )
     .unwrap();
     assert!(
@@ -206,7 +214,7 @@ fn test_ir_compile_seq() {
     let mut vm = Vm::new();
     let result = eval(
         &mut vm,
-        r#"ir::compile(:Seq([:LoadInt(1), :LoadInt(2), :LoadInt(3)]))"#,
+        r#"ir::compile([:Seq, [[:LoadInt, 1], [:LoadInt, 2], [:LoadInt, 3]]])"#,
     )
     .unwrap();
     assert!(
@@ -224,7 +232,7 @@ fn test_ast_parse_int_literal() {
     let result = eval(&mut vm, r#"ast::parse("42")"#).unwrap();
     assert!(
         matches!(result.as_node(), Some((t, _)) if t == "Int"),
-        "expected :Int(...), got {:?}",
+        "expected [:Int, ...], got {:?}",
         result
     );
 }
@@ -247,7 +255,7 @@ fn test_ast_parse_lambda() {
     let result = eval(&mut vm, r#"ast::parse("\\x x + 1")"#).unwrap();
     assert!(
         matches!(result.as_node(), Some((t, _)) if t == "Lambda"),
-        "expected :Lambda(...), got {:?}",
+        "expected [:Lambda, ...], got {:?}",
         result
     );
 }
@@ -258,7 +266,7 @@ fn test_ast_parse_let() {
     let result = eval(&mut vm, r#"ast::parse("let (x = 1) x + 1")"#).unwrap();
     assert!(
         matches!(result.as_node(), Some((t, _)) if t == "Let"),
-        "expected :Let(...), got {:?}",
+        "expected [:Let, ...], got {:?}",
         result
     );
 }
@@ -269,7 +277,7 @@ fn test_ast_parse_if() {
     let result = eval(&mut vm, r#"ast::parse("if true then 1 else 2")"#).unwrap();
     assert!(
         matches!(result.as_node(), Some((t, _)) if t == "If"),
-        "expected :If(...), got {:?}",
+        "expected [:If, ...], got {:?}",
         result
     );
 }
@@ -280,7 +288,7 @@ fn test_ast_parse_list() {
     let result = eval(&mut vm, r#"ast::parse("[1, 2, 3]")"#).unwrap();
     assert!(
         matches!(result.as_node(), Some((t, _)) if t == "List"),
-        "expected :List(...), got {:?}",
+        "expected [:List, ...], got {:?}",
         result
     );
 }
@@ -291,7 +299,7 @@ fn test_ast_parse_map() {
     let result = eval(&mut vm, r#"ast::parse("%{a: 1, b: 2}")"#).unwrap();
     assert!(
         matches!(result.as_node(), Some((t, _)) if t == "Map"),
-        "expected :Map(...), got {:?}",
+        "expected [:Map, ...], got {:?}",
         result
     );
 }
@@ -302,7 +310,7 @@ fn test_ast_parse_call() {
     let result = eval(&mut vm, r#"ast::parse("foo(1, 2)")"#).unwrap();
     assert!(
         matches!(result.as_node(), Some((t, _)) if t == "Call"),
-        "expected :Call(...), got {:?}",
+        "expected [:Call, ...], got {:?}",
         result
     );
 }
@@ -313,7 +321,7 @@ fn test_ast_parse_method_call() {
     let result = eval(&mut vm, r#"ast::parse("obj.method()")"#).unwrap();
     assert!(
         matches!(result.as_node(), Some((t, _)) if t == "MethodCall"),
-        "expected :MethodCall(...), got {:?}",
+        "expected [:MethodCall, ...], got {:?}",
         result
     );
 }

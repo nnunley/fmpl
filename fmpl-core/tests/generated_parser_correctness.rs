@@ -417,39 +417,6 @@ fn test_indexing_syntax() {
 }
 
 // =============================================================================
-// TAGGED VALUE TESTS
-// =============================================================================
-
-#[test]
-fn test_empty_tagged() {
-    let result = eval_generated(":Foo()").unwrap();
-    let (tag, args) = result
-        .as_node()
-        .unwrap_or_else(|| panic!("Expected list-shaped node, got {:?}", result));
-    assert_eq!(tag.as_str(), "Foo");
-    assert_eq!(args.len(), 0);
-}
-
-#[test]
-fn test_tagged_with_args() {
-    let result = eval_generated(":Foo(1, 2)").unwrap();
-    let (tag, args) = result
-        .as_node()
-        .unwrap_or_else(|| panic!("Expected list-shaped node, got {:?}", result));
-    assert_eq!(tag.as_str(), "Foo");
-    assert_eq!(args.len(), 2);
-}
-
-#[test]
-fn test_nested_tagged() {
-    let result = eval_generated(":Binary(:+, :Int(1), :Int(2))").unwrap();
-    let (tag, _) = result
-        .as_node()
-        .unwrap_or_else(|| panic!("Expected list-shaped node, got {:?}", result));
-    assert_eq!(tag.as_str(), "Binary");
-}
-
-// =============================================================================
 // QUALIFIED NAME TESTS
 // =============================================================================
 

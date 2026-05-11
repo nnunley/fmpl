@@ -1097,19 +1097,20 @@ impl<'a> Parser<'a> {
 
             // [ could be list pattern or character class
             // List pattern: [a, b] -> has comma after first element
+            // List pattern: [:Tag, ...] -> has comma after symbol
             // Character class: [a-z] -> has dash for ranges
             Token::LBracket => {
                 if let Some(second) = self.peek_ahead(2)
                     && let Some(third) = self.peek_ahead(3)
                 {
-                    // [a, ...] is list pattern
-                    if matches!(second.token, Token::Ident(_))
+                    // [a, ...] or [:Tag, ...] is list pattern
+                    if matches!(second.token, Token::Ident(_) | Token::Symbol(_))
                         && matches!(third.token, Token::Comma)
                     {
                         return true;
                     }
-                    // [a] => is list pattern (single element)
-                    if matches!(second.token, Token::Ident(_))
+                    // [a] => or [:Tag] => is list pattern (single element)
+                    if matches!(second.token, Token::Ident(_) | Token::Symbol(_))
                         && matches!(third.token, Token::RBracket)
                         && let Some(fourth) = self.peek_ahead(4)
                         && matches!(fourth.token, Token::Arrow | Token::When)
