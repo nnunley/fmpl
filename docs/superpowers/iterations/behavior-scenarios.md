@@ -1015,24 +1015,28 @@
 
 **Preconditions:**
 - A grammar `ast::optimizer` extends `base::tree`
-- The grammar has an `add` rule matching `[:add const:a const:b]` with action `a + b`
-- The grammar has a `const` rule matching `:int(n)` returning `n`
+- The grammar has an `add` rule matching `[:add a:const, b:const]` with action `a + b`
+  where the rule body uses list-pattern syntax with a leading symbol head
+- The grammar has a `const` rule matching `[:int, n]` returning `n`
 
 **Action:**
-- Apply the `add` rule to a list value `[:add, 1, 2]`
+- Apply the `add` rule to the list-shaped node `[:add, [:int, 1], [:int, 2]]`
 
 **Expected observables:**
-- The grammar descends into the list
-- SymbolMatch matches `:add`
-- const rule matches integers 1 and 2
-- Action computes 1 + 2
-- The result is the integer value 3
+- The grammar descends into the list-shaped node
+- SymbolMatch matches the `:add` head
+- The `const` rule matches the two `[:int, n]` children, binding `a=1`, `b=2`
+- The semantic action computes `1 + 2`
+- The result is the integer value `3`
 
 **Automation status:** pending
 **Execution command:** TBD
 
 **Sources:**
 - `specs/grammar-system.md:554-559`
+- `docs/design-principles.md` (DESIGN-002: single canonical form)
+
+**Note:** Rewritten 2026-05-12 (ITER-0004d.1 T17) — the original phrasing used `:int(n)` value-constructor syntax which was removed per DESIGN-002. The scenario contract is unchanged; only the surface syntax of the example grammar is migrated to the canonical list-pattern form.
 
 ## SCENARIO-0040 — Child grammar inherits parent rules and overrides specific rules
 
@@ -1702,28 +1706,34 @@
 **Sources:**
 - `specs/fmpl-core.md:158-172`
 
-## SCENARIO-0066 — Tagged values carry constructor tag and children
+## SCENARIO-0066 — Tagged-shape list nodes carry head symbol and children
 
 **Kind:** contract
 **Proof seam:** unit
 **Owning stories:** STORY-0095
 
 **Preconditions:**
-- A Tagged value is constructed with tag 'Expr' and children [Int(1), Int(2)]
+- A list-shaped node value is constructed: `Value::List([Value::Symbol("Expr"), Value::Int(1), Value::Int(2)])`
+- Per DESIGN-002, structured data uses the single canonical form `[:Tag, child1, child2, ...]` — there is no separate `Value::Tagged` type
 
 **Action:**
-- Inspect the Tagged value
+- Call `Value::as_node()` on the value (the canonical introspection helper)
 
 **Expected observables:**
-- Tag is SmolStr 'Expr'
-- Children are Arc<Vec<Value>> containing [Int(1), Int(2)]
-- Tagged values preserve their tag and children through the pipeline
+- `as_node()` returns `Some((tag, children))` because the list starts with a Symbol
+- The returned `tag` is the SmolStr-interned symbol `Expr`
+- The returned `children` slice equals `[Value::Int(1), Value::Int(2)]`
+- The same list round-trips through compile → bytecode → eval and re-emerges as a structurally-equal list node (head + tail preserved)
+- A list whose first element is not a Symbol returns `None` from `as_node()` (the introspection helper correctly identifies non-node lists)
 
 **Automation status:** pending
 **Execution command:** TBD
 
 **Sources:**
-- `specs/fmpl-core.md:98`
+- `specs/fmpl-core.md:98` (original, pre-pivot — referenced `Value::Tagged`)
+- `docs/design-principles.md` (DESIGN-002: list-shaped canonical form; DESIGN-003: symbols for tags)
+
+**Note:** Rewritten 2026-05-12 (ITER-0004d.1 T17) — the original phrasing asserted on `Value::Tagged { tag, children }`, a Rust type deleted in ITER-0004b. The contract is now framed in the post-pivot canonical form: a tagged-shape value IS a list whose first element is a symbol; the `as_node()` helper is the canonical way to introspect it.
 
 ## SCENARIO-0067 — Grammar as first-class value
 
@@ -2135,3 +2145,112 @@
 
 **Sources:**
 - `docs/plans/2026-03-03-self-hosting-bootstrap-implementation.md:43-44`
+
+## SCENARIO-0104 — Parser rejects `:Tag(args)` value-constructor syntax
+
+**Kind:** invariant
+**Proof seam:** unit
+**Owning stories:** STORY-0010 (EPIC-002), STORY-0095 (EPIC-032)
+
+**Preconditions:**
+- The Rust FMPL parser (`parser.rs`) is the entry point under test
+- The fallback grammar/parser DSL parser (`grammar/parser.rs`) is also under test (both parsers describe the same language per DESIGN-001)
+- DESIGN-002 requires structured data use only the canonical list-shape `[:Tag, ...]` form
+
+**Action:**
+- For each parser, attempt to parse a source string containing a value-position `:Tag(args)` construction. Inputs to exercise:
+  - `:Foo(1)` — single-argument
+  - `:Bar(1, 2, 3)` — multi-argument
+  - `let x = :Pair(1, 2)` — in let-binding rhs (a context where the rejection must fire even though `:Pair` could otherwise be a symbol)
+
+**Expected observables:**
+- Each parse attempt produces a structured parser error (not a panic, not a successful AST)
+- The error message names the unsupported form and points the user to the canonical alternative — specifically, the error contains the phrase `use [:Tag] or [:Tag, ...] instead`
+- The error carries a source location (line/column) pointing at the offending `(` token following the tag symbol
+- No `Expr::Tagged` AST node is produced (the variant is deleted; the only outcome is the structured error)
+
+**Automation status:** implemented (ITER-0004d.1 T19)
+**Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0104`
+
+**Sources:**
+- `docs/design-principles.md` (DESIGN-001 metacircular bootstrap, DESIGN-002 single canonical form)
+- `fmpl-core/src/parser.rs:619` (T6 rejection site in expression position)
+- `fmpl-core/src/grammar/parser.rs:874, 1099, 1316` (F1 rejection sites in grammar DSL)
+- `fmpl-core/tests/structural_invariants.rs` (evidence tests, T19)
+
+**Note:** Added 2026-05-12 (ITER-0004d.1 T17). The rejection behavior is already implemented; this scenario writes the behavior contract that T19 will turn into a passing evidence test.
+
+## SCENARIO-0105 — Parser rejects `:Tag(p1, p2)` pattern-position syntax
+
+**Kind:** invariant
+**Proof seam:** unit
+**Owning stories:** STORY-0010 (EPIC-002), STORY-0095 (EPIC-032)
+
+**Preconditions:**
+- The Rust pattern parser (`parser.rs::parse_pattern`) is under test
+- The grammar DSL parser (`grammar/parser.rs`) is also under test for pattern positions
+- DESIGN-002 requires patterns over tagged shapes use the canonical list-pattern `[:Tag, p1, p2]` form
+
+**Action:**
+- For each parser, attempt to parse a source string containing a pattern-position `:Tag(p1, p2)` construction. Inputs to exercise:
+  - `match x { :Pair(a, b) => ... }` — in a match arm pattern position
+  - `let (:Pair(a, b) = expr)` — in a let-binding destructuring pattern (the pre-F2 rejection-sensitive site)
+  - A grammar rule body like `:add(p1, p2)` — pattern position in the grammar DSL
+
+**Expected observables:**
+- Each parse attempt produces a structured parser error (not a panic, not a successful pattern)
+- The error message identifies the unsupported pattern syntax and points to the canonical alternative — specifically, the error contains `use [:Tag] or [:Tag, ...] instead`
+- The error carries a source location pointing at the `(` token following the tag symbol in pattern position
+- No `ast::Pattern::Constructor`, `pattern::Pattern::Tagged`, or `pattern::Pattern::TagMatch` value is produced (those variants are deleted)
+
+**Automation status:** implemented (ITER-0004d.1 T19)
+**Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0105`
+
+**Sources:**
+- `docs/design-principles.md` (DESIGN-001 metacircular bootstrap, DESIGN-002 single canonical form)
+- `fmpl-core/src/parser.rs:1839` (F2 rejection site in pattern position)
+- `fmpl-core/src/grammar/parser.rs:874, 1099, 1316` (F1 rejection sites; grammar DSL patterns and grammar value-constructors share the rejection path)
+- `fmpl-core/tests/structural_invariants.rs` (evidence tests, T19)
+
+**Note:** Added 2026-05-12 (ITER-0004d.1 T17). Distinct from SCENARIO-0104 in two ways: (1) pattern-position parsing goes through a separate AST path (`parse_pattern` vs `parse_expr`) so it must be exercised independently; (2) three distinct AST/pattern variants were deleted to enforce this rejection (Constructor, Tagged, TagMatch) versus one for value position (Expr::Tagged).
+
+## SCENARIO-0106 — Rust-side greppable invariant: deleted variants stay deleted
+
+**Kind:** invariant
+**Proof seam:** unit
+**Owning stories:** STORY-0010 (EPIC-002), STORY-0095 (EPIC-032)
+
+**Preconditions:**
+- A run of `cargo test -p fmpl-core` is available
+- The repo root is the working directory
+- The legacy-syntax scanner (`fmpl-core/tests/diagnostics_fmpl_source_scan.rs`) is built
+- DESIGN-002 requires the deleted variants (`Value::Tagged`, `Expr::Tagged`, `ast::Pattern::Constructor`, `pattern::Pattern::Tagged`, `pattern::Pattern::TagMatch`) remain deleted
+
+**Action:**
+- Run seven structural greps over the `fmpl-core/src/` tree (excluding `tests/`, `target/`, and historical scans). For each grep, count the number of matches.
+
+**Expected observables:**
+For all seven greps, the count is **zero** outside the strictly-allowed sites:
+
+1. `\bValue::Tagged\b` — must NOT appear in `src/` (deleted in ITER-0004b)
+2. `\bExpr::Tagged\b` — must NOT appear in `src/` (deleted in T9)
+3. `\bPattern::Constructor\b` where `Pattern` resolves to `ast::Pattern` — must NOT appear in `src/` (deleted in T11). Synthetic enum names like `MyPattern::Constructor` in tests are allowed; the gate must distinguish.
+4. `\bPattern::Tagged\b` where `Pattern` resolves to `pattern::Pattern` — must NOT appear in `src/` (deleted in T12)
+5. `\bPattern::TagMatch\b` — must NOT appear in `src/` (deleted in T14)
+6. `\bInstruction::MakeTagged\b` as a qualified reference (construction or pattern) — must NOT appear in `src/compiler.rs` (the emit was deleted as part of T9; the bare `MakeTagged` token inside the `Instruction` enum definition is allowed). Surviving references in `src/vm.rs` (runtime dispatch handler) and `src/builtins/ir.rs` (IR-node handler) are explicitly out of scope for ITER-0004d.1; they will be addressed by ITER-0004d.2's opcode rename.
+7. `\bExtractTaggedChild\b` is the canonical replacement for the deleted-variant pattern-extraction path — it MUST appear at least once in `src/compiler.rs` (positive invariant: the replacement exists)
+
+**Expected observables (summary):**
+- All seven greps produce the expected count (six at zero, one at ≥1)
+- A diagnostic-style report names each grep and its count, so a regression points directly at the violating file:line
+- Running this scenario before-and-after ITER-0004d.1 shows a strict drop in counts 1-6 and a strict rise in count 7
+
+**Automation status:** implemented (ITER-0004d.1 T19)
+**Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0106`
+
+**Sources:**
+- `docs/design-principles.md` (DESIGN-001 metacircular bootstrap, DESIGN-002 single canonical form)
+- `fmpl-core/tests/structural_invariants.rs` (the evidence tests; ITER-0004d.1 T19 — the implementation uses a small in-test src-tree walker rather than the `diagnostics_fmpl_source_scan` helper because the greps target Rust type names, not FMPL `:Tag(args)` syntax, so the existing diagnostics scanner doesn't apply)
+- F19 / round-6 PAR correction (this scenario was a finding in pre-T-task review that the parser-rejection scenarios alone don't prove the underlying Rust types stayed deleted)
+
+**Note:** Added 2026-05-12 (ITER-0004d.1 T17). The role of this scenario is distinct from SCENARIO-0104/0105 (which exercise the parser surface). 0106 is the structural guard that ensures a future contributor doesn't reintroduce the deleted variants by name even if the parser surface still rejects the syntax — i.e., it catches the case where someone adds a new producer for the old variants from a non-parser surface (FFI, deserialization, builtin) and assumes the variants exist again. This is a higher-confidence invariant than syntactic gates because it's typed against the canonical Rust names.

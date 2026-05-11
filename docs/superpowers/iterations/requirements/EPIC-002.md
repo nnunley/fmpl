@@ -126,10 +126,10 @@
 
 *Phase B — burn the bridge:*
 - AC-8: `Value::Tagged` enum variant is removed from `fmpl-core/src/value.rs`. All ~349 source-and-test sites that referenced it use `Value::list_node(tag, children)` (producer) or `Value::as_node()` (consumer) · impact:`cross-surface` · seam:`integration`
-- AC-9: `Expr::Tagged` AST variant is removed. The parser production for `:Tag(args)` value-constructor syntax is deleted; bare `:foo` symbol literals (`Expr::Symbol`) remain · impact:`cross-surface` · seam:`integration`
-- AC-10: `Pattern::Constructor(tag, [pats])` is removed. The parser productions for `:Tag(p1, p2)` pattern syntax are deleted; `[:Tag, p1, p2]` list-pattern syntax is the only way to match structured data · impact:`cross-surface` · seam:`integration`
+- AC-9: `Expr::Tagged` AST variant is removed. The parser production for `:Tag(args)` value-constructor syntax is deleted; bare `:foo` symbol literals (`Expr::Symbol`) remain · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0104` · scenario:`SCENARIO-0106`
+- AC-10: `Pattern::Constructor(tag, [pats])` is removed. The parser productions for `:Tag(p1, p2)` pattern syntax are deleted; `[:Tag, p1, p2]` list-pattern syntax is the only way to match structured data · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0105` · scenario:`SCENARIO-0106`
 - AC-11: Tagged-specific bytecode instructions (`MakeTagged`, `MatchTag`, `ExtractTaggedChild`, `MatchTagged`, `MatchTaggedWithBindings`) are removed (or the surviving ones renamed to reflect list-node semantics) · impact:`local` · seam:`integration`
-- AC-12: `Pattern::TagMatch` and its grammar runtime/trampoline handlers are removed; `Pattern::ListMatch` is the only constructor-shape matcher · impact:`local` · seam:`integration`
+- AC-12: `Pattern::TagMatch` and its grammar runtime/trampoline handlers are removed; `Pattern::ListMatch` is the only constructor-shape matcher · impact:`local` · seam:`integration` · scenario:`SCENARIO-0105` · scenario:`SCENARIO-0106`
 - AC-13: All FMPL stdlib files (`lib/core/*.fmpl`) use list-pattern syntax exclusively — no `:Tag(args)` patterns or constructions remain · impact:`cross-surface` · seam:`integration`
 - AC-14: All Rust tests use `Value::list_node` for construction and `value.as_node()` for shape assertions — no `Value::Tagged(...)` literals remain in test code · impact:`local` · seam:`unit`
 - AC-15: Full test suite passes with zero `Value::Tagged` references remaining in the repo (`grep -r "Value::Tagged" .` returns no source matches; only documentation references in `docs/` remain) · impact:`cross-surface` · seam:`integration`

@@ -143,23 +143,7 @@ pub enum WorkItem {
     /// Super rule continuation: after finding parent rule.
     SuperContinue { rule: Rule, pos: usize },
 
-    // === Sub-runtime work (TagMatch, ListMatch, MapMatch) ===
-    /// TagMatch: match tagged value children.
-    TagMatchContinue {
-        /// Tag name that was matched.
-        tag: SmolStr,
-        /// Remaining child patterns to match.
-        remaining_patterns: Vec<Pattern>,
-        /// Child values to match against.
-        child_values: Vec<Value>,
-        /// Current child index.
-        child_index: usize,
-        /// Collected match results.
-        collected: Vec<Value>,
-        /// Original position to advance from.
-        original_pos: usize,
-    },
-
+    // === Sub-runtime work (ListMatch, MapMatch) ===
     /// ListMatch: match list elements.
     ListMatchContinue {
         /// Remaining patterns to match.
@@ -424,21 +408,6 @@ impl<'a, 'e, I: PegInput> TrampolinedRuntime<'a, 'e, I> {
             } => self.handle_guard_continue(guard_expr, saved_bindings, start_pos, pattern),
             WorkItem::PredicateContinue { expr, pos } => self.handle_predicate_continue(expr, pos),
             WorkItem::SuperContinue { rule, pos } => self.handle_super_continue(rule, pos),
-            WorkItem::TagMatchContinue {
-                tag,
-                remaining_patterns,
-                child_values,
-                child_index,
-                collected,
-                original_pos,
-            } => self.handle_tag_match_continue(
-                tag,
-                remaining_patterns,
-                child_values,
-                child_index,
-                collected,
-                original_pos,
-            ),
             WorkItem::ListMatchContinue {
                 remaining_patterns,
                 rest_pattern,
@@ -996,56 +965,6 @@ impl<'a, 'e, I: PegInput> TrampolinedRuntime<'a, 'e, I> {
                 self.result_stack.push(WorkResult::Failure);
             }
 
-            Pattern::TagMatch(tag, child_patterns) => {
-                if !self.input.supports_value_patterns() {
-                    return Err(Error::Runtime(
-                        "value patterns not supported for this input type".to_string(),
-                    ));
-                }
-                let pos_obj = self.input.position_at(pos);
-                let (value_tag, children) = match self.input.head(&pos_obj) {
-                    Some(InputItem::Value(Value::List(items))) if !items.is_empty() => {
-                        if let Value::Symbol(tag_sym) = &items[0] {
-                            (tag_sym.clone(), items[1..].to_vec())
-                        } else {
-                            self.result_stack.push(WorkResult::Failure);
-                            return Ok(());
-                        }
-                    }
-                    _ => {
-                        self.result_stack.push(WorkResult::Failure);
-                        return Ok(());
-                    }
-                };
-
-                if value_tag.as_str() != tag.as_str() || children.len() != child_patterns.len() {
-                    self.result_stack.push(WorkResult::Failure);
-                    return Ok(());
-                }
-
-                if child_patterns.is_empty() {
-                    let new_pos = self.input.tail(&pos_obj);
-                    self.result_stack.push(WorkResult::Success(
-                        Value::list_node(value_tag, Vec::new()),
-                        self.input.index(&new_pos),
-                    ));
-                } else {
-                    // Start matching children
-                    let mut remaining = child_patterns;
-                    let first = remaining.remove(0);
-                    self.work_stack.push(WorkItem::TagMatchContinue {
-                        tag: value_tag,
-                        remaining_patterns: remaining,
-                        child_values: children.clone(),
-                        child_index: 0,
-                        collected: Vec::new(),
-                        original_pos: pos,
-                    });
-                    // Push sub-runtime work for first child
-                    self.push_sub_value_match(first, children[0].clone())?;
-                }
-            }
-
             Pattern::ListMatch(patterns, rest) => {
                 if !self.input.supports_value_patterns() {
                     return Err(Error::Runtime(
@@ -1176,11 +1095,7 @@ impl<'a, 'e, I: PegInput> TrampolinedRuntime<'a, 'e, I> {
             }
 
             // Let-binding patterns - not used in grammar context
-            Pattern::Var(_)
-            | Pattern::Literal(_)
-            | Pattern::List(_)
-            | Pattern::Map(_)
-            | Pattern::Tagged { .. } => {
+            Pattern::Var(_) | Pattern::Literal(_) | Pattern::List(_) | Pattern::Map(_) => {
                 return Err(Error::Runtime(
                     "Let-binding patterns not supported in grammar context".to_string(),
                 ));
@@ -1587,54 +1502,6 @@ impl<'a, 'e, I: PegInput> TrampolinedRuntime<'a, 'e, I> {
     }
 
     // === Object Pattern Continuations ===
-
-    fn handle_tag_match_continue(
-        &mut self,
-        tag: SmolStr,
-        remaining_patterns: Vec<Pattern>,
-        child_values: Vec<Value>,
-        child_index: usize,
-        mut collected: Vec<Value>,
-        original_pos: usize,
-    ) -> Result<()> {
-        let result = self
-            .result_stack
-            .pop()
-            .ok_or_else(|| Error::Runtime("no result for tag match continuation".into()))?;
-
-        match result {
-            WorkResult::Success(v, _) => {
-                collected.push(v);
-                if remaining_patterns.is_empty() {
-                    // All children matched
-                    let pos_obj = self.input.position_at(original_pos);
-                    let new_pos = self.input.tail(&pos_obj);
-                    self.result_stack.push(WorkResult::Success(
-                        Value::list_node(tag, collected),
-                        self.input.index(&new_pos),
-                    ));
-                } else {
-                    // Match next child
-                    let mut remaining = remaining_patterns;
-                    let next_pattern = remaining.remove(0);
-                    let next_index = child_index + 1;
-                    self.work_stack.push(WorkItem::TagMatchContinue {
-                        tag,
-                        remaining_patterns: remaining,
-                        child_values: child_values.clone(),
-                        child_index: next_index,
-                        collected,
-                        original_pos,
-                    });
-                    self.push_sub_value_match(next_pattern, child_values[next_index].clone())?;
-                }
-            }
-            WorkResult::Failure => {
-                self.result_stack.push(WorkResult::Failure);
-            }
-        }
-        Ok(())
-    }
 
     fn handle_list_match_continue(
         &mut self,

@@ -132,12 +132,13 @@ fn example() {
 
 #[test]
 fn scan_rust_strings_ignores_rust_qualified_paths() {
-    // No string literal contains `:Foo(`. The `Pattern::Constructor(` is a
-    // Rust qualified path — never reaches scan_fmpl_source.
+    // No string literal contains `:Foo(`. The `MyPattern::Constructor(` is a
+    // Rust qualified path — never reaches scan_fmpl_source. Uses a synthetic
+    // enum name to avoid referencing the deleted ast::Pattern::Constructor.
     let rust_src = r##"
-enum Pattern { Constructor(String, Vec<i32>) }
+enum MyPattern { Constructor(String, Vec<i32>) }
 fn example() {
-    let _p = Pattern::Constructor("Foo".to_string(), vec![]);
+    let _p = MyPattern::Constructor("Foo".to_string(), vec![]);
 }
 "##;
     let hits =

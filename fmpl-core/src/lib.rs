@@ -27,6 +27,7 @@ pub mod lexer;
 pub mod object;
 pub mod parse_stream;
 pub mod parser;
+pub mod parser_epoch;
 pub mod pattern;
 pub mod repr;
 pub mod stream;

@@ -44,9 +44,9 @@ let cmd_grammar = grammar CmdGrammar {
 // --- 4. Pattern dispatch: route parsed commands ---------------------------
 
 let dispatch = \cmd cmd @ {
-  :Look          => world.rd(:room).data.desc;
-  [:Talk, npc]   => barkeep.as(:customer).greet(npc);
-  [:Order, item] => barkeep.as(:customer).order(item);
+  :Look          => world.rd(:room).data.desc
+  [:Talk, npc]   => barkeep.as(:customer).greet(npc)
+  [:Order, item] => barkeep.as(:customer).order(item)
   _              => "You can't do that."
 }
 

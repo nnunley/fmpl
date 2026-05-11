@@ -24,14 +24,6 @@ pub fn expr_to_value(expr: &Expr) -> Value {
 
         Expr::Symbol(s) => Value::list_node("Symbol", vec![Value::Symbol(s.clone())]),
 
-        Expr::Tagged(tag, children) => Value::list_node(
-            "Tagged",
-            vec![
-                Value::Symbol(tag.clone()),
-                Value::List(Arc::new(children.iter().map(expr_to_value).collect())),
-            ],
-        ),
-
         Expr::Bool(b) => Value::list_node("Bool", vec![Value::Bool(*b)]),
 
         Expr::Null => Value::list_node("Null", vec![]),
@@ -394,13 +386,6 @@ fn pattern_to_value(pat: &Pattern) -> Value {
                     ]))
                 })
                 .collect(),
-        ),
-        Pattern::Constructor(tag, pats) => Value::list_node(
-            "PatConstructor",
-            vec![
-                Value::Symbol(tag.clone()),
-                Value::List(Arc::new(pats.iter().map(pattern_to_value).collect())),
-            ],
         ),
         Pattern::As(pat, name) => Value::list_node(
             "PatAs",

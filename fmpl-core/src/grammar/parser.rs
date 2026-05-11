@@ -872,35 +872,21 @@ impl<'a> GrammarParser<'a> {
                 Ok(Pattern::ApplyRule(name))
             }
             Some(':') => {
-                // Constructor pattern: :Tag(patterns...) or symbol literal :Tag/:+
+                // Symbol literal :Tag/:+ (DESIGN-002: constructor syntax
+                // :Tag(args) was removed in ITER-0004d.1; use [:Tag, ...]).
                 self.advance(); // consume ':'
                 let tag = self.parse_symbol_name()?;
                 self.skip_whitespace();
                 if self.peek_char() == Some('(') {
-                    self.advance(); // consume '('
-                    self.skip_whitespace();
-                    let mut patterns = Vec::new();
-                    if self.peek_char() != Some(')') {
-                        // Use value_pattern parsing for constructor children -
-                        // this treats bare identifiers as bindings, not rule references
-                        patterns.push(self.parse_tag_child_pattern()?);
-                        self.skip_whitespace();
-                        while self.peek_char() == Some(',') {
-                            self.advance();
-                            self.skip_whitespace();
-                            if self.peek_char() == Some(')') {
-                                break; // trailing comma
-                            }
-                            patterns.push(self.parse_tag_child_pattern()?);
-                            self.skip_whitespace();
-                        }
-                    }
-                    self.expect_char(')')?;
-                    Ok(Pattern::TagMatch(tag, patterns))
-                } else {
-                    // Just :Tag/:+ without parens - match symbol value
-                    Ok(Pattern::SymbolLiteral(tag))
+                    return Err(Error::Parser {
+                        token: self.pos,
+                        message: format!(
+                            "legacy :{}(...) constructor pattern is not supported; use [:{}] or [:{}, ...] instead",
+                            tag, tag, tag
+                        ),
+                    });
                 }
+                Ok(Pattern::SymbolLiteral(tag))
             }
             Some(c) => Err(Error::Parser {
                 token: self.pos,
@@ -1098,150 +1084,6 @@ impl<'a> GrammarParser<'a> {
         Ok(Pattern::ListMatch(patterns, rest_pattern))
     }
 
-    /// Parse a pattern inside a TagMatch (constructor pattern).
-    /// Like value patterns, bare identifiers are bindings, not rule references.
-    /// But this also supports nested TagMatch patterns like :Binary(op, :Int(a), :Int(b)).
-    fn parse_tag_child_pattern(&mut self) -> Result<Pattern> {
-        self.skip_whitespace();
-
-        match self.peek_char() {
-            Some('_') => {
-                self.advance();
-                Ok(Pattern::Any)
-            }
-            Some(':') => {
-                // Could be a symbol literal :foo/:+ or a nested TagMatch :Tag(...)
-                self.advance();
-                let name = self.parse_symbol_name()?;
-                self.skip_whitespace();
-                if self.peek_char() == Some('(') {
-                    // Nested TagMatch: :Tag(patterns...)
-                    self.advance(); // consume '('
-                    self.skip_whitespace();
-                    let mut patterns = Vec::new();
-                    if self.peek_char() != Some(')') {
-                        patterns.push(self.parse_tag_child_pattern()?);
-                        self.skip_whitespace();
-                        while self.peek_char() == Some(',') {
-                            self.advance();
-                            self.skip_whitespace();
-                            if self.peek_char() == Some(')') {
-                                break; // trailing comma
-                            }
-                            patterns.push(self.parse_tag_child_pattern()?);
-                            self.skip_whitespace();
-                        }
-                    }
-                    self.expect_char(')')?;
-                    Ok(Pattern::TagMatch(name, patterns))
-                } else {
-                    // Symbol literal :foo/:+ - matches Value::Symbol("foo")/Value::Symbol("+")
-                    Ok(Pattern::SymbolLiteral(name))
-                }
-            }
-            Some('[') => {
-                // List pattern
-                self.advance();
-                self.parse_list_pattern()
-            }
-            Some('%') => {
-                // Map pattern
-                self.parse_map_pattern()
-            }
-            Some(c) if c.is_alphabetic() => {
-                let name = self.parse_ident()?;
-                // Check for suffix operators: rule*:binding, rule+:binding, rule:binding
-                match self.peek_char() {
-                    Some('*') => {
-                        self.advance(); // consume '*'
-                        let repeat = Pattern::Repeat {
-                            pattern: Box::new(Pattern::ApplyRule(name)),
-                            kind: RepeatKind::ZeroOrMore,
-                        };
-                        if self.peek_char() == Some(':') {
-                            self.advance(); // consume ':'
-                            let bind_name = self.parse_ident()?;
-                            Ok(Pattern::Bind {
-                                name: bind_name,
-                                pattern: Box::new(repeat),
-                                is_choice: false,
-                            })
-                        } else {
-                            Ok(repeat)
-                        }
-                    }
-                    Some('+') => {
-                        self.advance(); // consume '+'
-                        let repeat = Pattern::Repeat {
-                            pattern: Box::new(Pattern::ApplyRule(name)),
-                            kind: RepeatKind::OneOrMore,
-                        };
-                        if self.peek_char() == Some(':') {
-                            self.advance(); // consume ':'
-                            let bind_name = self.parse_ident()?;
-                            Ok(Pattern::Bind {
-                                name: bind_name,
-                                pattern: Box::new(repeat),
-                                is_choice: false,
-                            })
-                        } else {
-                            Ok(repeat)
-                        }
-                    }
-                    Some(':') => {
-                        self.advance(); // consume ':'
-                        let bind_name = self.parse_ident()?;
-                        Ok(Pattern::Bind {
-                            name: bind_name,
-                            pattern: Box::new(Pattern::ApplyRule(name)),
-                            is_choice: false,
-                        })
-                    }
-                    _ => {
-                        // Bare identifier - treat as binding (not rule reference)
-                        Ok(Pattern::Bind {
-                            name,
-                            pattern: Box::new(Pattern::Any),
-                            is_choice: false,
-                        })
-                    }
-                }
-            }
-            Some('"') => {
-                let s = self.parse_string()?;
-                Ok(Pattern::MatchValue(Value::String(s.into())))
-            }
-            Some('\'') => {
-                let s = self.parse_char_literal()?;
-                let mut str_buf = String::new();
-                str_buf.push(s);
-                Ok(Pattern::MatchValue(Value::String(str_buf.into())))
-            }
-            Some(c) if c.is_ascii_digit() || c == '-' => {
-                // Parse a number literal
-                let num_str = self.parse_number_literal()?;
-                if num_str.contains('.') {
-                    let f: f64 = num_str.parse().map_err(|_| Error::Parser {
-                        token: self.pos,
-                        message: format!("invalid float literal: {}", num_str),
-                    })?;
-                    Ok(Pattern::MatchValue(Value::Float(f)))
-                } else {
-                    let i: i64 = num_str.parse().map_err(|_| Error::Parser {
-                        token: self.pos,
-                        message: format!("invalid int literal: {}", num_str),
-                    })?;
-                    Ok(Pattern::MatchValue(Value::Int(i)))
-                }
-            }
-            Some(c) => Err(Error::Parser {
-                token: self.pos,
-                message: format!("unexpected character in constructor pattern: {:?}", c),
-            }),
-            None => Err(Error::UnexpectedEof),
-        }
-    }
-
     /// Parse a value pattern (used inside map/list patterns).
     /// Follows OMeta semantics: pattern[:binding] where pattern can be a rule, literal, or _.
     fn parse_value_pattern(&mut self) -> Result<Pattern> {
@@ -1307,34 +1149,21 @@ impl<'a> GrammarParser<'a> {
                 }
             }
             Some(':') => {
-                // Could be :Tag(...) constructor or :symbol literal
+                // Symbol literal :foo (DESIGN-002: constructor syntax
+                // :Tag(args) was removed in ITER-0004d.1).
                 self.advance();
                 let name = self.parse_symbol_name()?;
                 self.skip_whitespace();
                 if self.peek_char() == Some('(') {
-                    // Tag match: :Tag(children...)
-                    self.advance(); // consume '('
-                    self.skip_whitespace();
-                    let mut patterns = Vec::new();
-                    if self.peek_char() != Some(')') {
-                        patterns.push(self.parse_tag_child_pattern()?);
-                        self.skip_whitespace();
-                        while self.peek_char() == Some(',') {
-                            self.advance();
-                            self.skip_whitespace();
-                            if self.peek_char() == Some(')') {
-                                break;
-                            }
-                            patterns.push(self.parse_tag_child_pattern()?);
-                            self.skip_whitespace();
-                        }
-                    }
-                    self.expect_char(')')?;
-                    Pattern::TagMatch(name, patterns)
-                } else {
-                    // Symbol literal :foo
-                    Pattern::SymbolMatch(name)
+                    return Err(Error::Parser {
+                        token: self.pos,
+                        message: format!(
+                            "legacy :{}(...) constructor pattern is not supported; use [:{}] or [:{}, ...] instead",
+                            name, name, name
+                        ),
+                    });
                 }
+                Pattern::SymbolMatch(name)
             }
             Some('[') => {
                 // For value patterns (inside map/list), we only support list patterns, not char classes
@@ -2065,47 +1894,13 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_star_quantifier_in_tag_child() {
-        // expr*:args inside a TagMatch should parse as Bind("args", Repeat(ApplyRule("expr"), ZeroOrMore))
+    fn test_parse_nested_list_pattern() {
+        // [[:Binding, name, expr:value]] should parse a list-pattern as a child
+        // of an outer list pattern. Replaces test_parse_tag_in_list_pattern from
+        // before ITER-0004d.1 deleted the grammar-DSL :Tag(args) syntax.
         let src = r#"
-            grammar test::star {
-                expr = :Tagged(tag, expr*:args) => [:MakeTagged, tag, args]
-                     | :Call(expr:func, expr*:a) => [:Call, func, a]
-                     | :List(expr*:items) => [:MakeList, items]
-            }
-        "#;
-
-        let mut parser = GrammarParser::new(src);
-        let grammar = parser.parse().unwrap();
-        assert!(
-            grammar.rules.contains_key("expr"),
-            "grammar should have 'expr' rule"
-        );
-    }
-
-    #[test]
-    fn test_parse_rule_binding_in_tag_child() {
-        // expr:l inside a TagMatch should parse as Bind("l", ApplyRule("expr"))
-        let src = r#"
-            grammar test::bind {
-                expr = :Binary(:+, expr:l, expr:r) => [:Add, l, r]
-            }
-        "#;
-
-        let mut parser = GrammarParser::new(src);
-        let grammar = parser.parse().unwrap();
-        assert!(
-            grammar.rules.contains_key("expr"),
-            "grammar should have 'expr' rule"
-        );
-    }
-
-    #[test]
-    fn test_parse_tag_in_list_pattern() {
-        // [:Binding(name, expr:value)] should parse a TagMatch inside a list pattern
-        let src = r#"
-            grammar test::tag_in_list {
-                expr = :Let([:Binding(name, expr:value)], expr:body) => [:Let, name, value, body]
+            grammar test::list_in_list {
+                expr = [:Let, [:Binding, name, expr:value], expr:body] => [:Let, name, value, body]
             }
         "#;
 

@@ -29,6 +29,21 @@ fn main() {
 
     // Track dependencies for incremental builds
     println!("cargo::rerun-if-changed=build.rs");
+    // Source-of-record for the parser-generator epoch (see parser_epoch.rs).
+    // A bump invalidates the cached generated parser.
+    println!("cargo::rerun-if-changed=src/parser_epoch.rs");
+    // The Rust raw-string in this file is the postlude embedded into every
+    // generated parser. Edits to it must invalidate the cache.
+    println!("cargo::rerun-if-changed=src/builtins/ir_to_rust.rs");
+    // Declare the cfg we emit on the successful-generation path so rustc's
+    // unexpected_cfgs lint doesn't fire on the const-assert in parser.rs.
+    println!("cargo::rustc-check-cfg=cfg(has_generated_parser_epoch)");
+    // Allow env-var overrides to invalidate the cached build-script result.
+    println!("cargo::rerun-if-env-changed=FMPL_SKIP_PARSER_GEN");
+    println!("cargo::rerun-if-env-changed=FMPL_BOOTSTRAP_PHASE");
+    println!("cargo::rerun-if-env-changed=FMPL_ENFORCE_PARSER_FRESHNESS");
+    println!("cargo::rerun-if-env-changed=FMPL_ENFORCE_PARSER_DETERMINISM");
+    println!("cargo::rerun-if-env-changed=CI");
 
     // Track FMPL source files that the parser generator depends on
     let fmpl_sources = [
@@ -116,12 +131,28 @@ fn main() {
     // Get the modification time of the bootstrap binary
     // If the binary is newer than the generated parser, regenerate
     let generated_parser_path = Path::new(&out_dir).join("generated_parser.rs");
+    // Source-of-record epoch (single source of truth) vs. whatever the
+    // cached generated parser embeds. Mismatch means the cache is stale even
+    // if timestamps say otherwise.
+    let source_epoch = read_source_parser_epoch(workspace_root);
+    let generated_epoch = read_generated_parser_epoch(&generated_parser_path);
+    let epoch_mismatch = match (source_epoch, generated_epoch) {
+        (Some(src), Some(found)) => src != found,
+        // No cached parser yet, or no epoch in it (e.g., fallback parser) —
+        // either way, regenerate if we can. The successful regen path emits
+        // the cfg flag; if we end up on the fallback path the cfg stays off
+        // and the const-assert in parser.rs becomes dormant.
+        _ => true,
+    };
     let should_regenerate =
         should_regenerate(workspace_root, &fmpl_sources, &generated_parser_path)
-            || is_newer_than(&binary_path, &generated_parser_path);
+            || is_newer_than(&binary_path, &generated_parser_path)
+            || epoch_mismatch;
 
     if !should_regenerate {
-        // Parser is up to date, skip generation
+        // Parser is up to date — propagate the cfg so parser.rs's
+        // const-assert runs.
+        println!("cargo::rustc-cfg=has_generated_parser_epoch");
         return;
     }
 
@@ -180,6 +211,8 @@ fn main() {
                 "cargo::warning=Generated parser written to {}",
                 dest_path.display()
             );
+            // Generator succeeded — light up the const-assert in parser.rs.
+            println!("cargo::rustc-cfg=has_generated_parser_epoch");
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -241,6 +274,45 @@ fn is_newer_than(lhs: &Path, rhs: &Path) -> bool {
 
 fn modified_time(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+/// Read `PARSER_EPOCH` from `fmpl-core/src/parser_epoch.rs`.
+///
+/// Parses the source by scanning for the line `pub const PARSER_EPOCH: u32 = N;`.
+/// This is a build-time check; we don't pull in `syn` for one constant.
+fn read_source_parser_epoch(workspace_root: &Path) -> Option<u32> {
+    let path = workspace_root.join("fmpl-core/src/parser_epoch.rs");
+    let text = fs::read_to_string(&path).ok()?;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        let Some(rest) = trimmed.strip_prefix("pub const PARSER_EPOCH") else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix(':')?.trim_start();
+        let rest = rest.strip_prefix("u32")?.trim_start();
+        let rest = rest.strip_prefix('=')?.trim_start();
+        let value: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        return value.parse::<u32>().ok();
+    }
+    None
+}
+
+/// Read the `GENERATED_PARSER_EPOCH` literal from a cached generated parser.
+///
+/// Returns `None` if the file is missing or doesn't contain the constant
+/// (e.g., the fallback parser).
+fn read_generated_parser_epoch(generated_parser_path: &Path) -> Option<u32> {
+    let text = fs::read_to_string(generated_parser_path).ok()?;
+    let marker = "pub const GENERATED_PARSER_EPOCH";
+    let idx = text.find(marker)?;
+    let after = &text[idx + marker.len()..];
+    let after = after.trim_start();
+    let after = after.strip_prefix(':')?.trim_start();
+    let after = after.strip_prefix("u32")?.trim_start();
+    let after = after.strip_prefix('=')?.trim_start();
+    let value: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    value.parse::<u32>().ok()
 }
 
 fn run_generator(

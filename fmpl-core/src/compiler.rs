@@ -866,16 +866,6 @@ impl Compiler {
             Expr::Float(f) => Ok(self.code.emit(Instruction::LoadFloat(*f))),
             Expr::String(s) => Ok(self.code.emit(Instruction::LoadString(s.clone()))),
             Expr::Symbol(s) => Ok(self.code.emit(Instruction::LoadSymbol(s.clone()))),
-            Expr::Tagged(tag, args) => {
-                let mut arg_indices = Vec::with_capacity(args.len());
-                for arg in args {
-                    arg_indices.push(self.compile_expr(arg)?);
-                }
-                Ok(self.code.emit(Instruction::MakeTagged {
-                    tag: tag.clone(),
-                    args: arg_indices,
-                }))
-            }
             Expr::Bool(b) => Ok(self.code.emit(Instruction::LoadBool(*b))),
             Expr::Null => Ok(self.code.emit(Instruction::LoadNull)),
             Expr::Ident(name) => {
@@ -2537,18 +2527,8 @@ impl Compiler {
                         expected_arity: None,
                     }))
                 }
-                Pattern::Constructor(tag, children) => {
-                    // Constructor: :Tag(a, b) matches Tagged with exact arity
-                    Some(self.code.emit(Instruction::MatchTag {
-                        value: scrutinee_idx,
-                        tag: tag.clone(),
-                        fail_target: InstrIndex(0), // placeholder — patched to next case
-                        expected_arity: Some(children.len()),
-                    }))
-                }
-                // List-pattern with leading symbol: [:Tag, a, b] — same
-                // bytecode as legacy `:Tag(a, b)` (Tagged values are
-                // `[Symbol(tag), child1, ...]`).
+                // List-pattern with leading symbol: [:Tag, a, b] — Tagged
+                // values are `[Symbol(tag), child1, ...]`.
                 Pattern::List(elements, None)
                     if matches!(elements.first(), Some(Pattern::Symbol(_))) =>
                 {
@@ -2660,62 +2640,9 @@ impl Compiler {
             Pattern::Wildcard | Pattern::Symbol(_) => {
                 // No bindings needed (Symbol check already done by MatchTag)
             }
-            Pattern::Constructor(_, children) => {
-                for (i, child) in children.iter().enumerate() {
-                    let extracted = self
-                        .code
-                        .emit(Instruction::ExtractTaggedChild { source, index: i });
-                    match child {
-                        Pattern::Constructor(tag, grandchildren) => {
-                            // Nested constructor: emit MatchTag check, then recurse
-                            let nested_check = self.code.emit(Instruction::MatchTag {
-                                value: extracted,
-                                tag: tag.clone(),
-                                fail_target: InstrIndex(0), // patched by caller
-                                expected_arity: Some(grandchildren.len()),
-                            });
-                            fail_jumps.push(nested_check);
-                            self.compile_match_bindings(extracted, child, fail_jumps)?;
-                        }
-                        Pattern::List(grand_elems, None)
-                            if matches!(grand_elems.first(), Some(Pattern::Symbol(_))) =>
-                        {
-                            // Nested list-pattern with leading symbol: same as nested
-                            // constructor — emit MatchTag, then recurse.
-                            let tag = match &grand_elems[0] {
-                                Pattern::Symbol(t) => t.clone(),
-                                _ => unreachable!(),
-                            };
-                            let nested_check = self.code.emit(Instruction::MatchTag {
-                                value: extracted,
-                                tag,
-                                fail_target: InstrIndex(0), // patched by caller
-                                expected_arity: Some(grand_elems.len() - 1),
-                            });
-                            fail_jumps.push(nested_check);
-                            self.compile_match_bindings(extracted, child, fail_jumps)?;
-                        }
-                        Pattern::Symbol(tag) => {
-                            // Nested bare symbol: emit MatchTag check
-                            let nested_check = self.code.emit(Instruction::MatchTag {
-                                value: extracted,
-                                tag: tag.clone(),
-                                fail_target: InstrIndex(0), // patched by caller
-                                expected_arity: None,
-                            });
-                            fail_jumps.push(nested_check);
-                        }
-                        _ => {
-                            // Var, Wildcard, etc. — recurse for uniform handling
-                            self.compile_match_bindings(extracted, child, fail_jumps)?;
-                        }
-                    }
-                }
-            }
-            // List-pattern with leading symbol: [:Tag, a, b] — identical
-            // semantics to Pattern::Constructor (head symbol already checked
-            // by MatchTag at the outer level / by caller). Walk remaining
-            // elements positionally using ExtractTaggedChild.
+            // List-pattern with leading symbol: [:Tag, a, b] — head symbol
+            // already checked by MatchTag at the outer level / by caller.
+            // Walk remaining elements positionally using ExtractTaggedChild.
             Pattern::List(elements, None)
                 if matches!(elements.first(), Some(Pattern::Symbol(_))) =>
             {
@@ -2726,16 +2653,6 @@ impl Compiler {
                         .code
                         .emit(Instruction::ExtractTaggedChild { source, index: i });
                     match child {
-                        Pattern::Constructor(tag, grandchildren) => {
-                            let nested_check = self.code.emit(Instruction::MatchTag {
-                                value: extracted,
-                                tag: tag.clone(),
-                                fail_target: InstrIndex(0), // patched by caller
-                                expected_arity: Some(grandchildren.len()),
-                            });
-                            fail_jumps.push(nested_check);
-                            self.compile_match_bindings(extracted, child, fail_jumps)?;
-                        }
                         Pattern::List(grand_elems, None)
                             if matches!(grand_elems.first(), Some(Pattern::Symbol(_))) =>
                         {
@@ -3041,10 +2958,10 @@ impl Compiler {
                 if matches!(patterns.first(), Some(Pattern::Symbol(_))) =>
             {
                 // List-pattern with leading symbol: [:Tag, a, b] = tagged-value.
-                // Identical to Pattern::Constructor — extract children
-                // positionally using ExtractTaggedChild. The head symbol is
-                // assumed to match (let bindings don't tag-check, matching
-                // legacy `:Tag(a, b)` let-binding semantics).
+                // Extract children positionally using ExtractTaggedChild. The
+                // head symbol is assumed to match — let bindings don't tag-check
+                // (matching the same semantics legacy `:Tag(a, b)` had before
+                // its removal in ITER-0004d.1).
                 for (i, pat) in patterns.iter().skip(1).enumerate() {
                     let extracted = self
                         .code
@@ -3057,17 +2974,6 @@ impl Compiler {
                     let extracted = self
                         .code
                         .emit(Instruction::ExtractListIndex { source, index: i });
-                    self.compile_pattern_binding(pat, extracted)?;
-                }
-            }
-            Pattern::Constructor(_tag, patterns) => {
-                // Extract children positionally from Tagged value
-                // Note: this doesn't do runtime tag checking in let bindings
-                // Full matching with tag check happens in @ blocks via MatchTag
-                for (i, pat) in patterns.iter().enumerate() {
-                    let extracted = self
-                        .code
-                        .emit(Instruction::ExtractTaggedChild { source, index: i });
                     self.compile_pattern_binding(pat, extracted)?;
                 }
             }
@@ -3213,10 +3119,14 @@ impl Compiler {
                 }
             }
 
-            UP::Tagged { tag: _, patterns } => {
-                // Tagged/constructor pattern - extract children positionally
-                // Note: Fast mode doesn't check the tag (let bindings assume match)
-                for (i, pat) in patterns.iter().enumerate() {
+            // List-pattern with leading symbol literal [:Tag, p1, p2] —
+            // tagged-shape value. Extract children positionally with
+            // ExtractTaggedChild (skips the head symbol). Replaces the
+            // legacy `UP::Tagged` arm deleted in ITER-0004d.1 T12.
+            UP::ListMatch(elements, None)
+                if matches!(elements.first(), Some(UP::SymbolLiteral(_))) =>
+            {
+                for (i, pat) in elements.iter().skip(1).enumerate() {
                     let extracted = self
                         .code
                         .emit(Instruction::ExtractTaggedChild { source, index: i });
@@ -3433,25 +3343,6 @@ impl Compiler {
                         self.code.emit(Instruction::LoadVar(var_name))
                     }
                 }
-            }
-
-            UP::Tagged { tag, patterns } => {
-                // Tagged pattern in full mode - check tag and match children
-                let tag_const = self.code.add_constant(tag.clone());
-                let compiled: Vec<InstrIndex> = patterns
-                    .iter()
-                    .enumerate()
-                    .map(|(i, p)| {
-                        let extracted = self
-                            .code
-                            .emit(Instruction::ExtractTaggedChild { source, index: i });
-                        self.compile_pattern_full(p, extracted)
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                self.code.emit(Instruction::MatchTagged {
-                    tag_idx: tag_const,
-                    patterns: compiled,
-                })
             }
 
             UP::Char(char_pattern) => match char_pattern {
@@ -3740,7 +3631,6 @@ impl Compiler {
             UP::MatchType(_)
             | UP::ListMatch(_, _)
             | UP::MapMatch(_)
-            | UP::TagMatch(_, _)
             | UP::SymbolMatch(_)
             | UP::SymbolLiteral(_)
             | UP::Apply(_)
@@ -3904,18 +3794,6 @@ impl Compiler {
                     })?
                 }
             },
-
-            GP::Tagged { tag, patterns } => {
-                let tag_idx = self.code.add_constant(tag.clone());
-                let compiled_patterns = patterns
-                    .iter()
-                    .map(|p| self.compile_grammar_pattern(p))
-                    .collect::<Result<Vec<_>>>()?;
-                self.code.emit(Instruction::MatchTagged {
-                    tag_idx,
-                    patterns: compiled_patterns,
-                })
-            }
 
             GP::Seq(patterns) => {
                 // Check if the last pattern is an Action - if so, handle specially
@@ -4460,42 +4338,6 @@ impl Compiler {
                 // For now, compile as MatchAny
                 // TODO: Implement proper compilation for these patterns
                 self.code.emit(Instruction::MatchAny)
-            }
-
-            GP::TagMatch(tag, child_patterns) => {
-                // Check if all patterns are simple (Bind or Any)
-                let all_simple = child_patterns.iter().all(|p| {
-                    matches!(p, GP::Bind { pattern: inner, .. } if matches!(inner.as_ref(), GP::Any))
-                        || matches!(p, GP::Any)
-                });
-
-                if all_simple {
-                    // Simple case: all patterns are direct bindings or wildcards
-                    // Use MatchTaggedWithBindings for efficiency
-                    let tag_idx = self.code.add_constant(tag.clone());
-                    let bindings: Vec<Option<ConstIndex>> = child_patterns
-                        .iter()
-                        .map(|p| match p {
-                            GP::Bind { name, .. } => Some(self.code.add_constant(name.clone())),
-                            GP::Any => None,
-                            _ => unreachable!(),
-                        })
-                        .collect();
-                    self.code
-                        .emit(Instruction::MatchTaggedWithBindings { tag_idx, bindings })
-                } else {
-                    // Complex case: nested patterns need full matching
-                    // Use MatchTagged with compiled child patterns
-                    let tag_idx = self.code.add_constant(tag.clone());
-                    let compiled_patterns: Vec<InstrIndex> = child_patterns
-                        .iter()
-                        .map(|p| self.compile_grammar_pattern(p))
-                        .collect::<Result<Vec<_>>>()?;
-                    self.code.emit(Instruction::MatchTagged {
-                        tag_idx,
-                        patterns: compiled_patterns,
-                    })
-                }
             }
         })
     }

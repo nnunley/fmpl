@@ -286,3 +286,72 @@ ITER-0004c shipped STORY-0010 Phase A (AC-3 through AC-7 + AC-13) on 2026-05-10 
 
 **Summary:**
 ITER-0004d.0 shipped a Rust library `fmpl_core::diagnostics` exposing `scan_fmpl_source` (production-crate-safe, `syn`-free) plus a test-only `scan_rust_strings` helper. The new CI gate `no_legacy_fmpl_syntax` records a 4-surface baseline (`lib/core=0`, `src/rs=43`, `tests/fmpl=72`, `tests/rs=625`) that ITER-0004d.1 will sweep to zero. The old `stdlib_no_legacy_syntax` gate was deleted (subsumed by the new gate's stricter token-level scan). PAR scope review returned REVISE; user opted to build as-spec'd, which proved correct — the implementation surfaced both the spec contradictions and the real baseline numbers. PAR post-implementation review caught 2 inline-fixable bugs (lying offset field, operator-symbol false positives) plus 4 architectural concerns documented as ITER-0004d.1 inputs. Workspace test count: +13 net, 0 regressions.
+
+---
+
+## ITER-0004d.1 — Parser/AST/Pattern Burn (AC-9, AC-10, AC-12) — done 2026-05-12 (T18 deferred)
+
+**Stories committed:** STORY-0010 Phase B AC-9, AC-10, AC-12 (parser-rejection contract + AST/pattern variant deletions). Also: SCENARIO-0039 rewrite, SCENARIO-0066 rewrite, EPIC-032 STORY-0095/AC-4 text repair.
+
+**Result:** Five distinct surfaces deleted and replaced with the canonical list-shape form per DESIGN-002:
+
+| Surface | Before | After |
+|---|---|---|
+| FMPL expression `:Tag(args)` | `parser.rs:619` produced `Expr::Tagged(SmolStr, Vec<Expr>)` | `parser.rs:678` returns `Error::Parser` with phrase `use [:Tag] or [:Tag, ...] instead` |
+| FMPL pattern `:Tag(p1, p2)` | `parser.rs:1849` produced `ast::Pattern::Constructor(SmolStr, Vec<Pattern>)` | `parser.rs:1900` returns `Error::Parser` (same phrase) |
+| Grammar DSL pattern (3 sites) | `grammar/parser.rs:899/1136/1333` produced `pattern::Pattern::TagMatch` and friends | `grammar/parser.rs:884, 1161` reject; third site collapsed during cleanup |
+| `Expr::Tagged` enum variant | defined at `ast.rs:157` | deleted; all 6 consumer arms deleted |
+| `ast::Pattern::Constructor` variant | defined at `ast.rs:115-116` | deleted; all 8 consumer sites deleted (including `is_symbol_with_paren` helper) |
+| `pattern::Pattern::Tagged` variant | defined at `pattern/mod.rs:57-61` | deleted; replaced in compile path by `UP::ListMatch` arm using `ExtractTaggedChild` |
+| `pattern::Pattern::TagMatch` variant | defined at `pattern/mod.rs:143` | deleted; ~150 lines of grammar runtime/trampoline state-machine code removed |
+
+**Plus a new freshness signal:**
+
+- `fmpl-core/src/parser_epoch.rs` defines `PARSER_EPOCH: u32` (bumped to 3 in this iteration).
+- The generated parser embeds `GENERATED_PARSER_EPOCH`; a gated `const _ = assert!(PARSER_EPOCH == GENERATED_PARSER_EPOCH)` triggers a clear compile-time mismatch error on stale generators.
+- `build.rs` adds `rerun-if-changed` for `parser_epoch.rs` and `builtins/ir_to_rust.rs` (the postlude raw-string), plus `rerun-if-env-changed` for the `FMPL_*` env vars (which were missing — cargo had been caching builds across env-flag flips).
+
+**Plus the evidence corpus:**
+
+- `fmpl-core/tests/structural_invariants.rs` (NEW) — 17 tests covering SCENARIO-0104, SCENARIO-0105, SCENARIO-0106. Tests are scenario-tagged at the function name level; rejection-checking helper is unparameterized for specific message text because multiple parser paths can reject the same surface form. Greppable-invariant tests strip `//`-line-comments before matching so historical narratives in `parser_epoch.rs` don't trip the gate.
+- `behavior-scenarios.md` — SCENARIO-0039 and SCENARIO-0066 rewritten in place to drop references to deleted types; SCENARIO-0104/0105/0106 added (full Preconditions/Action/Expected observables/Execution command).
+- `behavior-corpus.md` — 3 new entries with concrete `cargo test` execution commands.
+- `requirements/EPIC-032.md` STORY-0095/AC-4 — rewrote to describe the canonical list-node form via `Value::as_node()`.
+- `requirements/EPIC-002.md` STORY-0010 — added `· scenario:` tags to AC-9, AC-10, AC-12.
+
+**Plus three CI gate moves:**
+
+- `no_legacy_fmpl_syntax.baseline.json` ratcheted: lib/core=0 (unchanged), src/rs=38→26 (T-task deletions), tests/fmpl=72→0 (T7 orphan-file deletion), tests/rs=108→4 (test-file sweeps). The `== 0` flip is deferred to ITER-0004d.3 — see "Deferred to ITER-0004d.3" below.
+- `structural_invariants.rs` added to `TESTS_RS_EXCLUDES` because it intentionally contains `":Foo(1)"` parser-input fixtures.
+- The `scan_fmpl_source` allowlist was unchanged — no new false-positive sites surfaced during the sweep.
+
+**Sentinels (final, 2026-05-12):**
+- ast_to_ir_parity: 57 passed, 2 ignored (FOLLOWUP #30)
+- scenario_0103_optimizer_pipeline: 32 passed, 1 ignored
+- tavern_demo: 6 passed (no `;` separator workarounds — MF1 fixed the root cause)
+- no_legacy_fmpl_syntax: 1 passed (baseline mode)
+- structural_invariants: 17 passed (NEW)
+- Full fmpl-core suite: 1200 passed, 182 ignored across 71 suites (fallback parser; the metacircular generator path has a pre-existing parse error pending ITER-0004d.3)
+- Net test count change: -1 (deleted `test_full_mode_tagged_pattern_uses_match_tagged` — asserted on a soon-to-be-renamed opcode name), +17 (`structural_invariants.rs`), +0 net for the gate suite. Roughly +16 net new tests with 0 regressions.
+
+**Deferred to ITER-0004d.3 (T18 — the gate flip):**
+
+The `no_legacy_fmpl_syntax.rs` gate flip from baseline mode to `== 0` mode was deferred because:
+1. The metacircular pipeline is currently broken — `fmpl-bootstrap lib/core/parser_generator.fmpl` fails with `expected Comma` on the third `io::load(...)` call. The failure pre-dates the T-task work; sentinels stay green because `FMPL_SKIP_PARSER_GEN=1` falls back to the legacy parser. A green `== 0` gate would silently rely on this fallback, contradicting DESIGN-001 (the metacircular pipeline must be the proof surface).
+2. The 4 + 26 residual hits in tests/rs + src/rs are false positives — `module:function(args)` patterns the scanner's coarse `Symbol+LParen` heuristic confuses with the legacy `:Tag(args)` form. Eliminating them needs either an allowlist extension or a scanner refinement (a single-token lookback distinguishing `Ident COLON Symbol LParen` from `COLON Symbol LParen`).
+
+Both are sized for a focused iteration. ITER-0004d.3 has been added to the roadmap with these as binding preconditions.
+
+**Deferred to ITER-0004d.4 (new — data-driven scenario runner):**
+
+User feedback during the T19 review: per-scenario Rust tests work but the scenario name + asserts don't fully tell the story; a reader has to flip back to the scenario card to know what's being verified. A cucumber/FitNesse-SLIM-style data-driven runner where the scenario card IS the source of truth, and Rust step-definitions handle dispatch, would (a) make the cards directly executable, (b) collapse the per-test boilerplate, and (c) let future scenarios land as card-authoring tasks rather than test-writing tasks. Sized for a focused iteration; sequencing-independent of ITER-0004d.3.
+
+**Lessons (graduated to LESSONS.md once cooled):**
+
+1. **`jj` vs `git` status disagree in a meaningful way.** In jj, the working-copy `@` is always a committed change (described or not). `git status` showing "modified files" against `HEAD` does NOT mean "uncommitted work"; it means "the diff between `HEAD` and `@` content" — `@` itself is already a commit. Treating jj's `@` as if it were git's "uncommitted state" leads to false alarms ("I need to commit this") when the change is already in `@`. Saved as feedback memory and added to the project-local MEMORY.md index.
+2. **Doc-comment narratives age into false signals.** Comments like `// Old: Value::Tagged(tag, children)` survive deletion of the type. A greppable-invariant test that doesn't strip comments will trip on these. Comment-strip is a one-line fix in the test helper but the principle generalizes: any structural invariant that grep-walks source code should distinguish live references from historical narratives, and the helper should make that distinction explicit (rather than relying on every test caller to filter).
+3. **"Behavior contract" vs "test message text" is a meaningful distinction.** My first cut at the rejection tests pinned each test to a specific error message phrase ("constructor syntax is not supported"). The `let (:Pair(...) = ...)` case rejected through a different parser path with a different message ("expected identifier"). The fix was to make the contract "the parse returns Err" and add a separate message-quality test that asserts the canonical-form hint appears. The lesson: when the contract is "X is rejected", don't over-specify HOW it's rejected unless the HOW is itself observable.
+4. **An iteration's `Out of scope` list is load-bearing.** Grep #6 for `Instruction::MakeTagged` initially found two live emit sites the iteration explicitly considers out of scope (`vm.rs` runtime dispatch and `builtins/ir.rs` IR-node handler — both wait on ITER-0004d.2's opcode rename). Rather than re-scoping the iteration or weakening the grep, I scoped grep #6 to `compiler.rs` only and documented the surviving references in the scenario card's note. The iteration's `Out of scope` list is what a future reader compares against when wondering whether a finding is a regression or expected; making it precise is worth the words.
+
+**Summary:**
+ITER-0004d.1 closed the parser surface for `:Tag(args)` syntax (both expression and pattern positions) by deleting four producer/consumer AST/pattern variants and ~300+ lines of dead consumer arms across compiler.rs, vm.rs, grammar runtime/trampoline, repr, builtins, and value_to_ast. Three new behavior-corpus scenarios (SCENARIO-0104/0105/0106) document the contracts; 17 passing Rust evidence tests in `structural_invariants.rs` provide proof at the unit seam. The parser-epoch system was added as a freshness signal for future generator-regeneration cycles. T18 (CI gate flip to `== 0`) was deferred to ITER-0004d.3 pending the bootstrap-parse follow-up; ITER-0004d.4 was scheduled for the data-driven scenario runner the user raised during T19 review. Sentinel corpus is green (113 passed, 3 ignored across 5 suites covering the impacted scenarios + sentinels).

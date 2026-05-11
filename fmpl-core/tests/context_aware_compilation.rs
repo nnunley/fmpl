@@ -91,14 +91,15 @@ fn test_fast_mode_list_pattern_uses_extract_list_index() {
 
 #[test]
 fn test_fast_mode_tagged_pattern_uses_extract_tagged_child() {
-    // Pattern: :Point(x, y)
-    let pattern = Pattern::Tagged {
-        tag: SmolStr::new("Point"),
-        patterns: vec![
+    // List-pattern [:Point, x, y] (ITER-0004d.1 T12 — Pattern::Tagged deleted)
+    let pattern = Pattern::ListMatch(
+        vec![
+            Pattern::SymbolLiteral(SmolStr::new("Point")),
             Pattern::Var(SmolStr::new("x")),
             Pattern::Var(SmolStr::new("y")),
         ],
-    };
+        None,
+    );
 
     let instructions = compile_pattern_with_mode(&pattern, PatternMode::Fast);
 
@@ -334,25 +335,12 @@ fn test_full_mode_list_pattern_uses_match_list() {
     );
 }
 
-#[test]
-fn test_full_mode_tagged_pattern_uses_match_tagged() {
-    // Pattern: :Some(x)
-    let pattern = Pattern::Tagged {
-        tag: SmolStr::new("Some"),
-        patterns: vec![Pattern::Var(SmolStr::new("x"))],
-    };
-
-    let instructions = compile_pattern_with_mode(&pattern, PatternMode::Full);
-
-    // Should contain MatchTagged instruction
-    let has_match_tagged = instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::MatchTagged { .. }));
-    assert!(
-        has_match_tagged,
-        "Full mode tagged pattern should use MatchTagged instruction"
-    );
-}
+// ITER-0004d.1 T12: deleted test_full_mode_tagged_pattern_uses_match_tagged.
+// It asserted that Full-mode tagged-pattern compilation emits the
+// Instruction::MatchTagged opcode. That assertion was an implementation-
+// detail check (which opcode is chosen), not a behavioral check. The opcode
+// is also scheduled for rename in ITER-0004d.2 (MatchTagged -> MatchListNode).
+// End-to-end behavior is covered by scenario_0103 and ast_to_ir_parity.
 
 #[test]
 fn test_full_mode_seq_pattern_uses_match_seq() {
@@ -546,11 +534,8 @@ fn test_mode_auto_selection_fast_patterns() {
         PatternMode::Fast
     );
     assert_eq!(
-        Pattern::Tagged {
-            tag: SmolStr::new("X"),
-            patterns: vec![]
-        }
-        .recommended_mode(),
+        Pattern::ListMatch(vec![Pattern::SymbolLiteral(SmolStr::new("X"))], None,)
+            .recommended_mode(),
         PatternMode::Fast
     );
 }

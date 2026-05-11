@@ -781,81 +781,6 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
                 Ok(ParseResult::Failure)
             }
 
-            Pattern::TagMatch(tag, child_patterns) => {
-                // Match a tagged/constructor value like :Int(42) or :Binary(:plus, 1, 2)
-                if !self.input.supports_value_patterns() {
-                    return Err(Error::Runtime(
-                        "value patterns not supported for this input type".to_string(),
-                    ));
-                }
-
-                // Get the tagged value from input. Tagged data is now
-                // represented as a list `[Symbol(tag), child1, ...]`.
-                let (value_tag, children) = match self.input.head(&pos) {
-                    Some(InputItem::Value(Value::List(items))) if !items.is_empty() => {
-                        if let Value::Symbol(tag_sym) = &items[0] {
-                            (tag_sym.clone(), items[1..].to_vec())
-                        } else {
-                            return Ok(ParseResult::Failure);
-                        }
-                    }
-                    _ => return Ok(ParseResult::Failure),
-                };
-
-                // Check tag matches
-                if value_tag.as_str() != tag.as_str() {
-                    return Ok(ParseResult::Failure);
-                }
-
-                // Check arity matches
-                if children.len() != child_patterns.len() {
-                    return Ok(ParseResult::Failure);
-                }
-
-                // Match each child pattern against corresponding child value
-                let mut matched_values = Vec::new();
-                for (i, pat) in child_patterns.iter().enumerate() {
-                    // If the pattern contains a Repeat (Star/Plus) and the
-                    // child value is a List, unwrap the list contents as
-                    // individual input items so the Star can iterate over them.
-                    let sub_items = if pat.contains_repeat() {
-                        match &children[i] {
-                            Value::List(items) => (**items).clone(),
-                            other => vec![other.clone()],
-                        }
-                    } else {
-                        vec![children[i].clone()]
-                    };
-                    let sub_input = ValueInput::new(sub_items);
-                    let mut sub_runtime =
-                        PegRuntime::new(sub_input, self.registry, self.grammar.clone());
-                    // Start sub-runtime at rule_depth 1 so any ApplyRule inside
-                    // is treated as nested (depth > 1), preventing transient
-                    // bindings from leaking out of rule applications.
-                    sub_runtime.rule_depth = 1;
-                    sub_runtime.action_evaluator = self.action_evaluator.clone();
-
-                    let result = sub_runtime.match_pattern(pat, 0)?;
-                    match result {
-                        ParseResult::Success(v, _) => {
-                            matched_values.push(v);
-                            // Merge sub-runtime bindings into parent.
-                            // Since rule_depth starts at 1, any ApplyRule
-                            // inside will save/clear/restore bindings,
-                            // so only direct Bind names remain.
-                            self.bindings.extend(sub_runtime.bindings);
-                        }
-                        ParseResult::Failure => return Ok(ParseResult::Failure),
-                    }
-                }
-
-                let new_pos = self.input.tail(&pos);
-                Ok(ParseResult::Success(
-                    Value::list_node(value_tag, matched_values),
-                    self.input.index(&new_pos),
-                ))
-            }
-
             Pattern::ListMatch(patterns, rest) => {
                 if !self.input.supports_value_patterns() {
                     return Err(Error::Runtime(
@@ -1142,14 +1067,12 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
 
             // Let binding patterns - these are typically used in non-grammar contexts
             // but we include them for completeness
-            Pattern::Var(_)
-            | Pattern::Literal(_)
-            | Pattern::Map(_)
-            | Pattern::List(_)
-            | Pattern::Tagged { .. } => Err(Error::Runtime(
-                "Let binding patterns not supported in grammar runtime - use @ operator"
-                    .to_string(),
-            )),
+            Pattern::Var(_) | Pattern::Literal(_) | Pattern::Map(_) | Pattern::List(_) => {
+                Err(Error::Runtime(
+                    "Let binding patterns not supported in grammar runtime - use @ operator"
+                        .to_string(),
+                ))
+            }
         }
     }
 

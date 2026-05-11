@@ -1,6 +1,6 @@
 {
   "lib/core": 0,
-  "src/rs": 38,
-  "tests/fmpl": 72,
-  "tests/rs": 108
+  "src/rs": 26,
+  "tests/fmpl": 0,
+  "tests/rs": 4
 }

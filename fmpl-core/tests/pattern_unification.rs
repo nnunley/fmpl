@@ -35,12 +35,17 @@ fn test_pattern_list_exact() {
 }
 
 #[test]
-fn test_pattern_tagged() {
-    let p = Pattern::Tagged {
-        tag: SmolStr::new("Some"),
-        patterns: vec![Pattern::Var(SmolStr::new("x"))],
-    };
-    assert!(matches!(p, Pattern::Tagged { .. }));
+fn test_pattern_tagged_via_list() {
+    // ITER-0004d.1 T12: Pattern::Tagged was deleted; tagged values are now
+    // matched via list-pattern with a leading symbol: [:Tag, ...children].
+    let p = Pattern::ListMatch(
+        vec![
+            Pattern::SymbolLiteral(SmolStr::new("Some")),
+            Pattern::Var(SmolStr::new("x")),
+        ],
+        None,
+    );
+    assert!(matches!(p, Pattern::ListMatch(_, None)));
 }
 
 #[test]
@@ -172,11 +177,14 @@ fn test_fast_mode_patterns() {
     let list_p = Pattern::List(ListPattern::Exact(vec![Pattern::Any]));
     assert_eq!(list_p.recommended_mode(), PatternMode::Fast);
 
-    // Tagged patterns use fast mode
-    let tagged_p = Pattern::Tagged {
-        tag: SmolStr::new("Some"),
-        patterns: vec![Pattern::Var(SmolStr::new("x"))],
-    };
+    // List-pattern with leading symbol (tagged) uses fast mode
+    let tagged_p = Pattern::ListMatch(
+        vec![
+            Pattern::SymbolLiteral(SmolStr::new("Some")),
+            Pattern::Var(SmolStr::new("x")),
+        ],
+        None,
+    );
     assert_eq!(tagged_p.recommended_mode(), PatternMode::Fast);
 
     // Optional uses fast mode
@@ -276,12 +284,17 @@ fn test_unified_pattern_from_crate_root() {
     // Verify that Pattern is exported at crate root level
     use fmpl_core::Pattern;
 
-    let p = Pattern::Tagged {
-        tag: SmolStr::new("Some"),
-        patterns: vec![Pattern::Var(SmolStr::new("x"))],
-    };
+    let p = Pattern::ListMatch(
+        vec![
+            Pattern::SymbolLiteral(SmolStr::new("Some")),
+            Pattern::Var(SmolStr::new("x")),
+        ],
+        None,
+    );
 
-    assert!(matches!(p, Pattern::Tagged { tag, .. } if tag == "Some"));
+    assert!(
+        matches!(&p, Pattern::ListMatch(elems, None) if matches!(elems.first(), Some(Pattern::SymbolLiteral(s)) if s == "Some"))
+    );
 }
 
 #[test]

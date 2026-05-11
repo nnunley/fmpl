@@ -22,11 +22,33 @@ type Result<T> = std::result::Result<T, Error>;
 // The generated_parse function provides an alternative entry point
 include!(concat!(env!("OUT_DIR"), "/generated_parser.rs"));
 
+// Compile-time check: the generator's epoch must match the source-of-record.
+// If this fails, regenerate the parser (rebuild fmpl-bootstrap, then
+// `cargo clean -p fmpl-core && cargo build`). See parser_epoch.rs.
+//
+// Wrapped in a cfg gate so the fallback parser (which omits
+// GENERATED_PARSER_EPOCH) still builds — the build script panics with a
+// clearer message when the real generator is available and produces stale
+// output.
+#[cfg(has_generated_parser_epoch)]
+const _: () = {
+    assert!(
+        crate::parser_epoch::PARSER_EPOCH == GENERATED_PARSER_EPOCH,
+        "parser-generator epoch mismatch: source-of-record disagrees with cached generated parser. Rebuild fmpl-bootstrap and regenerate (cargo clean -p fmpl-core)."
+    );
+};
+
 /// Parser state.
 pub struct Parser<'a> {
     tokens: &'a [SpannedToken],
     source: Option<&'a str>,
     pos: usize,
+    /// True while parsing the body of a `pat => body` arm inside
+    /// `parse_inline_pattern_block`. When set, `parse_postfix` treats a
+    /// `[`-led token that is preceded by a newline in the source as the
+    /// start of the next case (and stops consuming the body) rather than
+    /// as an `Expr::Index` postfix on the current expression.
+    in_pattern_case_body: bool,
 }
 
 impl<'a> Parser<'a> {
@@ -35,6 +57,7 @@ impl<'a> Parser<'a> {
             tokens,
             source: None,
             pos: 0,
+            in_pattern_case_body: false,
         }
     }
 
@@ -43,7 +66,29 @@ impl<'a> Parser<'a> {
             tokens,
             source: Some(source),
             pos: 0,
+            in_pattern_case_body: false,
         }
+    }
+
+    /// Return true if the source bytes between the previous token's end and
+    /// the current token's start contain a newline. Returns false if either
+    /// there's no source available or there's no preceding token (we're at
+    /// the very start of input).
+    fn newline_before_current_token(&self) -> bool {
+        let Some(source) = self.source else {
+            return false;
+        };
+        if self.pos == 0 || self.pos >= self.tokens.len() {
+            return false;
+        }
+        let prev_end = self.tokens[self.pos - 1].span.end;
+        let curr_start = self.tokens[self.pos].span.start;
+        if curr_start <= prev_end {
+            return false;
+        }
+        source
+            .get(prev_end..curr_start)
+            .is_some_and(|gap| gap.contains('\n'))
     }
 
     /// Parse a complete program (sequence of expressions/definitions).
@@ -535,6 +580,14 @@ impl<'a> Parser<'a> {
                     }
                 }
             } else if self.check(&Token::LBracket) {
+                // Inside a `pat => body` arm of an inline pattern block, a
+                // `[`-led token preceded by a newline starts the next case,
+                // not an `Expr::Index` postfix on the current body. Bail out
+                // of the postfix loop so the caller's loop in
+                // `parse_inline_pattern_block` sees the `[` next.
+                if self.in_pattern_case_body && self.newline_before_current_token() {
+                    break;
+                }
                 self.advance();
 
                 // Check for slice starting with .. (open start)
@@ -619,11 +672,11 @@ impl<'a> Parser<'a> {
             Token::Symbol(s) => {
                 let s = s.clone();
                 self.advance();
-                // Reject legacy :Symbol(args) syntax
+                // Reject legacy :Symbol(args) constructor syntax (DESIGN-002).
                 if self.check(&Token::LParen) {
                     return Err(self.error(&format!(
-                        "legacy :{}(...) constructor syntax is not supported; use [:{}...] instead",
-                        s, s
+                        "legacy :{}(...) constructor syntax is not supported; use [:{}] or [:{}, ...] instead",
+                        s, s, s
                     )));
                 }
                 Ok(Expr::Symbol(s))
@@ -1000,7 +1053,11 @@ impl<'a> Parser<'a> {
         };
 
         self.expect(&Token::Arrow)?;
-        let body = self.parse_expr()?;
+        let prev_flag = self.in_pattern_case_body;
+        self.in_pattern_case_body = true;
+        let body = self.parse_expr();
+        self.in_pattern_case_body = prev_flag;
+        let body = body?;
 
         Ok(PatternCase {
             pattern,
@@ -1584,11 +1641,8 @@ impl<'a> Parser<'a> {
             let mut bindings = Vec::new();
             while !self.check(&Token::RParen) && !self.is_at_end() {
                 // Check if this is a pattern or simple binding
-                let binding = if self.check(&Token::Percent)
-                    || self.check(&Token::LBracket)
-                    || self.is_symbol_with_paren()
-                {
-                    // Pattern destructuring: %{...} = expr or [...] = expr or :Tag(...) = expr
+                let binding = if self.check(&Token::Percent) || self.check(&Token::LBracket) {
+                    // Pattern destructuring: %{...} = expr or [...] = expr
                     let pattern = self.parse_pattern()?;
                     self.expect(&Token::Eq)?;
                     let init = self.parse_expr()?;
@@ -1839,25 +1893,15 @@ impl<'a> Parser<'a> {
             Token::Symbol(s) => {
                 let s = s.clone();
                 self.advance();
-                // Check for constructor pattern: :Tag(patterns...)
+                // Reject legacy :Symbol(patterns...) constructor syntax in
+                // pattern position (DESIGN-002, mirrors parse_primary at :619).
                 if self.check(&Token::LParen) {
-                    self.advance(); // consume '('
-                    let mut patterns = Vec::new();
-                    if !self.check(&Token::RParen) {
-                        patterns.push(self.parse_pattern()?);
-                        while self.check(&Token::Comma) {
-                            self.advance();
-                            if self.check(&Token::RParen) {
-                                break; // trailing comma
-                            }
-                            patterns.push(self.parse_pattern()?);
-                        }
-                    }
-                    self.expect(&Token::RParen)?;
-                    Pattern::Constructor(s, patterns)
-                } else {
-                    Pattern::Symbol(s)
+                    return Err(self.error(&format!(
+                        "legacy :{}(...) constructor pattern is not supported; use [:{}] or [:{}, ...] instead",
+                        s, s, s
+                    )));
                 }
+                Pattern::Symbol(s)
             }
             Token::Ident(s) => {
                 let s = s.clone();
@@ -1947,12 +1991,6 @@ impl<'a> Parser<'a> {
     fn check_symbol_key(&self) -> bool {
         matches!(self.peek_token(), Some(Token::Symbol(_)))
             && self.peek_ahead(1).map(|t| &t.token) == Some(&Token::Colon)
-    }
-
-    /// Check if current position is a symbol followed by LParen (constructor pattern)
-    fn is_symbol_with_paren(&self) -> bool {
-        matches!(self.peek_token(), Some(Token::Symbol(_)))
-            && self.peek_ahead(1).map(|t| &t.token) == Some(&Token::LParen)
     }
 
     fn expect(&mut self, token: &Token) -> Result<()> {

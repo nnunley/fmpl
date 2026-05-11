@@ -212,13 +212,11 @@ pub fn compute_first_set(pattern: &Pattern) -> FirstSet {
         // Structural/value patterns — conservative
         Pattern::Map(_)
         | Pattern::List(_)
-        | Pattern::Tagged { .. }
         | Pattern::Binary(_)
         | Pattern::MatchValue(_)
         | Pattern::MatchType(_)
         | Pattern::ListMatch(_, _)
         | Pattern::MapMatch(_)
-        | Pattern::TagMatch(_, _)
         | Pattern::SymbolMatch(_)
         | Pattern::SymbolLiteral(_)
         | Pattern::Apply(_) => FirstSet::AnyChar,

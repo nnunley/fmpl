@@ -1088,6 +1088,14 @@ impl IrToRust {
                 code.push_str(&format!("// Generated parser for grammar: {}\n", grammar_name));
                 code.push_str("// DO NOT EDIT - generated from IR by ir_to_rust\n");
                 code.push_str("// This file is included into parser.rs which provides all imports.\n\n");
+                // Parser-generator epoch — see fmpl-core/src/parser_epoch.rs.
+                // The build script and a runtime const-assert use this value
+                // to detect drift between the generator's source-of-record and
+                // the cached generated parser.
+                code.push_str(&format!(
+                    "pub const GENERATED_PARSER_EPOCH: u32 = {};\n\n",
+                    crate::parser_epoch::PARSER_EPOCH
+                ));
                 // Use inline Result type to avoid conflicts with crate::error::Result
                 code.push_str("type ParseResult<T> = std::result::Result<(T, usize), Error>;\n\n");
 
@@ -1430,22 +1438,6 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
                 Ok(Expr::Yield(Box::new(value)))
             } else {
                 Err(Error::Runtime("Invalid Yield node".to_string()))
-            }
-        }
-        "Tagged" => {
-            if children.len() >= 2 {
-                if let Value::String(tag) = &children[0] {
-                    if let Value::List(args) = &children[1] {
-                        let exprs: Result<Vec<Expr>> = args.iter().map(value_to_expr).collect();
-                        Ok(Expr::Tagged(tag.clone(), exprs?))
-                    } else {
-                        Err(Error::Runtime("Invalid Tagged args".to_string()))
-                    }
-                } else {
-                    Err(Error::Runtime("Invalid Tagged tag".to_string()))
-                }
-            } else {
-                Err(Error::Runtime("Invalid Tagged node".to_string()))
             }
         }
         "QualifiedName" => {
@@ -1858,19 +1850,6 @@ fn value_to_pattern(value: &Value) -> Result<Pattern> {
         }
         "PatternLiteral" if !children.is_empty() => {
             value_to_literal_pattern(&children[0])
-        }
-        "PatternTagged" if children.len() >= 2 => {
-            let tag_name = if let Value::String(s) = &children[0] {
-                s.clone()
-            } else {
-                return Err(Error::Runtime("Invalid PatternTagged tag".to_string()));
-            };
-            let sub_patterns = if let Value::List(pats) = &children[1] {
-                pats.iter().map(value_to_pattern).collect::<Result<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            Ok(Pattern::Constructor(tag_name, sub_patterns))
         }
         "PatternList" if !children.is_empty() => {
             if let Value::List(items) = &children[0] {

@@ -1,6 +1,6 @@
 # Review Queue
 
-**Pending:** 5
+**Pending:** 11
 **Oldest staged:** 2026-05-10T20:40:55.273010+00:00
 
 Run `python .agent/tools/list_candidates.py` for detail, then:
@@ -10,8 +10,13 @@ Run `python .agent/tools/list_candidates.py` for detail, then:
 
 ## Priority order (top 10)
 
-- **d49365f28837** (priority=33426.00, size=1857, rejections=1) — FAILURE in claude-code: Command failed: cat > /tmp/test_lex.rs << 'EOF' | THIS S
-- **a6a5972d6a43** (priority=882.00, size=49, rejections=0) — FAILURE in claude-code: Command failed: rtk cargo test -p fmpl-core 2>&1 | grep 
-- **1ee1e88edac8** (priority=405.00, size=30, rejections=1) — Tool Agent completed successfully
-- **65dca9e74421** (priority=148.50, size=11, rejections=0) — High-stakes op completed (schema): python3 .agent/tools/reject.py 50986dd6bff7 -
-- **3916ff8ccb90** (priority=121.50, size=9, rejections=0) — High-stakes op completed (migrate): jj describe -m "$(cat <<'EOF'
+- **d49365f28837** (priority=35813.57, size=1857, rejections=1) — FAILURE in claude-code: Command failed: cat > /tmp/test_lex.rs << 'EOF' | THIS S
+- **a6a5972d6a43** (priority=1683.64, size=90, rejections=0) — FAILURE in claude-code: Command failed: rtk cargo test -p fmpl-core 2>&1 | grep 
+- **1ad6f2c9cb48** (priority=882.00, size=49, rejections=0) — FAILURE in claude-code: Command failed: rtk cargo test -p fmpl-core --no-fail-fa
+- **7db33f9fe13b** (priority=472.50, size=35, rejections=0) — Edited /Users/ndn/development/fmpl/docs/superpowers/iterations/requirements/EPIC
+- **1ee1e88edac8** (priority=433.93, size=30, rejections=1) — Tool Agent completed successfully
+- **4ea6db7f3696** (priority=301.19, size=23, rejections=0) — High-stakes op completed (migrate): jj describe -m "$(cat <<'EOF'
+- **65dca9e74421** (priority=159.11, size=11, rejections=0) — High-stakes op completed (schema): python3 .agent/tools/reject.py 50986dd6bff7 -
+- **3916ff8ccb90** (priority=130.18, size=9, rejections=0) — High-stakes op completed (migrate): jj describe -m "$(cat <<'EOF'
+- **b8d34c70e57d** (priority=65.48, size=5, rejections=0) — Wrote /Users/ndn/development/fmpl/docs/superpowers/iterations/progress.md (28 li
+- **8969de2975d0** (priority=40.50, size=3, rejections=0) — Wrote /Users/ndn/development/fmpl/docs/superpowers/iterations/progress.md (48 li

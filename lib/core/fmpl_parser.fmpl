@@ -76,13 +76,6 @@ let fmpl_parser = grammar fmpl_parser {
              | sym_op_char+:name => name
     symbol = ":" sym_name:name sp => [:Symbol, name]
 
-    tag_name = ident_start:first ident_rest*:rest => join(prepend(first, rest))
-    tagged_arg_rest = "," sp or_expr:e => e
-    tagged_args = or_expr:first tagged_arg_rest*:rest => prepend(first, rest)
-    tagged_with_args = ":" tag_name:tag "(" sp tagged_args:items ")" sp => [:Tagged, tag, items]
-    tagged_empty = ":" tag_name:tag "(" sp ")" sp => [:Tagged, tag, []]
-    tagged = tagged_with_args | tagged_empty
-
     qualified_sep = ":" ":"
     qualified_part = ident_start:first ident_rest*:rest => join(prepend(first, rest))
     qualified_rest_item = qualified_sep qualified_part:p => p
@@ -175,7 +168,7 @@ let fmpl_parser = grammar fmpl_parser {
     obj_def = "object" ~ident_rest sp obj_name:name "{" sp obj_body:content "}" sp
             => [:Object, name, content]
 
-    primary = paren | sequence | list_lit | map_lit | float_lit | int | bool | null_lit | string_lit | tagged | symbol
+    primary = paren | sequence | list_lit | map_lit | float_lit | int | bool | null_lit | string_lit | symbol
             | self_expr | parent_expr | caller_expr | user_expr | args_expr | obj_tag | spawn_expr
             | named_grammar | grammar_literal | placeholder | var
 
@@ -289,7 +282,6 @@ let fmpl_parser = grammar fmpl_parser {
     pat_int = digit_val+:ds ~ident_rest sp => [:PatternLiteral, [:Int, reduce(\acc \d acc * 10 + d, 0, ds)]]
     pat_neg_int = "-" sp digit_val+:ds ~ident_rest sp => [:PatternLiteral, [:Int, 0 - reduce(\acc \d acc * 10 + d, 0, ds)]]
     pat_string = "\"" string_char*:cs "\"" sp => [:PatternLiteral, [:String, cs]]
-    pat_constructor = ":" tag_name:tag "(" sp pat_args:pats ")" sp => [:PatternTagged, tag, pats]
     pat_symbol = ":" sym_name:name sp => [:PatternLiteral, [:Symbol, name]]
     pat_arg_rest = "," sp pattern:p => p
     pat_args = pattern:first pat_arg_rest*:rest => prepend(first, rest)
@@ -300,7 +292,7 @@ let fmpl_parser = grammar fmpl_parser {
     pat_map_entries = pat_map_entry:first pat_map_entry_rest*:rest => prepend(first, rest)
     pat_map = "%" "{" sp pat_map_entries:entries "}" sp => [:PatternMap, entries]
             | "%" "{" sp "}" sp => [:PatternMap, []]
-    pat_primary = pat_wildcard | pat_constructor | pat_symbol | pat_neg_int | pat_int | pat_string | pat_list | pat_map | pat_var
+    pat_primary = pat_wildcard | pat_symbol | pat_neg_int | pat_int | pat_string | pat_list | pat_map | pat_var
     pat_as = pat_primary:p "as" ~ident_rest sp sym_ident:name => [:PatternAs, p, name]
     pattern = pat_as | pat_primary
 

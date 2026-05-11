@@ -350,22 +350,6 @@ pub fn value_to_expr(value: &Value) -> Result<Expr> {
                 Err(Error::Runtime("Invalid Do node".to_string()))
             }
         }
-        "Tagged" => {
-            if children.len() >= 2 {
-                if let Value::String(tag) = &children[0] {
-                    if let Value::List(args) = &children[1] {
-                        let exprs: Result<Vec<Expr>> = args.iter().map(value_to_expr).collect();
-                        Ok(Expr::Tagged(tag.clone(), exprs?))
-                    } else {
-                        Err(Error::Runtime("Invalid Tagged args".to_string()))
-                    }
-                } else {
-                    Err(Error::Runtime("Invalid Tagged tag".to_string()))
-                }
-            } else {
-                Err(Error::Runtime("Invalid Tagged node".to_string()))
-            }
-        }
         "QualifiedName" => {
             if let Some(Value::List(parts)) = children.first() {
                 let names: Vec<SmolStr> = parts
@@ -1224,21 +1208,6 @@ fn value_to_pattern(value: &Value) -> Result<Pattern> {
         "PatternLiteral" if !children.is_empty() => {
             // The child is an AST node like :Int(n), :Bool(b), etc.
             value_to_literal_pattern(&children[0])
-        }
-        "PatternTagged" if children.len() >= 2 => {
-            let tag_name = if let Value::String(s) = &children[0] {
-                s.clone()
-            } else {
-                return Err(Error::Runtime("Invalid PatternTagged tag".to_string()));
-            };
-            let sub_patterns = if let Value::List(pats) = &children[1] {
-                pats.iter()
-                    .map(value_to_pattern)
-                    .collect::<Result<Vec<_>>>()?
-            } else {
-                Vec::new()
-            };
-            Ok(Pattern::Constructor(tag_name, sub_patterns))
         }
         "PatternList" if !children.is_empty() => {
             if let Value::List(items) = &children[0] {

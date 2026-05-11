@@ -12,7 +12,7 @@ fn test_full_pipeline_simple() {
         &mut vm,
         r#"
         let (ast = ast::parse("42"))
-        let (ir = ast @ { :Int(n) => [:LoadInt, n] })
+        let (ir = ast @ { [:Int, n] => [:LoadInt, n] })
         let (code = ir::compile(ir))
         code::eval(code)
     "#,
@@ -57,10 +57,10 @@ fn test_full_pipeline_with_ast_pattern_match() {
         r#"
         let (ast = ast::parse("1 + 2"))
         let (ir = ast @ {
-            :Binary(:+, :Int(a), :Int(b)) => [:Add, [:LoadInt, a], [:LoadInt, b]]
-            :Binary(:-, :Int(a), :Int(b)) => [:Sub, [:LoadInt, a], [:LoadInt, b]]
-            :Binary(:*, :Int(a), :Int(b)) => [:Mul, [:LoadInt, a], [:LoadInt, b]]
-            :Binary(:/, :Int(a), :Int(b)) => [:Div, [:LoadInt, a], [:LoadInt, b]]
+            [:Binary, :+, [:Int, a], [:Int, b]] => [:Add, [:LoadInt, a], [:LoadInt, b]]
+            [:Binary, :-, [:Int, a], [:Int, b]] => [:Sub, [:LoadInt, a], [:LoadInt, b]]
+            [:Binary, :*, [:Int, a], [:Int, b]] => [:Mul, [:LoadInt, a], [:LoadInt, b]]
+            [:Binary, :/, [:Int, a], [:Int, b]] => [:Div, [:LoadInt, a], [:LoadInt, b]]
         })
         let (code = ir::compile(ir))
         code::eval(code)
@@ -82,7 +82,7 @@ fn test_full_pipeline_bool() {
         &mut vm,
         r#"
         let (ast = ast::parse("true"))
-        let (ir = ast @ { :Bool(b) => [:LoadBool, b] })
+        let (ir = ast @ { [:Bool, b] => [:LoadBool, b] })
         let (code = ir::compile(ir))
         code::eval(code)
     "#,
@@ -334,7 +334,7 @@ fn test_ast_parse_pattern_match_on_ast() {
         &mut vm,
         r#"
         ast::parse("1 + 2") @ {
-            :Binary(op, :Int(a), :Int(b)) => [op, a, b]
+            [:Binary, op, [:Int, a], [:Int, b]] => [op, a, b]
         }
     "#,
     )

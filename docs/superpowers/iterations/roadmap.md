@@ -398,8 +398,8 @@ These gates are NOT new work — they are the existing iteration gates, framed u
 
 (There is a third `Pattern` enum at `fmpl-core/src/tuplespace/mod.rs:77` but it has no `Tagged`/`Constructor`/`TagMatch` variant and is out of scope.)
 
-**Status:** pending
-**Impacted scenarios:** SCENARIO-0104 NEW, SCENARIO-0105 NEW, SCENARIO-0106 NEW, SCENARIO-0039 rewrite, SCENARIO-0066 rewrite. `no_legacy_fmpl_syntax.rs` CI gate flips to `== 0`. SCENARIO-0103 + SCENARIO-0016 continue to pass (sentinels). SCENARIO-0003 reconfirms.
+**Status:** done 2026-05-12 (with **T18 deferred** — the `no_legacy_fmpl_syntax.rs` gate flip to `== 0` mode moved to ITER-0004d.3 because the bootstrap-parse error in `fmpl-bootstrap lib/core/parser_generator.fmpl` would let a green gate silently rely on the fallback parser; the bootstrap follow-up must investigate that first). F1+F2+F9+MF1 parser rejection landed; T7-T14 deleted the four producer/consumer variants; parser-epoch freshness system added; T15-T17 reconciled docs + scenarios + behavior-corpus; T19 added `fmpl-core/tests/structural_invariants.rs` (17 evidence tests, all green) covering SCENARIO-0104/0105/0106.
+**Impacted scenarios:** SCENARIO-0104 NEW (implemented), SCENARIO-0105 NEW (implemented), SCENARIO-0106 NEW (implemented), SCENARIO-0039 rewrite (done), SCENARIO-0066 rewrite (done). `no_legacy_fmpl_syntax.rs` CI gate flip moved to ITER-0004d.3. SCENARIO-0103 + SCENARIO-0016 still pass (sentinels). SCENARIO-0003 reconfirms.
 **Depends on:** ITER-0004d.0 (precise FMPL-source scanner).
 **Look-ahead check:** Unblocks ITER-0004d.2 (opcode rename — the dead match arms in `compiler.rs` consuming `Expr::Tagged` / `Pattern::Constructor` are deleted here, leaving only emit sites that are themselves dead code, simplifying the rename surface). Unblocks ITER-0006 (the parser has exactly one AST shape).
 
@@ -600,6 +600,85 @@ These gates are NOT new work — they are the existing iteration gates, framed u
 - Persisted bytecode round-trip test (whichever currently exists, e.g., `bytecode_persistence.rs`) still passes — Serde wire-format unchanged due to `#[serde(rename)]` attributes.
 
 **Out of scope:** `Type::Tagged` cleanup (ITER-0004h). Wire-format version bump (ITER-0005's STORY-0099).
+
+### ITER-0004d.3 — Bootstrap-Parse Investigation + `no_legacy_fmpl_syntax` Gate Flip (T18)
+
+**Stories:** STORY-0010 Phase B AC-9/AC-10/AC-12 final CI-gate ratchet — the deferred T18 from ITER-0004d.1.
+
+**Rationale:** ITER-0004d.1 deferred the `no_legacy_fmpl_syntax` gate flip to `== 0` mode because the metacircular pipeline is currently broken: `fmpl-bootstrap lib/core/parser_generator.fmpl` fails with `Parser error at token 20: expected Comma` when three or more `io::load(...)` calls are chained. The failure reproduces with the parent-commit source (it pre-dates the T-task work). Test sentinels stay green because `FMPL_SKIP_PARSER_GEN=1` falls back to the legacy parser, but a green `== 0` gate would silently mean "the fallback parser doesn't see legacy syntax", not "the metacircular pipeline doesn't see legacy syntax". DESIGN-001 (metacircular bootstrap) requires the latter.
+
+**Status:** pending
+
+**Impacted scenarios:** SCENARIO-0104, SCENARIO-0105, SCENARIO-0106 must re-pass under the canonical metacircular pipeline (not just the fallback parser). `no_legacy_fmpl_syntax` flips from baseline-mode to `== 0`.
+
+**Depends on:** ITER-0004d.1 (the T-task variant deletions; the parser-rejection contract scenarios; the parser-epoch freshness signal that would catch a regressing generator).
+
+**Look-ahead check:** Unblocks any iteration whose proof obligations include "via the canonical pipeline" (currently only the metacircular sentinels, which are passing via fallback today). Unblocks confidently flipping the gate, which downstream iterations rely on as the syntactic-cleanliness signal.
+
+**Binding preconditions:**
+
+- **Bisect the three-load failure.** From progress.md session 1: a single `io::load(...)` works; two consecutive loads work; three consecutive loads fail with `expected Comma`. Reproduce against parent-commit source (confirmed pre-existing); confirm it's not a parser-epoch staleness issue (the epoch system is dormant under fallback — should not affect bootstrap). Likely candidates: cross-file scope leak; bootstrap parser bug in the third load; side-effect ordering in `io::load`'s evaluation.
+- **Root-cause fix, not symptomatic.** Per CLAUDE.md `investigate` skill discipline — reproduce in a minimal failing case first, then identify the line/expression that triggers the failure, then fix the underlying mechanism. Workarounds that mask the problem (e.g., merging the three grammar files into one) do NOT close this iteration.
+- **The 4 + 26 false-positive hits in tests/rs + src/rs.** ITER-0004d.1's baseline carries 4 hits in `tests/*.rs` and 26 in `src/*.rs` — all are `module:function(args)` patterns where the FMPL lexer's `Symbol+LParen` heuristic produces a hit but the actual syntax is not the legacy `:Tag(args)` form. Two resolution options: (a) extend the scanner to distinguish `Ident COLON Symbol LParen` (a method-call form) from `COLON Symbol LParen` (the legacy tagged form); (b) hand-allowlist each site. Option (a) is the more durable fix; the scanner already lives in `fmpl-core/src/diagnostics/mod.rs` and the discriminator is a single-token lookback.
+
+**Scope:**
+
+1. **Reproduce the three-load failure** in a minimal test harness (`fmpl-bootstrap` invocation with a synthetic 3-load file). Confirm it's not env-dependent.
+2. **Bisect the failure mechanism.** Compare 2-load (works) vs 3-load (fails) parser state. Determine whether the issue is in the bootstrap-binary parser, the grammar runtime, or the `io::load` builtin's evaluation order.
+3. **Land the fix.** Add a unit test for the formerly-failing minimal case.
+4. **Refine the legacy-syntax scanner** to distinguish `module:function(args)` (allowed) from `:Tag(args)` (rejected). Add unit tests in `diagnostics_fmpl_source_scan.rs` for both forms.
+5. **Eliminate the residual hits.** With the refined scanner, the 4 + 26 should drop to 0 (or near-zero with a small allowlist). Re-run the baseline regeneration to verify.
+6. **Flip the gate.** Edit `fmpl-core/tests/no_legacy_fmpl_syntax.rs` to drop the baseline-JSON loading and assert `total_hits == 0`. Delete `fmpl-core/tests/no_legacy_fmpl_syntax.baseline.json`. Update the file's module docs.
+7. **Re-run all sentinels** under the canonical pipeline (no `FMPL_SKIP_PARSER_GEN=1`). All scenarios must pass.
+
+**Acceptance:**
+
+- `fmpl-bootstrap lib/core/parser_generator.fmpl` succeeds end-to-end.
+- The minimal-reproducer test for the three-load case passes.
+- `cargo test -p fmpl-core --test no_legacy_fmpl_syntax` passes with the gate in `== 0` mode (baseline JSON gone).
+- All sentinels still green: ast_to_ir_parity, scenario_0103_optimizer_pipeline, tavern_demo, structural_invariants.
+- No `FMPL_SKIP_PARSER_GEN=1` in the test invocation produces a green run.
+
+**Out of scope:** ITER-0004d.2's opcode rename (separately scheduled). The data-driven scenario runner (ITER-0004d.4 below). The bootstrap-parse fix is bounded to the three-load issue; broader bootstrap refactoring is not in scope.
+
+### ITER-0004d.4 — Data-Driven Scenario Runner (cucumber/SLIM-style)
+
+**Stories:** New story TBD — register one under EPIC-002 once the iteration starts. Migration of `fmpl-core/tests/structural_invariants.rs` is the first consumer; further migration is opportunistic per iteration.
+
+**Rationale:** User feedback from 2026-05-12 (ITER-0004d.1 T19 review): the per-scenario Rust test pattern (e.g., `scenario_0104_rejects_single_arg_value_constructor`) is stylish but makes the test file harder to read at a glance — each test mostly restates structure already in the scenario card. A cucumber/FitNesse-SLIM-style data-driven runner where the scenario card IS the test spec, and the Rust side is a thin step-definition driver, would (a) make scenario contracts directly executable, (b) collapse boilerplate, and (c) make "add a new scenario" a primarily card-authoring activity.
+
+**Status:** pending
+
+**Impacted scenarios:** No new scenarios; this is infrastructure. Existing scenarios `SCENARIO-0104`, `SCENARIO-0105`, `SCENARIO-0106` migrate from Rust-per-test to data-driven (their `Execution command` entries in `behavior-corpus.md` will change). Future scenarios benefit; existing free-form scenarios stay free-form unless explicitly migrated.
+
+**Depends on:** ITER-0004d.1 (the three example scenarios that prove the pattern). Does NOT depend on ITER-0004d.3 (gate flip); they can ship in either order.
+
+**Look-ahead check:** Could simplify ITER-0005 (persistence) and downstream iterations that have structural-invariant proof obligations. Risk: over-architecting the step-def registry too early — three scenarios is a small sample.
+
+**Binding preconditions:**
+
+- **Scenario card structure must be parseable.** Today `behavior-scenarios.md` is free-form markdown with conventional headings (Preconditions, Action, Expected observables, etc.). Either (a) tighten the convention so a regex/markdown parser can extract typed fields, or (b) add a sibling structured file (`behavior-scenarios.yaml` or similar) that mirrors the cards. Option (a) preserves the human-readable narrative; option (b) avoids parser fragility. Decide at iteration kickoff.
+- **Step-definition registry.** A registry mapping `(action_type, expected_observable_pattern) → step_def_fn`. The registry must support both general step-defs (`parse_rejection(source: &str) -> Result<...>`) and scenario-specific ones (e.g., `grep_invariant_pattern_constructor()`). Step-def names must be discoverable from the scenario card text.
+- **Thin driver test.** A single `tests/scenario_runner.rs` that iterates the scenario corpus, dispatches each card to its step-defs, and emits a `[scenario_id]` test name so `cargo test scenario_0104` still works.
+- **Cucumber/SLIM conventions, not invention.** Lean on prior art: cucumber/Gherkin uses Given/When/Then; FitNesse SLIM uses tables and fixtures. Pick one model and stick to it — don't invent a third.
+
+**Scope:**
+
+1. **Decide scenario card structure.** Either tighten markdown conventions or add a structured sibling file. Land the decision in `docs/design-principles.md` (DESIGN-006 or similar).
+2. **Parse the corpus.** Walk `behavior-scenarios.md`, extract per-scenario `(id, kind, seam, preconditions, action, expected_observables, execution_status)`. Validate on the existing corpus.
+3. **Build the step-definition registry.** Start with the three step types needed by SCENARIO-0104/0105/0106: `parse_rejection`, `parse_success_control`, `grep_invariant`. Make the registry extensible.
+4. **Write the driver test.** `fmpl-core/tests/scenario_runner.rs` invokes the registry per card.
+5. **Migrate SCENARIO-0104/0105/0106 from `structural_invariants.rs` to the driver.** Verify the same 17 evidence tests pass. Delete `structural_invariants.rs` once the driver covers it (or keep it as a legacy bridge for one iteration).
+6. **Document the step-def API** so future scenario authors can add cards without touching Rust until a genuinely new action type appears.
+
+**Acceptance:**
+
+- `cargo test -p fmpl-core --test scenario_runner scenario_0104` runs and passes (same evidence as `structural_invariants.rs` produces today).
+- Same for SCENARIO-0105, SCENARIO-0106.
+- Adding a new scenario card with existing step-defs requires zero Rust code changes.
+- `behavior-corpus.md` execution commands for migrated scenarios point at `scenario_runner` instead of `structural_invariants`.
+
+**Out of scope:** Migrating scenarios that have no step-def coverage today (e.g., SCENARIO-0001..0077 which are largely TBD). FMPL-grammar-based scenario parsing (a possible ITER-0005x successor — metacircular scenario evaluation is on-brand with DESIGN-001 but bigger scope than this iteration).
 
 ### ITER-0004e — Prelude / Parser-Helper Split
 

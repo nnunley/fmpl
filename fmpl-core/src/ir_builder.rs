@@ -235,14 +235,6 @@ impl IrBuilder {
         })
     }
 
-    /// Emit MakeTagged { tag, args }, returning the result index.
-    pub fn tagged(&mut self, tag: SmolStr, args: &[InstrIndex]) -> InstrIndex {
-        self.emit(Instruction::MakeTagged {
-            tag,
-            args: args.to_vec(),
-        })
-    }
-
     /// Emit Index { collection, key }, returning the result index.
     pub fn index(&mut self, collection: InstrIndex, key: InstrIndex) -> InstrIndex {
         self.emit(Instruction::Index { collection, key })

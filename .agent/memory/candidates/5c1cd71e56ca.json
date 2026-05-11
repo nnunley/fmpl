@@ -1,0 +1,35 @@
+{
+  "id": "5c1cd71e56ca",
+  "key": "pattern_development_file_path_progress_5c1cd7",
+  "name": "pattern_development_file_path_progress_5c1cd7",
+  "claim": "Wrote /Users/ndn/development/fmpl/docs/superpowers/iterations/progress.md (28 lines)",
+  "conditions": [
+    "content",
+    "development",
+    "file_path",
+    "fmpl",
+    "lines",
+    "ndn",
+    "progress",
+    "users",
+    "write",
+    "wrote"
+  ],
+  "evidence_ids": [
+    "2026-05-11T04:54:24.872002+00:00",
+    "2026-05-11T06:17:49.181588+00:00",
+    "2026-05-11T06:18:23.597498+00:00"
+  ],
+  "cluster_size": 3,
+  "canonical_salience": 13.095,
+  "staged_at": "2026-05-12T14:41:29.106943+00:00",
+  "status": "staged",
+  "decisions": [
+    {
+      "ts": "2026-05-12T14:41:29.106943+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    }
+  ],
+  "rejection_count": 0
+}

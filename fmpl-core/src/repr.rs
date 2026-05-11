@@ -98,16 +98,6 @@ impl Display for Pattern {
                 }
                 write!(f, "}}")
             }
-            Pattern::Constructor(name, pats) => {
-                write!(f, "{}(", name)?;
-                for (i, p) in pats.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}", p)?;
-                }
-                write!(f, ")")
-            }
             Pattern::As(inner, name) => write!(f, "{} as {}", inner, name),
         }
     }
@@ -222,20 +212,6 @@ impl Display for Expr {
             Expr::Float(n) => write!(f, "{}", n),
             Expr::String(s) => write!(f, "\"{}\"", escape_string(s)),
             Expr::Symbol(s) => write!(f, ":{}", s),
-            Expr::Tagged(tag, args) => {
-                write!(f, ":{}", tag)?;
-                if !args.is_empty() {
-                    write!(f, "(")?;
-                    for (i, arg) in args.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}", arg)?;
-                    }
-                    write!(f, ")")?;
-                }
-                Ok(())
-            }
             Expr::Bool(b) => write!(f, "{}", b),
             Expr::Null => write!(f, "null"),
             Expr::Ident(name) => write!(f, "{}", name),
@@ -613,20 +589,6 @@ impl<'a> Display for GrammarPatternRepr<'a> {
             }
             GrammarPattern::SymbolMatch(sym) => write!(f, ":{}", sym),
             GrammarPattern::SymbolLiteral(sym) => write!(f, ":{}", sym),
-            GrammarPattern::TagMatch(tag, pats) => {
-                write!(f, ":{}", tag)?;
-                if !pats.is_empty() {
-                    write!(f, "(")?;
-                    for (i, p) in pats.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}", GrammarPatternRepr(p))?;
-                    }
-                    write!(f, ")")?;
-                }
-                Ok(())
-            }
             GrammarPattern::End => write!(f, "end"),
 
             // Binary patterns
@@ -683,20 +645,6 @@ impl<'a> Display for GrammarPatternRepr<'a> {
                     write!(f, "{}: {}", k, GrammarPatternRepr(p))?;
                 }
                 write!(f, "}}")
-            }
-            GrammarPattern::Tagged { tag, patterns } => {
-                write!(f, ":{}", tag)?;
-                if !patterns.is_empty() {
-                    write!(f, "(")?;
-                    for (i, p) in patterns.iter().enumerate() {
-                        if i > 0 {
-                            write!(f, ", ")?;
-                        }
-                        write!(f, "{}", GrammarPatternRepr(p))?;
-                    }
-                    write!(f, ")")?;
-                }
-                Ok(())
             }
         }
     }

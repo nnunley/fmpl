@@ -54,12 +54,6 @@ pub enum Pattern {
     /// List pattern - [p1, p2, p3] or [h | t] or [p*]
     List(ListPattern),
 
-    /// Tagged/constructor pattern - :Tag(p1, p2, ...)
-    Tagged {
-        tag: SmolStr,
-        patterns: Vec<Pattern>,
-    },
-
     // === Text/Character patterns ===
     /// Character pattern (for strings) - 'a' or [a-z]
     Char(CharPattern),
@@ -138,10 +132,6 @@ pub enum Pattern {
     /// Match a map with specific key patterns
     MapMatch(Vec<(SmolStr, Pattern)>),
 
-    /// Match a tagged/constructor value with specific tag and child patterns
-    /// E.g., :Int(n) matches Value::Tagged("Int", [n])
-    TagMatch(SmolStr, Vec<Pattern>),
-
     /// Match a symbol with a specific name
     SymbolMatch(SmolStr),
 
@@ -162,16 +152,6 @@ impl Pattern {
         match self {
             Pattern::Bind { name, .. } => Some(name),
             _ => None,
-        }
-    }
-
-    /// Check if this pattern contains a Repeat (Star/Plus), possibly wrapped in Bind.
-    /// Used by TagMatch to decide whether to unwrap list-valued children.
-    pub fn contains_repeat(&self) -> bool {
-        match self {
-            Pattern::Repeat { .. } => true,
-            Pattern::Bind { pattern, .. } => pattern.contains_repeat(),
-            _ => false,
         }
     }
 }
@@ -262,6 +242,14 @@ pub enum PatternMode {
 impl Pattern {
     /// Determine if pattern requires full matching (backtracking/guards)
     pub fn requires_full_mode(&self) -> bool {
+        // Special case: a `ListMatch` with leading `SymbolLiteral` is the
+        // tagged-shape pattern `[:Tag, ...]` — fast-mode compatible.
+        // Replaces the legacy `Pattern::Tagged` (ITER-0004d.1 T12).
+        if let Pattern::ListMatch(elems, None) = self
+            && matches!(elems.first(), Some(Pattern::SymbolLiteral(_)))
+        {
+            return false;
+        }
         matches!(
             self,
             Pattern::Seq(_)
@@ -278,7 +266,6 @@ impl Pattern {
                 | Pattern::List(ListPattern::Repeat { .. })
                 | Pattern::ListMatch(_, _)
                 | Pattern::MapMatch(_)
-                | Pattern::TagMatch(_, _)
                 | Pattern::Apply(_)
                 | Pattern::End
         )

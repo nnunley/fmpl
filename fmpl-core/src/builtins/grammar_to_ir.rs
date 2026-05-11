@@ -231,8 +231,7 @@ fn pattern_to_ir(pattern: &Pattern) -> Result<Value> {
         )),
 
         // Tree patterns and other patterns not yet supported
-        Pattern::TagMatch(_, _)
-        | Pattern::End
+        Pattern::End
         | Pattern::MatchValue(_)
         | Pattern::MatchType(_)
         | Pattern::ListMatch(_, _)
@@ -243,13 +242,9 @@ fn pattern_to_ir(pattern: &Pattern) -> Result<Value> {
         )),
 
         // Patterns from let bindings that shouldn't appear in grammars
-        Pattern::Var(_)
-        | Pattern::Literal(_)
-        | Pattern::Map(_)
-        | Pattern::List(_)
-        | Pattern::Tagged { .. } => Err(Error::Runtime(
-            "Let binding patterns not supported in grammar_to_ir".to_string(),
-        )),
+        Pattern::Var(_) | Pattern::Literal(_) | Pattern::Map(_) | Pattern::List(_) => Err(
+            Error::Runtime("Let binding patterns not supported in grammar_to_ir".to_string()),
+        ),
     }
 }
 
@@ -306,17 +301,6 @@ fn expr_to_ir(expr: &crate::ast::Expr) -> Result<Value> {
                 result = Value::list_node("GetProp", vec![result, Value::Symbol(part.clone())]);
             }
             Ok(result)
-        }
-
-        Expr::Tagged(tag, args) => {
-            let mut arg_irs = Vec::new();
-            for arg in args {
-                arg_irs.push(expr_to_ir(arg)?);
-            }
-            Ok(Value::list_node(
-                "MakeTagged",
-                vec![Value::Symbol(tag.clone()), Value::List(Arc::new(arg_irs))],
-            ))
         }
 
         Expr::List(items) => {

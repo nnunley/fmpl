@@ -112,8 +112,6 @@ pub enum Pattern {
     List(Vec<Pattern>, Option<SmolStr>),
     /// Matches map with specific keys.
     Map(Vec<(SmolStr, Pattern)>),
-    /// Constructor pattern.
-    Constructor(SmolStr, Vec<Pattern>),
     /// Binds matched value to name.
     As(Box<Pattern>, SmolStr),
 }
@@ -153,8 +151,6 @@ pub enum Expr {
     String(SmolStr),
     /// Symbol literal (:foo).
     Symbol(SmolStr),
-    /// Tagged/constructor value (:Tag(args...)).
-    Tagged(SmolStr, Vec<Expr>),
     /// Boolean literal.
     Bool(bool),
     /// Null literal.

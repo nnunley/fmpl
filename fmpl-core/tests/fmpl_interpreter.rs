@@ -33,7 +33,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("42"))
-            let (ir = ast @ { :Int(n) => [:LoadInt, n] })
+            let (ir = ast @ { [:Int, n] => [:LoadInt, n] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -49,8 +49,8 @@ mod phase1_literals {
             r#"
             let (ast = ast::parse("-5"))
             let (ir = ast @ {
-                :Unary(:-, :Int(n)) => [:Neg, [:LoadInt, n]]
-                :Int(n) => [:LoadInt, n]
+                [:Unary, :-, [:Int, n]] => [:Neg, [:LoadInt, n]]
+                [:Int, n] => [:LoadInt, n]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -66,7 +66,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("true"))
-            let (ir = ast @ { :Bool(b) => [:LoadBool, b] })
+            let (ir = ast @ { [:Bool, b] => [:LoadBool, b] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -81,7 +81,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("false"))
-            let (ir = ast @ { :Bool(b) => [:LoadBool, b] })
+            let (ir = ast @ { [:Bool, b] => [:LoadBool, b] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -98,7 +98,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("null"))
-            let (ir = ast @ { :Null() => [:LoadNull] })
+            let (ir = ast @ { [:Null] => [:LoadNull] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -113,7 +113,7 @@ mod phase1_literals {
             &mut vm,
             r#"
             let (ast = ast::parse("\"hello\""))
-            let (ir = ast @ { :String(s) => [:LoadString, s] })
+            let (ir = ast @ { [:String, s] => [:LoadString, s] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -137,7 +137,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("1 + 2"))
             let (ir = ast @ {
-                :Binary(:+, :Int(a), :Int(b)) => [:Add, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :+, [:Int, a], [:Int, b]] => [:Add, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -154,7 +154,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("10 - 4"))
             let (ir = ast @ {
-                :Binary(:-, :Int(a), :Int(b)) => [:Sub, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :-, [:Int, a], [:Int, b]] => [:Sub, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -171,7 +171,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("3 * 4"))
             let (ir = ast @ {
-                :Binary(:*, :Int(a), :Int(b)) => [:Mul, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :*, [:Int, a], [:Int, b]] => [:Mul, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -188,7 +188,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("20 / 5"))
             let (ir = ast @ {
-                :Binary(:/, :Int(a), :Int(b)) => [:Div, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :/, [:Int, a], [:Int, b]] => [:Div, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -205,7 +205,7 @@ mod phase1_arithmetic {
             r#"
             let (ast = ast::parse("17 % 5"))
             let (ir = ast @ {
-                :Binary(:%, :Int(a), :Int(b)) => [:Mod, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :%, [:Int, a], [:Int, b]] => [:Mod, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -226,7 +226,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 == 5"))
             let (ir = ast @ {
-                :Binary(:==, :Int(a), :Int(b)) => [:Eq, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :==, [:Int, a], [:Int, b]] => [:Eq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -243,7 +243,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 == 3"))
             let (ir = ast @ {
-                :Binary(:==, :Int(a), :Int(b)) => [:Eq, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :==, [:Int, a], [:Int, b]] => [:Eq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -260,7 +260,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 != 3"))
             let (ir = ast @ {
-                :Binary(:!=, :Int(a), :Int(b)) => [:NotEq, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :!=, [:Int, a], [:Int, b]] => [:NotEq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -277,7 +277,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("3 < 5"))
             let (ir = ast @ {
-                :Binary(:<, :Int(a), :Int(b)) => [:Lt, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :<, [:Int, a], [:Int, b]] => [:Lt, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -294,7 +294,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 > 3"))
             let (ir = ast @ {
-                :Binary(:>, :Int(a), :Int(b)) => [:Gt, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :>, [:Int, a], [:Int, b]] => [:Gt, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -311,7 +311,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 <= 5"))
             let (ir = ast @ {
-                :Binary(:<=, :Int(a), :Int(b)) => [:LtEq, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :<=, [:Int, a], [:Int, b]] => [:LtEq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -328,7 +328,7 @@ mod phase1_comparisons {
             r#"
             let (ast = ast::parse("5 >= 3"))
             let (ir = ast @ {
-                :Binary(:>=, :Int(a), :Int(b)) => [:GtEq, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :>=, [:Int, a], [:Int, b]] => [:GtEq, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -349,7 +349,7 @@ mod phase1_if_then_else {
             r#"
             let (ast = ast::parse("if true then 1 else 2"))
             let (ir = ast @ {
-                :If(:Bool(c), :Int(t), :Int(e)) => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
+                [:If, [:Bool, c], [:Int, t], [:Int, e]] => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -366,7 +366,7 @@ mod phase1_if_then_else {
             r#"
             let (ast = ast::parse("if false then 1 else 2"))
             let (ir = ast @ {
-                :If(:Bool(c), :Int(t), :Int(e)) => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
+                [:If, [:Bool, c], [:Int, t], [:Int, e]] => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -537,7 +537,7 @@ mod full_pipeline {
             r#"
             let (ast = ast::parse("1 + 2"))
             let (ir = ast @ {
-                :Binary(:+, :Int(a), :Int(b)) => [:Add, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :+, [:Int, a], [:Int, b]] => [:Add, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -555,7 +555,7 @@ mod full_pipeline {
             r#"
             let (ast = ast::parse("if true then 42 else 0"))
             let (ir = ast @ {
-                :If(:Bool(c), :Int(t), :Int(e)) => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
+                [:If, [:Bool, c], [:Int, t], [:Int, e]] => [:If, [:LoadBool, c], [:LoadInt, t], [:LoadInt, e]]
             })
             code::eval(ir::compile(ir))
         "#,
@@ -1073,12 +1073,11 @@ mod phase5_pattern_matching {
         assert_eq!(result, Value::Int(43));
     }
 
-    /// Test pattern matching on tagged values.
+    /// Test pattern matching on list-shaped tagged values.
     #[test]
     fn match_tagged_value() {
         let mut vm = Vm::new();
-        // Match a tagged value with constructor pattern
-        let result = eval(&mut vm, r#"[:Int, 5] @ { :Int(n) => n * 2 }"#).unwrap();
+        let result = eval(&mut vm, r#"[:Int, 5] @ { [:Int, n] => n * 2 }"#).unwrap();
         assert_eq!(result, Value::Int(10));
     }
 
@@ -1090,8 +1089,8 @@ mod phase5_pattern_matching {
         let result = eval(
             &mut vm,
             r#"42 @ {
-                :String(s) => "string";
-                :Int(n) => "int"
+                [:String, s] => "string";
+                [:Int, n] => "int"
             }"#,
         );
         // This may fail if tagged value matching works differently
@@ -1127,7 +1126,7 @@ mod phase5_pattern_matching {
             &mut vm,
             r#"
             let (ast = ast::parse("5"))
-            let (ir = ast @ { :Int(n) => [:LoadInt, n] })
+            let (ir = ast @ { [:Int, n] => [:LoadInt, n] })
             code::eval(ir::compile(ir))
         "#,
         )
@@ -1145,7 +1144,7 @@ mod phase5_pattern_matching {
             r#"
             let (ast = ast::parse("1 + 2"))
             let (ir = ast @ {
-                :Binary(:+, :Int(a), :Int(b)) => [:Add, [:LoadInt, a], [:LoadInt, b]]
+                [:Binary, :+, [:Int, a], [:Int, b]] => [:Add, [:LoadInt, a], [:LoadInt, b]]
             })
             code::eval(ir::compile(ir))
         "#,
