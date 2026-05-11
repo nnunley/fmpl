@@ -58,7 +58,6 @@ let null_opt = grammar null_opt {
           | [:Bind, trans:x, any:name, any:is_choice] => [:Bind, x, name, is_choice]
           | [:Guard, trans:x, any:expr] => [:Guard, x, expr]
           | [:Action, trans:x, any:expr] => [:Action, x, expr]
-          | [:TagMatch, any:tag, trans*:children] => prepend(:TagMatch, prepend(tag, children))
           | [:ListMatch, trans*:patterns, trans:rest] => prepend(:ListMatch, patterns.push(rest))
           | [:MapMatch, trans_entry*:entries] => prepend(:MapMatch, entries)
           | [:Apply, trans:x] => [:Apply, x]
@@ -91,7 +90,6 @@ let associative_opt = grammar associative_opt {
           | [:Bind, trans:x, any:name, any:is_choice] => [:Bind, x, name, is_choice]
           | [:Guard, trans:x, any:expr] => [:Guard, x, expr]
           | [:Action, trans:x, any:expr] => [:Action, x, expr]
-          | [:TagMatch, any:tag, trans*:children] => prepend(:TagMatch, prepend(tag, children))
           | [:Apply, trans:x] => [:Apply, x]
           | _:x => x
 
@@ -126,7 +124,6 @@ let empty_elim_opt = grammar empty_elim_opt {
           | [:Bind, trans:x, any:name, any:is_choice] => [:Bind, x, name, is_choice]
           | [:Guard, trans:x, any:expr] => [:Guard, x, expr]
           | [:Action, trans:x, any:expr] => [:Action, x, expr]
-          | [:TagMatch, any:tag, trans*:children] => prepend(:TagMatch, prepend(tag, children))
           | [:Apply, trans:x] => [:Apply, x]
           | _:x => x
 
@@ -174,7 +171,6 @@ let jump_table_opt = grammar jump_table_opt {
           | [:Bind, trans:x, any:name, any:is_choice] => [:Bind, x, name, is_choice]
           | [:Guard, trans:x, any:expr] => [:Guard, x, expr]
           | [:Action, trans:x, any:expr] => [:Action, x, expr]
-          | [:TagMatch, any:tag, trans*:children] => prepend(:TagMatch, prepend(tag, children))
           | [:Apply, trans:x] => [:Apply, x]
           | _:x => x
 
