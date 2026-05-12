@@ -2151,6 +2151,7 @@
 **Kind:** invariant
 **Proof seam:** unit
 **Owning stories:** STORY-0010 (EPIC-002), STORY-0095 (EPIC-032)
+**Action type:** `parse_rejection`
 
 **Preconditions:**
 - The Rust FMPL parser (`parser.rs`) is the entry point under test
@@ -2169,6 +2170,19 @@
 - The error carries a source location (line/column) pointing at the offending `(` token following the tag symbol
 - No `Expr::Tagged` AST node is produced (the variant is deleted; the only outcome is the structured error)
 
+**Cases:**
+- source: `:Foo(1)`
+- source: `:Bar(1, 2, 3)`
+- source: `let (x = :Pair(1, 2)) x`
+- action: `parse_success`
+  source: `:Foo`
+- action: `parse_success`
+  source: `[:Foo, 1, 2]`
+- source: `:Foo(1)`
+  expect_error_contains:
+    - `[:`
+    - `instead`
+
 **Automation status:** implemented (ITER-0004d.1 T19)
 **Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0104`
 
@@ -2185,6 +2199,7 @@
 **Kind:** invariant
 **Proof seam:** unit
 **Owning stories:** STORY-0010 (EPIC-002), STORY-0095 (EPIC-032)
+**Action type:** `parse_rejection`
 
 **Preconditions:**
 - The Rust pattern parser (`parser.rs::parse_pattern`) is under test
@@ -2203,6 +2218,16 @@
 - The error carries a source location pointing at the `(` token following the tag symbol in pattern position
 - No `ast::Pattern::Constructor`, `pattern::Pattern::Tagged`, or `pattern::Pattern::TagMatch` value is produced (those variants are deleted)
 
+**Cases:**
+- source: `match x { :Pair(a, b) => 1 }`
+- source: `let (:Pair(a, b) = pair_value) a + b`
+- action: `parse_success`
+  source: `match x { [:Pair, a, b] => 1 }`
+- source: `match x { :Foo(a) => 1 }`
+  expect_error_contains:
+    - `[:`
+    - `instead`
+
 **Automation status:** implemented (ITER-0004d.1 T19)
 **Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0105`
 
@@ -2219,6 +2244,7 @@
 **Kind:** invariant
 **Proof seam:** unit
 **Owning stories:** STORY-0010 (EPIC-002), STORY-0095 (EPIC-032)
+**Action type:** `expect_absent`
 
 **Preconditions:**
 - A run of `cargo test -p fmpl-core` is available
@@ -2244,6 +2270,38 @@ For all seven greps, the count is **zero** outside the strictly-allowed sites:
 - All seven greps produce the expected count (six at zero, one at ≥1)
 - A diagnostic-style report names each grep and its count, so a regression points directly at the violating file:line
 - Running this scenario before-and-after ITER-0004d.1 shows a strict drop in counts 1-6 and a strict rise in count 7
+
+**Cases:**
+- needle: `Value::Tagged`
+  scope: `fmpl-core/src/`
+- needle: `Expr::Tagged`
+  scope: `fmpl-core/src/`
+- needle: `Pattern::Constructor`
+  scope: `fmpl-core/src/`
+- needle: `Pattern::Tagged`
+  scope: `fmpl-core/src/`
+- needle: `Pattern::TagMatch`
+  scope: `fmpl-core/src/`
+- needle: `Instruction::MakeListNode`
+  scope: `fmpl-core/src/compiler.rs`
+- action: `expect_present`
+  needle: `ExtractListChild`
+  scope: `fmpl-core/src/compiler.rs`
+  min_count: 1
+- action: `expect_present`
+  needle: `LegacyTagCtor`
+  scope: `lib/core/fmpl_parser.fmpl`
+- action: `expect_present`
+  needle: `LegacyTagCtor`
+  scope: `fmpl-core/src/builtins/ir_to_rust.rs`
+- action: `expect_present`
+  needle: `PatternLegacyTagCtor`
+  scope: `lib/core/fmpl_parser.fmpl`
+- action: `expect_present`
+  needle: `PatternLegacyTagCtor`
+  scope: `fmpl-core/src/builtins/ir_to_rust.rs`
+- needle: `Type::Tagged`
+  scope: `fmpl-core/src/`
 
 **Automation status:** implemented (ITER-0004d.1 T19)
 **Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0106`

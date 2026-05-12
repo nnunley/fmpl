@@ -3,7 +3,7 @@
 **Summary:** Compiler Cutover
 **Stories:** STORY-0005, STORY-0006, STORY-0007, STORY-0008, STORY-0009, STORY-0010, STORY-0011, STORY-0012
 **Primary sources:** `docs/plans/2026-03-03-self-hosting-bootstrap-design.md`, `docs/plans/2026-03-03-self-hosting-bootstrap-implementation.md`
-**Status:** 3/8 done; STORY-0010 Phase A (AC-3..AC-7 + AC-13) shipped in ITER-0004c, Phase B pending in ITER-0004d
+**Status:** 4/8 done; STORY-0010 fully closed across ITER-0004b/c/d.{1,2,2a,3,3a}/h (all 15 ACs + orphan `Type::Tagged` cleanup). STORY-0005, STORY-0006, STORY-0007, STORY-0008, STORY-0009, STORY-0011, STORY-0012 still pending — these are unrelated to STORY-0010's "single canonical representation" goal.
 
 ## STORY-0005
 

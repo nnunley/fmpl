@@ -26,8 +26,6 @@ pub enum Type {
     Fun(Vec<Type>, Box<Type>),
     /// Union of types.
     Union(Vec<Type>),
-    /// Tagged constructor with name and child types.
-    Tagged(SmolStr, Vec<Type>),
     /// Fresh type variable for inference.
     Var(usize),
 }
@@ -49,12 +47,6 @@ impl Type {
             (_, Type::Union(members)) => members.iter().any(|m| self.is_subtype(m)),
             // A Union is subtype of T if all members are subtypes of T
             (Type::Union(members), _) => members.iter().all(|m| m.is_subtype(other)),
-            // Tagged: same name, covariant children
-            (Type::Tagged(n1, c1), Type::Tagged(n2, c2)) => {
-                n1 == n2
-                    && c1.len() == c2.len()
-                    && c1.iter().zip(c2.iter()).all(|(a, b)| a.is_subtype(b))
-            }
             // Function: contravariant args, covariant return
             (Type::Fun(args1, ret1), Type::Fun(args2, ret2)) => {
                 args1.len() == args2.len()

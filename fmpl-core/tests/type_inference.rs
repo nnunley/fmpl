@@ -56,15 +56,6 @@ fn union_subtyping() {
 }
 
 #[test]
-fn tagged_subtyping() {
-    let ok_int = Type::Tagged(SmolStr::new("ok"), vec![Type::Int]);
-    let ok_any = Type::Tagged(SmolStr::new("ok"), vec![Type::Any]);
-    let err_int = Type::Tagged(SmolStr::new("err"), vec![Type::Int]);
-    assert!(ok_int.is_subtype(&ok_any));
-    assert!(!ok_int.is_subtype(&err_int));
-}
-
-#[test]
 fn fun_subtyping() {
     // Covariant return, contravariant args
     let f1 = Type::Fun(vec![Type::Any], Box::new(Type::Int));

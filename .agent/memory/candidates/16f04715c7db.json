@@ -1,7 +1,7 @@
 {
-  "id": "0b35fb07d757",
-  "key": "pattern_successfully_competitive_description_0b35fb",
-  "name": "pattern_successfully_competitive_description_0b35fb",
+  "id": "16f04715c7db",
+  "key": "pattern_successfully_competitive_description_16f047",
+  "name": "pattern_successfully_competitive_description_16f047",
   "claim": "Tool Agent completed successfully",
   "conditions": [
     "agent",
@@ -16,7 +16,6 @@
     "finds",
     "greatest",
     "issues",
-    "iter-0004d",
     "now",
     "nscoring",
     "number",
@@ -42,25 +41,33 @@
     "2026-05-12T20:02:25.972171+00:00",
     "2026-05-12T20:44:47.470736+00:00",
     "2026-05-12T20:45:20.963184+00:00",
-    "2026-05-12T21:21:41.280038+00:00"
+    "2026-05-12T21:21:41.280038+00:00",
+    "2026-05-12T22:06:33.505651+00:00",
+    "2026-05-12T22:07:00.140658+00:00",
+    "2026-05-12T22:21:32.134983+00:00"
   ],
-  "cluster_size": 7,
+  "cluster_size": 10,
   "canonical_salience": 13.5,
-  "staged_at": "2026-05-12T20:40:33.480470+00:00",
+  "staged_at": "2026-05-12T22:12:13.680631+00:00",
   "status": "staged",
   "decisions": [
     {
-      "ts": "2026-05-12T20:40:33.480470+00:00",
+      "ts": "2026-05-12T22:12:13.680631+00:00",
       "action": "staged",
       "reviewer": "auto_dream"
     },
     {
-      "ts": "2026-05-12T20:57:40.970564+00:00",
+      "ts": "2026-05-12T22:25:56.802219+00:00",
       "action": "staged",
       "reviewer": "auto_dream"
     },
     {
-      "ts": "2026-05-12T21:43:09.209516+00:00",
+      "ts": "2026-05-12T22:27:57.209963+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-12T22:35:44.136906+00:00",
       "action": "staged",
       "reviewer": "auto_dream"
     }

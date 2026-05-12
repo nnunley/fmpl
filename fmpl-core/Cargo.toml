@@ -30,9 +30,14 @@ thiserror = { workspace = true }
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
+fmpl-scenario-runner = { path = "../fmpl-scenario-runner" }
+inventory = "0.3"
 pretty_assertions = "1.4"
 serde_json = "1.0"
 syn = { version = "2", features = ["full", "extra-traits", "visit"] }
 tokio = { version = "1", features = ["full", "test-util"] }
 wiremock = "0.6"
 tempfile = "3"
+
+[build-dependencies]
+fmpl-scenario-runner = { path = "../fmpl-scenario-runner" }

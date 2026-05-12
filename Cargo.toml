@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "fmpl-core",
+  "fmpl-scenario-runner",
   "fmpl-cli",
   "fmpl-web",
   "fmpl-tui",

@@ -792,9 +792,9 @@ T1 reproduced and identified the root cause: `is_inline_pattern_block` heuristic
 
 **Rationale:** User feedback from 2026-05-12 (ITER-0004d.1 T19 review): the per-scenario Rust test pattern (e.g., `scenario_0104_rejects_single_arg_value_constructor`) is stylish but makes the test file harder to read at a glance — each test mostly restates structure already in the scenario card. A cucumber/FitNesse-SLIM-style data-driven runner where the scenario card IS the test spec, and the Rust side is a thin step-definition driver, would (a) make scenario contracts directly executable, (b) collapse boilerplate, and (c) make "add a new scenario" a primarily card-authoring activity.
 
-**Status:** pending
+**Status:** done 2026-05-12 (PAR-revised scope: Rust runner only; FMPL-side runner deferred to ITER-0004d.5). T1 scaffolded the `fmpl-scenario-runner` workspace crate (deps: inventory 0.3). T2 implemented error.rs with Display impls for StepError/DispatchError/CorpusError (PAR-required for codegen `{}` format). T3 implemented the markdown corpus parser (689 lines, fixture-driven TDD, parses 87 cards from the real corpus). T4 implemented StepDef trait + inventory dispatch (4 integration tests for registration/dispatch/Unknown/Display). T5 extended fmpl-core/build.rs with codegen for `OUT_DIR/scenarios_generated.rs` (uses `env!("CARGO_MANIFEST_DIR")` baked at test-binary compile time per PAR finding; cargo::rerun-if-changed for the corpus markdown). T6 moved comment_strip helper to `tests/common/comment_strip.rs` (preserved verbatim; +15 unit tests added). T7 implemented 3 step-defs in `tests/steps/`: parse_rejection, parse_success, grep_invariant (handles both expect_absent and expect_present). T8 migrated SCENARIO-0104 (6 cases), SCENARIO-0105 (4 cases), SCENARIO-0106 (12 cases incl. NEW grep #9 for `Type::Tagged` from ITER-0004h audit) to the structured `**Action type:**` + `**Cases:**` card format. T9 created `tests/scenario_runner.rs` (3-line glue: mod common; mod steps; include!) and `tests/postlude_arm_contract.rs` (relocated `g3_postlude_arms_fire_on_poison_nodes` as a special-case test that doesn't fit the card format). T10 deleted `tests/structural_invariants.rs` entirely (all 19 evidence tests migrated; 15 comment_strip tests live in tests/common now). T11 updated behavior-corpus.md execution commands. T12 was subsumed by T9/T10 inline edits. Final sentinel sweep: 218 passed, 3 ignored across 10 fmpl-core suites + 27 passed across 5 fmpl-scenario-runner suites = **245 total tests passing**, 0 regressions. Clippy clean. **STORY-0106 grep #9 ratchet for `Type::Tagged` is now authored as a scenario card (not a Rust test), closing the ITER-0004h audit gap via the new data-driven infrastructure.**
 
-**Impacted scenarios:** No new scenarios; this is infrastructure. Existing scenarios `SCENARIO-0104`, `SCENARIO-0105`, `SCENARIO-0106` migrate from Rust-per-test to data-driven (their `Execution command` entries in `behavior-corpus.md` will change). Future scenarios benefit; existing free-form scenarios stay free-form unless explicitly migrated.
+**Impacted scenarios:** No new scenarios; this is infrastructure. SCENARIO-0104/0105/0106 migrated from Rust-per-test to data-driven (execution commands updated in behavior-corpus.md). Future scenarios benefit; existing free-form scenarios stay free-form unless explicitly migrated.
 
 **Depends on:** ITER-0004d.1 (the three example scenarios that prove the pattern). Does NOT depend on ITER-0004d.3 (gate flip); they can ship in either order.
 
@@ -823,7 +823,35 @@ T1 reproduced and identified the root cause: `is_inline_pattern_block` heuristic
 - Adding a new scenario card with existing step-defs requires zero Rust code changes.
 - `behavior-corpus.md` execution commands for migrated scenarios point at `scenario_runner` instead of `structural_invariants`.
 
-**Out of scope:** Migrating scenarios that have no step-def coverage today (e.g., SCENARIO-0001..0077 which are largely TBD). FMPL-grammar-based scenario parsing (a possible ITER-0005x successor — metacircular scenario evaluation is on-brand with DESIGN-001 but bigger scope than this iteration).
+**Out of scope (PAR-revised):**
+- Migrating scenarios that have no step-def coverage today (e.g., SCENARIO-0001..0077 which are largely TBD).
+- FMPL-grammar-based scenario parsing (a possible follow-on — metacircular scenario evaluation is on-brand with DESIGN-001).
+- **FMPL-side runner / bootstrap-durability surface (deferred to ITER-0004d.5).** PAR scope review's primary finding was that the originally-bundled FMPL-side runner (`lib/tests/scenarios/scenarios.fmpl`, `fmpl_emit.rs`, `scenario_runner_bootstrap.rs`) is a separate substantial deliverable. Rationale: `grep_invariant` cannot be implemented FMPL-side until `io::read_dir` lands, so v1 FMPL-side runner would ship as a partial stub. ITER-0004d.5 (added below) tracks the deferred work.
+
+**PAR-revised acceptance criteria** (full set in the design spec at `docs/superpowers/specs/2026-05-12-scenario-runner-design.md`): see the spec's Acceptance criteria section for the post-revision list. Key updates: ≥20 passing tests (was ≥17 — original spec undercounted), explicit grep #9 (`Type::Tagged` absent) requirement, `g3_postlude_arms_fire_on_poison_nodes` relocates to `fmpl-core/tests/postlude_arm_contract.rs` (special-case test that doesn't fit the scenario card format).
+
+**Authoritative design:** `docs/superpowers/specs/2026-05-12-scenario-runner-design.md` (PAR-revised 2026-05-12).
+
+### ITER-0004d.5 — FMPL-side Scenario Runner + Bootstrap Durability
+
+**Stories:** New story TBD — register under EPIC-002 once the iteration starts. Completes the bootstrap-durability surface that ITER-0004d.4 PAR-deferred.
+
+**Rationale:** ITER-0004d.4's PAR scope review deferred the FMPL-side runner (originally bundled into 0004d.4's spec at brainstorming time) because: (a) `grep_invariant` can't be implemented FMPL-side until `io::read_dir` exists, so v1 ships as a partial stub; (b) the Rust runner alone is a complete, well-bounded iteration. ITER-0004d.5 picks up the FMPL-side work once 0004d.4 lands.
+
+**Status:** pending (blocked on ITER-0004d.4 + on `io::read_dir` builtin landing).
+
+**Files in scope (per the design spec's deferred section):**
+- `fmpl-scenario-runner/src/fmpl_emit.rs` — compile `Vec<Card>` → list-shape FMPL value.
+- `fmpl-core/build.rs` — extend codegen to also emit `lib/tests/scenarios/scenarios.fmpl` (alongside the existing Rust output from 0004d.4).
+- `fmpl-core/tests/scenario_runner_bootstrap.rs` — FMPL-surface test target that drives the bootstrap-rebuild and re-executes the corpus against the regenerated parser.
+- `lib/tests/scenarios/scenarios.fmpl` — compiled corpus artifact (git-tracked).
+- `lib/tests/scenarios/dispatch.fmpl` — FMPL-side dispatcher (initial coverage: parse_rejection + parse_success; grep_invariant deferred until `io::read_dir` lands or coverage stays Rust-only).
+
+**Depends on:** ITER-0004d.4 (Rust runner + corpus parser). `io::read_dir` builtin (status: not currently scoped; may need its own precursor iteration).
+
+**Look-ahead check:** Completes the DESIGN-001 "scenarios as durable artifacts" claim from the brainstorming spec. Architecturally compatible with ITER-0005 (Fjall persistence) — `scenarios.fmpl` is a regular FMPL value.
+
+**Out of scope:** Self-compile cycle durability (ITER-0006 — requires that iteration to land first). FMPL-grammar-based markdown parsing (a separate follow-on — the runner's markdown parser stays Rust in v1).
 
 ### ITER-0004e — Prelude / Parser-Helper Split
 
@@ -951,9 +979,9 @@ T1 reproduced and identified the root cause: `is_inline_pattern_block` heuristic
 
 **Stories:** No new STORY-0010 ACs — orphan cleanup carve-out scheduled 2026-05-10 from ITER-0004d PAR round 1 findings. PAR reviewer B observed that after AC-9 deletes the parser productions producing `Expr::Tagged`, no parser path constructs `Type::Tagged` values; the type-system variant becomes dead code that no scenario or AC explicitly references.
 
-**Rationale:** `fmpl-core/src/types.rs:30` defines `Type::Tagged(SmolStr, Vec<Type>)` as a constructor type. The variant survives ITER-0004d because the iteration's deletion graph is scoped to AST/Pattern/Bytecode, not the type system. Leaving `Type::Tagged` dead-but-defined is an orphan that violates the iteration's "one shape" coherence claim at the type-system layer. Two paths: (a) delete the variant entirely (if no surviving Rust code constructs it after ITER-0004d) or (b) repurpose it for typed-list-shape values (e.g., `Type::ListNode(SmolStr, Vec<Type>)`) so future static analysis can talk about constructor shapes by name. Decision made at iteration start based on the post-ITER-0004d codebase.
+**Rationale:** `fmpl-core/src/types.rs:30` defined `Type::Tagged(SmolStr, Vec<Type>)` as a constructor type. The variant survived ITER-0004d because the iteration's deletion graph was scoped to AST/Pattern/Bytecode, not the type system. Leaving `Type::Tagged` dead-but-defined was an orphan that violated the iteration's "one shape" coherence claim at the type-system layer.
 
-**Status:** pending
+**Status:** done 2026-05-12. Verified zero production consumers (no FMPL pipeline path constructs `Type::Tagged`); only existing references were the variant definition + `is_subtype` arm in `types.rs` and one variant-specific unit test `tagged_subtyping` in `type_inference.rs`. Decision: delete (rename to `Type::ListNode` was YAGNI — zero current consumers, `Type::List(Box<Type>)` already covers homogeneous-list typing). Three surgical edits: variant definition deleted at types.rs:29-30; subtype-arm deleted at types.rs:52-57 (the surrounding `match` has a wildcard `_ => false` arm so exhaustivity is preserved); `tagged_subtyping` test deleted at type_inference.rs:58-65. Final sentinel sweep: 168 passed, 3 ignored across 9 suites (-1 vs baseline from the deleted variant-specific test; 0 regressions). Clippy clean. **STORY-0010 fully closed; ITER-0004 milestone complete.**
 **Depends on:** ITER-0004d (the AST/parser deletions must land first so the dead-code claim can be verified).
 **Look-ahead check:** Unblocks no critical path; could ship before or after ITER-0005. Recommended placement: after ITER-0004d but before ITER-0005, so the type-system surface that ITER-0005's persisted bytecode references is in its final shape.
 
@@ -974,6 +1002,50 @@ T1 reproduced and identified the root cause: `is_inline_pattern_block` heuristic
 - No new ignored or failing tests.
 
 **Out of scope:** Broader type-system refactor; this is a single-variant cleanup.
+
+### ITER-0004x — execution_tape parity gate (dual-VM comparison)
+
+**Stories:** New story TBD (sibling to STORY-0037 / EPIC-007's MLIR→execution_tape work; this iteration is the precursor that demonstrates execution_tape can run the FMPL Indexed RPN IR subset before any MLIR work begins).
+
+**Rationale:** 2026-05-12 user-prompted reordering during ITER-0004d.4 in-flight. The strategic question: should fmpl-core's runtime stay in-tree (the current `Vm` + `Instruction` enum) or outsource to the external `execution_tape` VM project at `~/development/execution/execution_tape/`? Long-term goal: "FMPL compiler self-hosts; FMPL VM is provided by a stable, externally-verified primitive" — analogous to how Rust's std isn't expected to self-host. Outsourcing the VM is on-brand with that goal, but the decision needs comparative evidence first. This iteration provides that evidence by promoting `fmpl-core/src/cross_compile.rs` (today: standalone "perf-comparison" module) into a first-class dual-VM parity gate.
+
+After this iteration, ITER-0005 (Image Persistence) has direct evidence for what to persist: in-tree `Instruction` bytecode (`#[serde(rename)]` shim approach) OR execution_tape bytecode (already has its own serialization format).
+
+**Status:** pending (sequenced after ITER-0004d.4; before ITER-0005).
+
+**Depends on:** ITER-0004d.4 (the scenario runner provides a clean home for the new SCENARIO-0109 parity card — authoring it as a Rust test would compound migration debt, same lesson as ITER-0004h's grep #9). Also depends on `fmpl-core/src/cross_compile.rs` being current — it is (covers LoadInt/Float/Bool/Null/String/Symbol, LoadVar, Bind, NameRef, arithmetic +-*/%, comparison ==!=<><=>=, Neg, Not, MakeList per inspection 2026-05-12).
+
+**Look-ahead check:** Provides the comparative data ITER-0005 needs to pick its persistence target. Does NOT commit to deleting the in-tree VM — that's a downstream decision based on the evidence this iteration surfaces.
+
+**Files in scope:**
+- `fmpl-core/src/cross_compile.rs` — promote rustdoc; document supported opcode subset; mark unsupported opcodes with explicit `// EXECUTION_TAPE_NOT_SUPPORTED(<future-iter>): ...` markers.
+- `fmpl-core/tests/execution_tape_parity.rs` (NEW) OR a new SCENARIO-0109 card consumed by the ITER-0004d.4 scenario runner (preferred — depends on which step-def types ITER-0004d.4 ships).
+- `behavior-scenarios.md` — SCENARIO-0109 card (action_type TBD; likely `dual_vm_parity` as a new step-def or reuse `parse_success` with a custom assertion hook).
+- `behavior-corpus.md` — SCENARIO-0109 entry.
+- `docs/superpowers/iterations/requirements/EPIC-007.md` — note ITER-0004x as a precursor to STORY-0037; doesn't change STORY-0037 itself.
+
+**Scope:**
+
+1. **Inventory cross_compile.rs coverage.** Already done at iteration kickoff: LoadInt/Float/Bool/Null/String/Symbol, LoadVar, Bind, NameRef, Add/Sub/Mul/Div/Mod, Eq/NotEq/Lt/Gt/LtEq/GtEq, Neg, Not, MakeList. NOT supported: tagged-list-node opcodes (MakeListNode, ExtractListChild, MatchListNode, MatchListNodeWithBindings, MatchTag), pattern-matching opcodes, parse-state instructions, control-flow opcodes beyond simple binary expressions.
+2. **Choose the test corpus.** Pick a representative subset of `ast_to_ir_parity` inputs (~20-30 cases) that exercise ONLY the cross_compile-supported opcodes. Probably: integer-literal, arithmetic-precedence, string-literal, let-binding-int, if-int-int parity scenarios.
+3. **Write the parity test.** For each input: compile via FMPL pipeline → `CompiledCode { instructions: Vec<Instruction>, ... }`. Run via TWO paths: (a) `Vm::new().run(&code)` returning `Value`; (b) `cross_compile_to_tape(&code)` → execution_tape program → run → compare to (a). Assert result equality.
+4. **Decide value-equality semantics.** execution_tape values are typed (`I64`, `F64`, `Bool`, `Str`, `Unit`); fmpl-core values are `Value::Int(i64)`, `Value::Float(f64)`, `Value::Bool`, `Value::String`, `Value::Null`. Map between them in the parity gate. Document the mapping.
+5. **Author SCENARIO-0109.** Card title: "execution_tape parity for the cross_compile-supported subset." Per the ITER-0004d.4 scenario runner's card format (assuming it's available — if not, defer step 5 to ITER-0004x.a). The card lists each input as a case under `**Cases:**`.
+6. **Update behavior-corpus.md** with the SCENARIO-0109 entry.
+7. **Document the gap surface.** In cross_compile.rs rustdoc, list the opcodes NOT supported and the iteration that would extend coverage (a hypothetical ITER-0004x.1 or a fold into ITER-0005's persistence work).
+
+**Verification gates:**
+- `cargo test -p fmpl-core --test execution_tape_parity` (or `--test scenario_runner scenario_0109`) passes; ≥20 dual-VM parity cases, all result-equal.
+- SCENARIO-0109 card present in behavior-scenarios.md with full expected observables.
+- behavior-corpus.md has the SCENARIO-0109 entry with a concrete cargo test command.
+- All other sentinels still green; no regressions in the in-tree VM path.
+- cross_compile.rs rustdoc lists the supported and unsupported opcode sets.
+
+**Out of scope:**
+- **Replacing the in-tree VM.** ITER-0004x is evidence-only. The "delete fmpl-core/src/vm.rs" decision happens downstream (probably as part of ITER-0005 or a dedicated ITER-0004y) based on what this iteration surfaces.
+- **Extending cross_compile.rs to cover tagged-list-node opcodes.** That's a separate iteration; this one uses what's there.
+- **MLIR / EPIC-007.** STORY-0037 (MLIR backend emits execution_tape) is a downstream initiative; this iteration is the empirical-evidence precursor.
+- **Performance benchmarking.** The current cross_compile.rs docstring claims "performance comparison" as the motivation but this iteration's parity gate is correctness-only. Perf measurement is a follow-up.
 
 ### ITER-0005 — Image Persistence (Consolidated)
 

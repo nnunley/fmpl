@@ -84,8 +84,9 @@
 | SCENARIO-0100 | Bytecode persists with content-addressed source reference | integration | iteration | TBD | STORY-0100 |
 | SCENARIO-0101 | Sourceless artifact gets synthesized constructor expression | integration | iteration | TBD | STORY-0100 |
 | SCENARIO-0102 | Loader recovers from incompatible payload via source recompilation | integration | iteration | TBD | STORY-0100 |
-| SCENARIO-0104 | Parser rejects `:Tag(args)` value-constructor syntax | unit | sentinel | `cargo test -p fmpl-core --test structural_invariants scenario_0104` | STORY-0010, STORY-0095 |
-| SCENARIO-0105 | Parser rejects `:Tag(p1, p2)` pattern-position syntax | unit | sentinel | `cargo test -p fmpl-core --test structural_invariants scenario_0105` | STORY-0010, STORY-0095 |
-| SCENARIO-0106 | Rust-side greppable invariant: deleted variants stay deleted | unit | sentinel | `cargo test -p fmpl-core --test structural_invariants scenario_0106` | STORY-0010, STORY-0095 |
-| SCENARIO-0107 | Bytecode opcode rename invariant (post-ITER-0004d.2) | unit | sentinel | `cargo test -p fmpl-core --test opcode_rename_evidence --test structural_invariants` | STORY-0010 |
+| SCENARIO-0104 | Parser rejects `:Tag(args)` value-constructor syntax | unit | sentinel | `cargo test -p fmpl-core --test scenario_runner scenario_0104` | STORY-0010, STORY-0095 |
+| SCENARIO-0105 | Parser rejects `:Tag(p1, p2)` pattern-position syntax | unit | sentinel | `cargo test -p fmpl-core --test scenario_runner scenario_0105` | STORY-0010, STORY-0095 |
+| SCENARIO-0106 | Rust-side greppable invariant: deleted variants stay deleted (12 cases incl. NEW grep #9 for Type::Tagged per ITER-0004d.4) | unit | sentinel | `cargo test -p fmpl-core --test scenario_runner scenario_0106` | STORY-0010, STORY-0095 |
+| SCENARIO-0107 | Bytecode opcode rename invariant (post-ITER-0004d.2) | unit | sentinel | `cargo test -p fmpl-core --test opcode_rename_evidence` | STORY-0010 |
 | SCENARIO-0108 | Canonical-pipeline parity with source-tree parser | integration | sentinel | `cargo test -p fmpl-core --test canonical_pipeline_parity` | STORY-0010 |
+| (G3) | Postlude arm contract for poison-AST-node legacy syntax rejection | unit | sentinel | `cargo test -p fmpl-core --test postlude_arm_contract` | STORY-0010 |

@@ -6,4 +6,5 @@
 
 #![allow(dead_code)]
 
+pub mod comment_strip;
 pub mod rust_string_scanner;

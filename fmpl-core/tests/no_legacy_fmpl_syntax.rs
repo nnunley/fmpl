@@ -53,18 +53,20 @@ const ALLOWLIST: &[(&str, &str)] = &[
 ];
 
 /// Files in `fmpl-core/tests/*.rs` that the gate must NOT scan: the gate
-/// itself, the unit-test file that intentionally contains `:Foo(1, 2)`
-/// style fixtures, and the SCENARIO-0104/0105/0106 evidence test file
-/// (ITER-0004d.1 T19) which constructs `:Tag(args)` strings as parser-input
-/// fixtures to prove the rejection contract.
+/// itself and tests that intentionally contain `:Tag(args)` strings as
+/// parser-input fixtures to prove the rejection contract.
 const TESTS_RS_EXCLUDES: &[&str] = &[
     "no_legacy_fmpl_syntax.rs",
     "diagnostics_fmpl_source_scan.rs",
-    "structural_invariants.rs",
     // SCENARIO-0108 evidence (ITER-0004d.3 T7a). Contains `:Tag(args)`
     // strings as parser-input fixtures to prove rejection parity between
     // the source-tree parser and the canonical generated parser.
     "canonical_pipeline_parity.rs",
+    // G3 postlude-arm contract (ITER-0004d.4 T9). Contains `:Foo(1)` and
+    // `:Pair(a, b)` strings as parser-input fixtures to prove the postlude
+    // `LegacyTagCtor` / `PatternLegacyTagCtor` arms fire when reached via
+    // `generated_parse`.
+    "postlude_arm_contract.rs",
 ];
 
 fn workspace_root() -> PathBuf {

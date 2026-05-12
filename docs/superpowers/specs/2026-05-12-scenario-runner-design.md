@@ -1,38 +1,39 @@
 # Scenario Runner — Design Spec (ITER-0004d.4)
 
-**Date:** 2026-05-12 (revised 2026-05-12 to add bootstrap-durability scope)
-**Owner:** ITER-0004d.4
+**Date:** 2026-05-12 (revised 2026-05-12 to add bootstrap-durability scope; revised again 2026-05-12 by PAR scope review to defer FMPL-side runner to ITER-0004d.5)
+**Owner:** ITER-0004d.4 (Rust-side runner only — FMPL-side bootstrap-durability surface deferred to ITER-0004d.5)
 **Status:** Design — pending writing-plans
 **Origin:** User feedback during ITER-0004d.1 T19 review on 2026-05-12. The per-scenario Rust test pattern in `fmpl-core/tests/structural_invariants.rs` is stylish but redundant against the scenario cards in `behavior-scenarios.md`. A cucumber / FitNesse-SLIM-style data-driven runner where the scenario card IS the source of truth would (a) make cards directly executable, (b) collapse per-test boilerplate, and (c) let future scenarios land as card-authoring tasks rather than test-writing tasks.
 
-**Revision 2026-05-12 (post-design-review):** the user added a durability requirement — scenario cards must survive the bootstrap process. Specifically: when fmpl-bootstrap regenerates the parser from `lib/core/fmpl_parser.fmpl`, the same scenario corpus must re-execute against the regenerated parser and produce the same results. This is concrete and testable today; it positions scenarios as durable artifacts that ride the metacircular pipeline (DESIGN-001), not just one-off Rust tests. The original Rust runner stays; a sibling artifact `lib/tests/scenarios/scenarios.fmpl` is compiled from the markdown and consumed by the bootstrap pipeline for post-regeneration verification.
+**Revision 2026-05-12 (post-design-review):** the user added a durability requirement — scenario cards must survive the bootstrap process. The original spec aimed to land both surfaces in v1.
+
+**Revision 2026-05-12 (PAR scope review):** both PAR reviewers independently flagged that the FMPL-side runner (Deliverable B: `lib/tests/scenarios/scenarios.fmpl`, `fmpl_emit.rs` compiler, `dispatch.fmpl` FMPL dispatcher, `scenario_runner_bootstrap.rs` test target) is a separate substantial deliverable that should split out of this iteration. Key reasoning: (a) `grep_invariant` cannot be implemented FMPL-side until `io::read_dir` exists, so a v1 FMPL-side runner ships as a partial stub with limited coverage — making the "bootstrap durability" claim overstated for v1; (b) the Rust runner alone (Deliverable A) is a complete, well-bounded iteration with concrete acceptance criteria. Decision: **ITER-0004d.4 ships Deliverable A only.** Deliverable B becomes a new ITER-0004d.5 iteration in the roadmap, gated on `io::read_dir` landing.
 
 ## Goal
 
-Make `docs/superpowers/iterations/behavior-scenarios.md` directly executable, with a corpus that survives parser regeneration.
+Make `docs/superpowers/iterations/behavior-scenarios.md` directly executable via a thin Rust runner.
 
-Two execution surfaces:
+Each scenario card carries enough structured data (action type, inputs, expectations) that a thin Rust driver dispatches each case to a step-definition and surfaces per-case pass/fail with line-span back-references into the markdown.
 
-1. **Rust-side runner** — for fast pre-bootstrap test execution. Each scenario card carries enough structured data (action type, inputs, expectations) that a thin Rust driver dispatches each case to a step-definition and surfaces per-case pass/fail with line-span back-references into the markdown.
-2. **FMPL-side runner** — for post-bootstrap durability verification. The same corpus, compiled to a list-shaped FMPL value at `lib/tests/scenarios/scenarios.fmpl`, is loaded by fmpl-bootstrap and re-executed against the regenerated parser. The two runners' results must agree case-for-case.
+The first three consumers — SCENARIO-0104, SCENARIO-0105, SCENARIO-0106 (all from ITER-0004d.1) — migrate from `fmpl-core/tests/structural_invariants.rs` into the runner. That file is deleted once the runner covers the same evidence at the Rust surface.
 
-The first three consumers — SCENARIO-0104, SCENARIO-0105, SCENARIO-0106 (all from ITER-0004d.1) — migrate from `fmpl-core/tests/structural_invariants.rs` into the runner. That file is deleted once the runner covers the same evidence on both surfaces.
+**Deferred to ITER-0004d.5:** the FMPL-side runner that compiles the corpus to `lib/tests/scenarios/scenarios.fmpl` and re-executes against the regenerated parser. Architecture preserves room for it (the corpus parser produces a `Vec<Card>` that an `fmpl_emit.rs` module can serialize); no architectural lock-in is introduced.
 
-## Durability target
+## Durability target (deferred to ITER-0004d.5)
 
-**Parser regeneration is the v1 durability target.** When `fmpl-bootstrap` rebuilds the parser from `lib/core/fmpl_parser.fmpl`, the scenario corpus runs against the regenerated parser and produces the same pass/fail outcomes as the source-tree (legacy) parser. A divergence means either (a) the regeneration introduced a behavior change or (b) one of the two runners has a bug; either way the gate catches it.
+Originally the v1 durability target was "parser regeneration": same pass/fail outcomes from the canonical generated parser vs the source-tree parser. This is now ITER-0004d.5's target. ITER-0004d.4 ships the Rust runner only; durability is verified via the existing SCENARIO-0108 (`canonical_pipeline_parity.rs`), which already proves the canonical pipeline is behaviorally equivalent for SCENARIO-0104/0105 inputs.
 
-This is the only durability guarantee shipped in this iteration. Two later targets are explicitly out of scope but the architecture preserves room for them:
+Two later targets remain out of scope:
 
 - **Self-compile cycle (ITER-0006).** The corpus validates that stage-N+1 of self-compile behaves identically to stage-N. Requires ITER-0006 to land first.
-- **Fjall snapshot persistence (ITER-0005).** The corpus survives image serialization and restore cycles. The compiled `scenarios.fmpl` is a regular FMPL value, so when ITER-0005 lands, the Fjall snapshot machinery handles it like any other value with no scenario-specific work.
+- **Fjall snapshot persistence (ITER-0005).** Architecturally compatible — when ITER-0005 lands, `scenarios.fmpl` (from ITER-0004d.5) is a regular FMPL value handled by the Fjall snapshot machinery without scenario-specific work.
 
 ## Non-goals
 
+- **FMPL-side runner and bootstrap-durability surface (deferred to ITER-0004d.5).** No `lib/tests/scenarios/scenarios.fmpl`, no `fmpl_emit.rs`, no `scenario_runner_bootstrap.rs` in v1. The architecture preserves room for these (Card/Case types serializable to FMPL value form is straightforward), but the v1 iteration does not ship them.
 - Migrating scenarios SCENARIO-0001..0077 (most have no step-def coverage today). Migration is opt-in.
-- **A full FMPL-grammar-based markdown parser.** The v1 compilation step (markdown → FMPL artifact) runs in Rust (via `fmpl-core/build.rs`). A later iteration can replace it with an FMPL-side parser; the architecture is staged for that.
 - Self-compile cycle durability (waits on ITER-0006).
-- Fjall-snapshot durability (waits on ITER-0005, but is expected to work without additional scenario-specific work because `scenarios.fmpl` is a regular FMPL value).
+- Fjall-snapshot durability (waits on ITER-0005).
 - A TUI / visual reporter. `cargo test` output is sufficient.
 - Parameterized fixture-style step-defs beyond what the three concrete consumers need.
 
@@ -42,26 +43,21 @@ This is the only durability guarantee shipped in this iteration. Two later targe
 
 ```
 fmpl-scenario-runner/                  ← new workspace crate (library)
-  Cargo.toml                           ← deps: inventory (1.x)
+  Cargo.toml                           ← deps: inventory (0.3.x — current stable)
   src/
     lib.rs                             ← re-exports public API
     corpus.rs                          ← markdown corpus parser
-    fmpl_emit.rs                       ← compile Vec<Card> → list-shaped FMPL value
-                                          (string form written to lib/tests/scenarios/)
     step_def.rs                        ← trait + inventory registry (Rust surface)
-    error.rs                           ← StepError
+    error.rs                           ← StepError, DispatchError (Display impl on both)
 
 fmpl-core/
   Cargo.toml                           ← [dev-dependencies] fmpl-scenario-runner
                                           [build-dependencies] fmpl-scenario-runner
-  build.rs                             ← extended with TWO codegen outputs:
-                                          (a) OUT_DIR/scenarios_generated.rs (Rust)
-                                          (b) lib/tests/scenarios/scenarios.fmpl (FMPL)
+  build.rs                             ← extended with codegen step writing
+                                          OUT_DIR/scenarios_generated.rs (Rust)
   tests/
-    scenario_runner.rs                 ← Rust-surface test target; include!s (a)
-    scenario_runner_bootstrap.rs       ← FMPL-surface test target; drives bootstrap
-                                          and runs the SAME corpus against the
-                                          regenerated parser (loads (b) via io::load)
+    scenario_runner.rs                 ← Rust-surface test target; include!s the
+                                          generated file; declares `mod steps;`
     steps/                             ← step-def impls (live with the test binary)
       mod.rs                           ← `pub mod parse_rejection; ...`
       parse_rejection.rs               ← struct ParseRejection; impl StepDef
@@ -71,18 +67,20 @@ fmpl-core/
     common/
       comment_strip.rs                 ← moved from structural_invariants.rs;
                                           shared //-line-comment strip helper
-    structural_invariants.rs           ← DELETED at iteration end
+    structural_invariants.rs           ← MOSTLY DELETED at iteration end (see
+                                          "Special-case migrations" below for
+                                          g3_postlude_arms_fire_on_poison_nodes
+                                          which gets its own home).
+    postlude_arm_contract.rs           ← NEW. Holds g3_postlude_arms_fire_on_poison_nodes
+                                          (a test that asserts IS_GENERATED_PARSER
+                                          and calls generated_parse — too special-case
+                                          to fit cleanly into the scenario card format).
 
-lib/tests/scenarios/                   ← NEW directory (sibling to lib/core/)
-  scenarios.fmpl                       ← compiled corpus artifact (git-tracked).
-                                          Read by fmpl-bootstrap for post-
-                                          regeneration verification. Format:
-                                          one list-shape value per card,
-                                          [:Scenario, id, action_type, cases, span]
-  dispatch.fmpl                        ← FMPL-side dispatcher (v1 stub: dispatches
-                                          parse_rejection, parse_success only;
-                                          grep_invariant stays Rust-only for now
-                                          since io::read_dir doesn't yet exist)
+DEFERRED to ITER-0004d.5:
+  fmpl-scenario-runner/src/fmpl_emit.rs     (compile Vec<Card> → list-shape FMPL value)
+  fmpl-core/tests/scenario_runner_bootstrap.rs  (drives bootstrap, re-runs corpus)
+  lib/tests/scenarios/scenarios.fmpl        (compiled corpus artifact)
+  lib/tests/scenarios/dispatch.fmpl         (FMPL-side dispatcher)
 ```
 
 ### Public API (`fmpl-scenario-runner`)
@@ -143,16 +141,46 @@ pub fn dispatch(card: &Card, case: &Case) -> Result<(), DispatchError>;
 // error.rs
 pub struct StepError { pub message: String }
 impl StepError { pub fn new(msg: impl Into<String>) -> Self }
+impl std::fmt::Display for StepError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
 
 pub enum DispatchError {
     Unknown(String),         // action_type not registered
     Step(StepError),
+}
+// PAR-revised: the codegen uses `{}` format on DispatchError in
+// generated #[test] panic messages. Display impl is REQUIRED.
+impl std::fmt::Display for DispatchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DispatchError::Unknown(action_type) => {
+                write!(f, "unknown action_type {action_type:?} — register a StepDef impl in tests/steps/")
+            }
+            DispatchError::Step(step_error) => write!(f, "{step_error}"),
+        }
+    }
 }
 
 pub enum CorpusError {
     Io(std::io::Error),
     Malformed { line: usize, message: String },
     DuplicateId { id: String, first_line: usize, dup_line: usize },
+}
+impl std::fmt::Display for CorpusError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CorpusError::Io(e) => write!(f, "io error: {e}"),
+            CorpusError::Malformed { line, message } => {
+                write!(f, "malformed card at line {line}: {message}")
+            }
+            CorpusError::DuplicateId { id, first_line, dup_line } => {
+                write!(f, "duplicate scenario id {id} at line {dup_line} (first defined at line {first_line})")
+            }
+        }
+    }
 }
 ```
 
@@ -241,16 +269,15 @@ fn generate_scenario_tests() -> std::io::Result<()> {
     let corpus_path = Path::new(&manifest)
         .parent().unwrap()
         .join("docs/superpowers/iterations/behavior-scenarios.md");
-    println!("cargo:rerun-if-changed={}", corpus_path.display());
+    // Rust 2024 edition syntax (matches the rest of fmpl-core/build.rs).
+    println!("cargo::rerun-if-changed={}", corpus_path.display());
 
     let cards = fmpl_scenario_runner::corpus::parse_corpus(&corpus_path)
         .map_err(|e| std::io::Error::other(format!("corpus: {e:?}")))?;
 
     let mut out = String::new();
     out.push_str("// AUTO-GENERATED by fmpl-core/build.rs — DO NOT EDIT\n\n");
-    out.push_str("use fmpl_scenario_runner::{Card, Case, dispatch};\n");
-    out.push_str("// SCENARIO_CORPUS is a parking lot — each #[test] re-parses\n");
-    out.push_str("// the corpus on first access via std::sync::OnceLock.\n\n");
+    out.push_str("use fmpl_scenario_runner::{Card, Case, dispatch};\n\n");
 
     for card in &cards {
         if card.action_type.is_none() {
@@ -283,13 +310,21 @@ fn {fn_name}() {{
     }
 
     // Helper that lazy-parses the corpus once per test binary.
+    //
+    // PAR-revised: use env!("CARGO_MANIFEST_DIR") embedded at the test
+    // binary's compile time, NOT a runtime relative path. Matches the
+    // pattern used in structural_invariants.rs:35-37. A runtime relative
+    // path like "../docs/..." would fail if the test binary is invoked
+    // with a non-standard CWD (e.g., directly from target/debug/deps/).
     out.push_str(r#"
 fn corpus() -> &'static [Card] {
     static CORPUS: std::sync::OnceLock<Vec<Card>> = std::sync::OnceLock::new();
     CORPUS.get_or_init(|| {
-        fmpl_scenario_runner::corpus::parse_corpus(
-            std::path::Path::new("../docs/superpowers/iterations/behavior-scenarios.md")
-        ).expect("corpus parse")
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("CARGO_MANIFEST_DIR has a parent")
+            .join("docs/superpowers/iterations/behavior-scenarios.md");
+        fmpl_scenario_runner::corpus::parse_corpus(&path).expect("corpus parse")
     })
 }
 "#);
@@ -299,6 +334,11 @@ fn corpus() -> &'static [Card] {
     Ok(())
 }
 ```
+
+**PAR-revised codegen notes:**
+- The codegen emits `env!("CARGO_MANIFEST_DIR")` as a literal string into the generated file. `env!` resolves at the TEST BINARY's compile time (not at build.rs's compile time), giving an absolute path embedded in the test binary. This is the project-standard pattern (see `structural_invariants.rs:35-37`).
+- `cargo::rerun-if-changed` uses the Rust 2024 edition double-colon syntax matching the existing build.rs (`fmpl-core/build.rs` consistently uses `cargo::` per PAR finding S3).
+- The generated `#[test]` uses `{}` format on `DispatchError`, which requires a `Display` impl. See the next section.
 
 ## Data flow
 
@@ -517,35 +557,76 @@ Informational; does not affect test pass/fail.
 
 ### Sentinel verification
 
-- After migration, `cargo test -p fmpl-core --test scenario_runner` reports the same passing-test count for SCENARIO-0104/0105/0106 evidence as `structural_invariants.rs` does today (17 tests).
-- All other sentinels (ast_to_ir_parity, scenario_0103, tavern_demo, no_legacy_fmpl_syntax) still green.
+- After migration, `cargo test -p fmpl-core --test scenario_runner` covers ALL of SCENARIO-0104/0105/0106's existing evidence (PAR-revised: ≥19 cases, not 17 — `structural_invariants.rs` has grown since the original spec was written).
 
-## Order of work (for the implementation plan)
+### Test count reconciliation (PAR-revised)
 
-1. Scaffold `fmpl-scenario-runner` crate: Cargo.toml, lib.rs stub, workspace member registration.
+The original spec claimed "17 tests" — this was wrong. Current `structural_invariants.rs` (per `cargo test -p fmpl-core --test structural_invariants` = 19 passed) breakdown:
+- SCENARIO-0104: 6 tests (single-arg, multi-arg, let-rhs, bare-symbol control, list-form control, hint-quality)
+- SCENARIO-0105: 4 tests (match-arm, let-destructure, list-pattern control, hint-quality)
+- SCENARIO-0106: 8 greps (#1-#5: deleted variants absent; #6: Instruction::MakeListNode absent from compiler.rs; #7: ExtractListChild present in compiler.rs; #8: LegacyTagCtor name-coupling)
+- `g3_postlude_arms_fire_on_poison_nodes`: 1 test (G3 from ITER-0004d.3a; SPECIAL — see migration plan below)
+
+Total: 19 tests in the file. After ITER-0004d.4, the scenario runner must cover ALL of them OR the special case must be explicitly relocated (g3-test, see below).
+
+### NEW in this iteration (PAR-revised): SCENARIO-0106 grep #9
+
+ITER-0004h audit flagged: `Type::Tagged` was deleted with no structural-invariant ratchet. The user explicitly asked for this ratchet to be authored as a scenario card via the new runner, not as a 9th grep test in `structural_invariants.rs`. So ITER-0004d.4 ADDS a new case to SCENARIO-0106:
+
+```
+- action: `expect_absent`
+  needle: `Type::Tagged`
+  scope: `fmpl-core/src/`
+```
+
+Acceptance criterion: SCENARIO-0106 grep #9 (`Type::Tagged` absent from `fmpl-core/src/`) is authored as the 9th case in the SCENARIO-0106 card and runs successfully via the runner.
+
+### Special-case migration: `g3_postlude_arms_fire_on_poison_nodes`
+
+This test (added by ITER-0004d.3a as the falsifiability-under-fallback safety net) does NOT fit the scenario card format cleanly because:
+- It asserts `fmpl_core::parser::IS_GENERATED_PARSER` (a precondition check, not a scenario case)
+- It calls `generated_parse` directly (would need a `generated_parse_rejection` step-def vs the existing `parse_rejection` which uses `Parser::with_source`)
+- It has `#[allow(clippy::assertions_on_constants)]`
+
+**Decision:** the test moves to a new file `fmpl-core/tests/postlude_arm_contract.rs` rather than being deleted with the rest of `structural_invariants.rs`. The file holds just this one test plus a brief doc comment explaining why it's separate. A future iteration can add a `generated_parse_rejection` step-def and migrate this test if desired; v1 keeps it as a standalone test.
+
+## Order of work (PAR-revised)
+
+1. Scaffold `fmpl-scenario-runner` crate: Cargo.toml (deps: `inventory = "0.3"`), lib.rs stub, workspace member registration.
 2. Implement `corpus.rs` with fixture-driven TDD.
 3. Implement `step_def.rs` (trait + inventory plumbing) with synthetic step-def tests.
-4. Implement `error.rs` (StepError, DispatchError, CorpusError).
-5. Add the codegen path to `fmpl-core/build.rs`.
+4. Implement `error.rs` (StepError, DispatchError, CorpusError — ALL three with `Display` impls per PAR finding #6).
+5. Add the codegen path to `fmpl-core/build.rs`. Use `env!("CARGO_MANIFEST_DIR")` (compile-time absolute path) for the `corpus()` helper, NOT a runtime relative path. Use `cargo::rerun-if-changed` (double-colon, Rust 2024) consistent with existing build.rs.
 6. Move comment-strip helper from `structural_invariants.rs` to `tests/common/comment_strip.rs`.
-7. Implement the three step-defs in `tests/steps/`.
-8. Migrate SCENARIO-0104, 0105, 0106 cards to the new structured format.
-9. Run `scenario_runner`; verify 17 evidence tests pass.
-10. Delete `structural_invariants.rs`.
-11. Update `behavior-corpus.md` execution commands.
-12. Update `no_legacy_fmpl_syntax.rs` exclusions.
-13. Update progress.md and iteration-log.md.
+7. Implement the three step-defs in `tests/steps/`: parse_rejection, parse_success, grep_invariant (handles both `expect_absent` and `expect_present` action types).
+8. Migrate SCENARIO-0104, 0105, 0106 cards to the new structured format. **For SCENARIO-0106 specifically: 8 existing cases + 1 new case for grep #9 (`Type::Tagged` absent from `fmpl-core/src/`). Total 9 cases for that card.**
+9. Relocate `g3_postlude_arms_fire_on_poison_nodes` to `fmpl-core/tests/postlude_arm_contract.rs`.
+10. Run `scenario_runner`; verify ≥20 evidence tests pass (19 existing + 1 new grep #9, plus the relocated g3-test in its own binary).
+11. Delete the migrated body of `structural_invariants.rs` (but NOT the g3 test, which moved in step 9).
+12. Update `behavior-corpus.md` execution commands: SCENARIO-0104/0105/0106 point at `scenario_runner`; SCENARIO-0106 includes a note about grep #9 being added in this iteration; the postlude-arm test gets its own corpus entry if not already covered.
+13. Update `no_legacy_fmpl_syntax.rs` exclusions: add `scenario_runner.rs` and `postlude_arm_contract.rs` (the latter intentionally contains `":Foo(1)"` parser fixtures).
+14. Update progress.md and iteration-log.md.
 
-## Acceptance criteria
+## Acceptance criteria (PAR-revised)
 
-- `cargo test -p fmpl-core --test scenario_runner` reports ≥17 passing tests, 0 failed (same evidence count as today's `structural_invariants.rs`).
-- `cargo test -p fmpl-core --test scenario_runner scenario_0104` filters correctly.
-- A failing case prints `behavior-scenarios.md:NN-MM (SCENARIO-NNNN case M): <msg>`.
-- `structural_invariants.rs` is deleted; `fmpl-core/tests/common/comment_strip.rs` retains the comment-strip helper.
-- `fmpl-scenario-runner` crate has its own passing tests.
+**Functional:**
+- `cargo test -p fmpl-core --test scenario_runner` reports ≥20 passing tests, 0 failed: 6 (SCENARIO-0104) + 4 (SCENARIO-0105) + 9 (SCENARIO-0106 including new grep #9) + 1 (corpus_health_check skipped-summary informational test) = 20+.
+- `cargo test -p fmpl-core --test scenario_runner scenario_0104` filters correctly to the 6 SCENARIO-0104 cases.
+- `cargo test -p fmpl-core --test postlude_arm_contract` reports 1 passing test (the relocated g3-test).
+- A failing case prints `behavior-scenarios.md:NN-MM (SCENARIO-NNNN case M): <msg>` with a clear message.
+- `structural_invariants.rs` is deleted (the g3-test moved to its own file).
+- `fmpl-core/tests/common/comment_strip.rs` retains the comment-strip helper.
+- `fmpl-scenario-runner` crate has its own passing tests (corpus parser tests + step-def dispatch tests).
+
+**SCENARIO-0106 grep #9 specific:**
+- The SCENARIO-0106 card in `behavior-scenarios.md` includes a 9th case: `action: expect_absent, needle: Type::Tagged, scope: fmpl-core/src/`.
+- That case runs and passes via the scenario runner (which proves the ITER-0004h `Type::Tagged` deletion is ratcheted).
+
+**Build hygiene:**
 - Full workspace `cargo test` is green.
-- `cargo test -p fmpl-core --test no_legacy_fmpl_syntax` still passes (baseline updated for the file shuffle).
-- All other sentinels untouched.
+- `cargo test -p fmpl-core --test no_legacy_fmpl_syntax` still passes (excludes updated for `scenario_runner.rs` and `postlude_arm_contract.rs`).
+- `cargo clippy --all-targets --quiet -- -D warnings` clean (pre-commit hook requirement).
+- All other sentinels untouched: ast_to_ir_parity, scenario_0103, tavern_demo, no_legacy_fmpl_syntax, canonical_pipeline_parity, opcode_rename_evidence, type_inference, diagnostics_fmpl_source_scan.
 
 ## Risks and mitigations
 

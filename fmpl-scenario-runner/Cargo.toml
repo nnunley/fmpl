@@ -1,0 +1,10 @@
+[package]
+name = "fmpl-scenario-runner"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Data-driven scenario runner for FMPL behavior corpus tests"
+
+[dependencies]
+inventory = "0.3"
