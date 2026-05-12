@@ -2183,8 +2183,8 @@
     - `[:`
     - `instead`
 
-**Automation status:** implemented (ITER-0004d.1 T19)
-**Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0104`
+**Automation status:** implemented (ITER-0004d.1 T19; migrated to data-driven scenario runner in ITER-0004d.4)
+**Execution command:** `cargo test -p fmpl-core --test scenario_runner scenario_0104`
 
 **Sources:**
 - `docs/design-principles.md` (DESIGN-001 metacircular bootstrap, DESIGN-002 single canonical form)
@@ -2228,8 +2228,8 @@
     - `[:`
     - `instead`
 
-**Automation status:** implemented (ITER-0004d.1 T19)
-**Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0105`
+**Automation status:** implemented (ITER-0004d.1 T19; migrated to data-driven scenario runner in ITER-0004d.4)
+**Execution command:** `cargo test -p fmpl-core --test scenario_runner scenario_0105`
 
 **Sources:**
 - `docs/design-principles.md` (DESIGN-001 metacircular bootstrap, DESIGN-002 single canonical form)
@@ -2253,10 +2253,10 @@
 - DESIGN-002 requires the deleted variants (`Value::Tagged`, `Expr::Tagged`, `ast::Pattern::Constructor`, `pattern::Pattern::Tagged`, `pattern::Pattern::TagMatch`) remain deleted
 
 **Action:**
-- Run seven structural greps over the `fmpl-core/src/` tree (excluding `tests/`, `target/`, and historical scans). For each grep, count the number of matches.
+- Run structural greps over the `fmpl-core/src/` tree (excluding `tests/`, `target/`, and historical scans). For each grep, count the number of matches. **Originally 7 greps in ITER-0004d.1 T19; expanded to 8 (LegacyTagCtor coupling) in ITER-0004d.3a; migrated to 12 cases in ITER-0004d.4 T8 (split grep #8 into 4 separate `expect_present` cases — one per scope file — plus added NEW grep #9 for `Type::Tagged` per the ITER-0004h audit).**
 
 **Expected observables:**
-For all seven greps, the count is **zero** outside the strictly-allowed sites:
+For the data-driven structural cases (12 total post-migration), the assertions are described below. Greps #1-#6 + #9 are `expect_absent`; greps #7-#8 are `expect_present` (split across 4 cases in the migrated card):
 
 1. `\bValue::Tagged\b` — must NOT appear in `src/` (deleted in ITER-0004b)
 2. `\bExpr::Tagged\b` — must NOT appear in `src/` (deleted in T9)
@@ -2267,9 +2267,9 @@ For all seven greps, the count is **zero** outside the strictly-allowed sites:
 7. `ExtractListChild` is the canonical replacement for the deleted-variant pattern-extraction path — it MUST appear at least once in `src/compiler.rs` (positive invariant: the replacement exists). The three live emit sites are in the `UP::ListMatch` arm and related list-pattern lowering. Needle was renamed from `\bExtractTaggedChild\b` to `ExtractListChild` by ITER-0004d.2 T6; the semantic invariant (≥1 live reference in `compiler.rs`) is unchanged.
 
 **Expected observables (summary):**
-- All seven greps produce the expected count (six at zero, one at ≥1)
-- A diagnostic-style report names each grep and its count, so a regression points directly at the violating file:line
-- Running this scenario before-and-after ITER-0004d.1 shows a strict drop in counts 1-6 and a strict rise in count 7
+- All 12 cases produce the expected count (7 expect_absent at zero — including the NEW grep #9 for `Type::Tagged` per ITER-0004h audit — and 5 expect_present at ≥1)
+- The data-driven runner emits per-case file:line back-references via the `behavior-scenarios.md:NN-MM (SCENARIO-0106 case M):` failure-output template (ITER-0004d.4)
+- Running this scenario before-and-after ITER-0004d.1 shows a strict drop in counts 1-6 and a strict rise in count 7. Post-ITER-0004h adds grep #9 (Type::Tagged absent), which is also expected to be zero. Post-ITER-0004d.4 the card itself is the contract; the runner executes 12 cases.
 
 **Cases:**
 - needle: `Value::Tagged`
@@ -2304,7 +2304,7 @@ For all seven greps, the count is **zero** outside the strictly-allowed sites:
   scope: `fmpl-core/src/`
 
 **Automation status:** implemented (ITER-0004d.1 T19)
-**Execution command:** `cargo test -p fmpl-core --test structural_invariants scenario_0106`
+**Execution command:** `cargo test -p fmpl-core --test scenario_runner scenario_0106`
 
 **Sources:**
 - `docs/design-principles.md` (DESIGN-001 metacircular bootstrap, DESIGN-002 single canonical form)

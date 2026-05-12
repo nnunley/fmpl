@@ -11,7 +11,7 @@ Run `python .agent/tools/list_candidates.py` for detail, then:
 ## Priority order (top 10)
 
 - **d49365f28837** (priority=38201.14, size=1857, rejections=1) — FAILURE in claude-code: Command failed: cat > /tmp/test_lex.rs << 'EOF' | THIS S
-- **1982365a8b49** (priority=17685.00, size=655, rejections=0) — FAILURE in claude-code: Tool Agent completed with failure | THIS SKILL HAS FAILE
+- **1982365a8b49** (priority=23625.00, size=875, rejections=0) — FAILURE in claude-code: Tool Agent completed with failure | THIS SKILL HAS FAILE
 - **70c3e012fa1b** (priority=11358.00, size=631, rejections=0) — FAILURE in claude-code: Command failed: jj new -m "docs(iter-0004d.4): scenario 
 - **9722f083bd4c** (priority=2682.00, size=149, rejections=0) — FAILURE in claude-code: Command failed: jj new -m "docs(iter-0004d.4): scenario 
 - **a6a5972d6a43** (priority=1683.64, size=90, rejections=0) — FAILURE in claude-code: Command failed: rtk cargo test -p fmpl-core 2>&1 | grep 
