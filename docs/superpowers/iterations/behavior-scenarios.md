@@ -2290,3 +2290,55 @@ For all seven greps, the count is **zero** outside the strictly-allowed sites:
 - `fmpl-core/src/builtins/ir_to_rust.rs` (postlude `value_to_expr` `"LegacyTagCtor"` arm — emits the rejection error during the value-to-Expr lowering, the only point where parse-action failures can survive the `ParseChoice` closure)
 
 **Note:** Added 2026-05-12 (ITER-0004d.3 T7a). Two PAR scope reviewers independently flagged the absence of a sentinel test routing through `parser::generated_parse` — every other sentinel uses either `Parser::with_source` (source-tree) or `eval_via_legacy_parser`. The "all sentinels pass with canonical pipeline" claim from earlier iterations was weaker than implied because no sentinel exercised the generated parser. SCENARIO-0108 closes that gap. Its first run (before T7b) caught a real divergence: the source-tree parser rejected `:Foo(1)` per ITER-0004d.1 but the FMPL stdlib parser silently accepted it as `Call(Symbol("Foo"), [...])` — the metacircular pipeline was weaker than the source-tree parser. T7b added the `legacy_tagged_ctor` rejection to `lib/core/fmpl_parser.fmpl` (using a poison-AST-node pattern because the FMPL grammar runtime lacks a `fail()` primitive — that limitation is a documented follow-up).
+
+## SCENARIO-0107 — Bytecode opcode rename invariant (post-ITER-0004d.2)
+
+**Kind:** invariant
+**Proof seam:** unit
+**Owning stories:** STORY-0010 (EPIC-002) AC-11
+
+**Preconditions:**
+- ITER-0004d.2 renamed four `Instruction` enum variants to reflect post-ITER-0004d.1 list-node semantics: `MakeTagged` → `MakeListNode`, `ExtractTaggedChild` → `ExtractListChild`, `MatchTagged` → `MatchListNode`, `MatchTaggedWithBindings` → `MatchListNodeWithBindings`. `MatchTag` is PRESERVED unchanged (it backs `Pattern::Symbol` matching per AC-9).
+- Wire-format compatibility preserved via `#[serde(rename = "...")]` attributes (Option B).
+- `MatchListNode` and `MatchListNodeWithBindings` have ZERO live emit sites in current source (their compiler.rs emits were deleted in ITER-0004d.1). Their VM handlers exist but are unreachable from the sentinel suite without direct bytecode construction.
+
+**Action:**
+- Run the seven evidence tests in `fmpl-core/tests/opcode_rename_evidence.rs` plus the updated SCENARIO-0106 greps #6 and #7 in `fmpl-core/tests/structural_invariants.rs`.
+
+**Expected observables:**
+
+*Structural (greps):*
+- Grep `Instruction::(MakeTagged|MatchTagged|MatchTaggedWithBindings|ExtractTaggedChild)\b` in `fmpl-core/src/` (non-comment code) returns 0 matches (all renamed). The `#[serde(rename = "...")]` attribute strings are allowed (they're the wire-format compatibility surface).
+- Grep `Instruction::(MakeListNode|MatchListNode|MatchListNodeWithBindings|ExtractListChild)\b` in `fmpl-core/src/` returns matches (new names present).
+- `Instruction::MatchTag\b` in `compiler.rs` returns matches at variant definition + 4 emit sites (PRESERVED).
+
+*Variant reachability (proves the rename landed):*
+- Each renamed variant is constructible from a Rust test crate: `Instruction::MakeListNode { tag, args }`, `Instruction::ExtractListChild { source, index }`, `Instruction::MatchListNode { tag_idx, patterns }`, `Instruction::MatchListNodeWithBindings { tag_idx, bindings }` all compile and execute their no-op constructors.
+- `Instruction::MatchTag { value, tag, fail_target, expected_arity }` (PRESERVED) also constructible.
+
+*Wire-format round-trip (catches missing/misspelled `serde(rename)`):*
+- `MakeListNode` serializes via `serde_json` to a string containing `"MakeTagged"` (NOT `"MakeListNode"`).
+- `ExtractListChild` serializes to `"ExtractTaggedChild"`.
+- `MatchListNode` serializes to `"MatchTagged"`.
+- `MatchListNodeWithBindings` serializes to `"MatchTaggedWithBindings"`.
+- `MatchTag` (PRESERVED) serializes to `"MatchTag"` (no `serde(rename)` attribute).
+- Each renamed variant deserializes back into its Rust-side new name (round-trip property).
+
+*Behavioral assurance:*
+- SCENARIO-0103 (full parity corpus with optimizer) still passes — exercises the live-emit opcodes `MakeListNode` (via FMPL pipeline list construction) and `ExtractListChild` (via Rust-side `Pattern::Symbol` matching paths in compiler.rs).
+- SCENARIO-0016 (parity contract) still passes.
+- SCENARIO-0108 (canonical-pipeline parity) still passes.
+- `cargo test --workspace` passes; clippy clean.
+
+**Automation status:** implemented (ITER-0004d.2 T7)
+**Execution command:** `cargo test -p fmpl-core --test opcode_rename_evidence --test structural_invariants`
+
+**Sources:**
+- `fmpl-core/src/compiler.rs:260,364,507,513` — renamed variant definitions with `#[serde(rename)]` attributes
+- `fmpl-core/src/vm.rs:877,1182,2521,2567` — renamed VM handler arms (line 1204 `MatchTag` preserved)
+- `fmpl-core/src/builtins/ir.rs:336,344,983` — renamed FMPL-IR dispatcher arm keys + construction sites
+- `fmpl-core/tests/opcode_rename_evidence.rs` — 7 evidence tests (T7)
+- `fmpl-core/tests/structural_invariants.rs` — SCENARIO-0106 greps #6/#7 with new-name needles (T6)
+- `docs/superpowers/iterations/requirements/EPIC-002.md` STORY-0010 AC-11
+
+**Note:** Added 2026-05-12 (ITER-0004d.2 T7). The PAR scope review caught two real findings that shaped this scenario card: (1) `MatchListNode` and `MatchListNodeWithBindings` are dead-code post-ITER-0004d.1 (no live emit sites) — sentinel-pass alone doesn't prove their handlers work, so direct variant construction is the proof; (2) `bytecode_persistence.rs` doesn't exercise these opcodes — a missing or misspelled `serde(rename)` would silently ship a wire-format regression, so explicit round-trip tests close that gap.

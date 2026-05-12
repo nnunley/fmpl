@@ -1,0 +1,43 @@
+{
+  "id": "b53559a02240",
+  "key": "pattern_successfully_description_development_b53559",
+  "name": "pattern_successfully_description_development_b53559",
+  "claim": "Tool Agent completed successfully",
+  "conditions": [
+    "agent",
+    "completed",
+    "description",
+    "development",
+    "directory",
+    "fmpl",
+    "iter-0004d",
+    "ndn",
+    "nworking",
+    "prompt",
+    "successfully",
+    "task",
+    "tool",
+    "users"
+  ],
+  "evidence_ids": [
+    "2026-05-12T19:11:14.065610+00:00",
+    "2026-05-12T19:11:35.022527+00:00",
+    "2026-05-12T19:28:32.955045+00:00",
+    "2026-05-12T20:25:13.790989+00:00",
+    "2026-05-12T20:28:53.594620+00:00",
+    "2026-05-12T20:33:32.175216+00:00",
+    "2026-05-12T20:36:00.827518+00:00"
+  ],
+  "cluster_size": 7,
+  "canonical_salience": 13.5,
+  "staged_at": "2026-05-12T20:40:33.480649+00:00",
+  "status": "staged",
+  "decisions": [
+    {
+      "ts": "2026-05-12T20:40:33.480649+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    }
+  ],
+  "rejection_count": 0
+}

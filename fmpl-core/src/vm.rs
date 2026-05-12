@@ -874,7 +874,7 @@ impl Vm {
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(Value::Map(Arc::new(map)));
                 }
-                Instruction::MakeTagged { tag, args } => {
+                Instruction::MakeListNode { tag, args } => {
                     let children: Vec<Value> = args.iter().map(|&idx| frame.get(idx)).collect();
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(Value::list_node(tag.clone(), children));
@@ -1179,7 +1179,7 @@ impl Vm {
                     let frame = self.frames.last_mut().unwrap();
                     frame.set_current(value);
                 }
-                Instruction::ExtractTaggedChild { source, index } => {
+                Instruction::ExtractListChild { source, index } => {
                     // Tagged data is represented as `[Symbol(tag), child1, ...]`.
                     // Child indexing skips the head symbol.
                     let tagged_ref = frame.get_ref(source);
@@ -2518,7 +2518,7 @@ impl Vm {
                     frame.set_current(input_val);
                 }
 
-                Instruction::MatchTaggedWithBindings { tag_idx, bindings } => {
+                Instruction::MatchListNodeWithBindings { tag_idx, bindings } => {
                     // Match a tagged value with simple bindings.
                     // E.g., :Int(n) matches Value::Tagged("Int", [v]) and binds n = v
                     let input_val = frame.parse_state.input().cloned().unwrap_or(Value::Null);
@@ -2564,7 +2564,7 @@ impl Vm {
                     frame.set_current(input_val);
                 }
 
-                Instruction::MatchTagged { tag_idx, patterns } => {
+                Instruction::MatchListNode { tag_idx, patterns } => {
                     // Match a list-shaped node with nested pattern execution.
                     // E.g., [:Binary, :plus, [:Int, a], [:Int, b]] needs nested matching.
                     let input_val = frame.parse_state.input().cloned().unwrap_or(Value::Null);
@@ -2606,7 +2606,7 @@ impl Vm {
                         let pattern_instr = frame.code.instructions[pattern_idx.0].clone();
 
                         match &pattern_instr {
-                            Instruction::MatchTaggedWithBindings {
+                            Instruction::MatchListNodeWithBindings {
                                 tag_idx: inner_tag_idx,
                                 bindings: inner_bindings,
                             } => {

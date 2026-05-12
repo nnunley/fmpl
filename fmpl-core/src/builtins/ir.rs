@@ -333,15 +333,15 @@ impl IrCompiler {
                 }
                 Ok(self.emit(Instruction::MakeList { elements }))
             }
-            "MakeTagged" => {
-                // :MakeTagged(:tag, [arg_ir1, arg_ir2, ...])
+            "MakeListNode" => {
+                // :MakeListNode(:tag, [arg_ir1, arg_ir2, ...])
                 let tag = self.expect_symbol(&children[0])?;
                 let arg_irs = self.expect_list(&children[1])?;
                 let mut args = Vec::new();
                 for arg_ir in arg_irs {
                     args.push(self.compile_ir(&arg_ir)?);
                 }
-                Ok(self.emit(Instruction::MakeTagged { tag, args }))
+                Ok(self.emit(Instruction::MakeListNode { tag, args }))
             }
             "MakeMap" => {
                 // Accepts either bare pairs `[[k, v], ...]` (legacy Tagged form)
@@ -971,7 +971,7 @@ impl IrCompiler {
             target: InstrIndex(0), // placeholder
         });
 
-        // Tag matches — bind children by index using ExtractTaggedChild
+        // Tag matches — bind children by index using ExtractListChild
         // (which skips the head symbol of a list-shaped node).
         let val_ref2 = self.emit(Instruction::LoadVar(match_val_var.clone()));
         for (idx, sub_pat) in sub_patterns.iter().enumerate() {
@@ -980,7 +980,7 @@ impl IrCompiler {
                 && !sp_children.is_empty()
             {
                 let var_name = self.expect_symbol(&sp_children[0])?;
-                let elem = self.emit(Instruction::ExtractTaggedChild {
+                let elem = self.emit(Instruction::ExtractListChild {
                     source: val_ref2,
                     index: idx,
                 });

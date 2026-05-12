@@ -1,7 +1,7 @@
 # Progress
 
-**Phase:** ITER-0004d.3a DONE 2026-05-12 (audit fix-up closing three gaps in SCENARIO-0108 evidence). ITER-0004 remaining: ITER-0004d.2 (opcode rename), ITER-0004h (Type::Tagged cleanup). ITER-0004d.4 (scenario runner) still deferred per prior user decision.
-**Iterations:** 9/14 done. Pending: ITER-0004d.2, 0004d.4 (spec written, deferred), 0004e, 0004f, 0004g, 0004h, 0005+.
+**Phase:** ITER-0004d.2 DONE 2026-05-12 (bytecode opcode rename, AC-11; STORY-0010 fully closed). ITER-0004 remaining: ITER-0004h (Type::Tagged cleanup). ITER-0004d.4 (scenario runner) still deferred per prior user decision.
+**Iterations:** 10/14 done. Pending: ITER-0004d.4 (spec written, deferred), 0004e, 0004f, 0004g, 0004h, 0005+.
 **Sentinel corpus (final, 2026-05-12):** ast_to_ir_parity 57/57 (2 #[ignore]); scenario_0103 32/32 (1 ignored); tavern_demo 6/6; no_legacy_fmpl_syntax 1/1 (== 0 mode, baseline JSON deleted); structural_invariants 17/17; diagnostics_fmpl_source_scan 21/21 (was 17; +4 in T4); canonical_pipeline_parity 7/7 (NEW — SCENARIO-0108 evidence). **137 passed, 3 ignored across 7 suites** (+24 tests vs end-of-0004d.1, 0 regressions). Canonical pipeline confirmed active — no FMPL_SKIP_PARSER_GEN or FMPL_BOOTSTRAP_PHASE in test invocation; `target/.../out/generated_parser.rs` has GENERATED_PARSER_EPOCH=3 matching source.
 **Last event:** 2026-05-12 — ITER-0004d.3 wrap-up: T1+T1a investigations identified root causes (is_inline_pattern_block misclassification; doc-attr origin hits); T3+T4 fixed both surfaces; T6 flipped gate to == 0; T7a SCENARIO-0108 caught a real bug (FMPL parser silently weaker than source-tree); T7b added FMPL grammar rejection. PAR scope review's finding #1 (sentinel gap) directly produced T7a, which directly caught T7b's bug — concrete evidence of PAR value.
 

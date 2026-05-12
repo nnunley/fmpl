@@ -103,23 +103,23 @@ fn test_fast_mode_tagged_pattern_uses_extract_tagged_child() {
 
     let instructions = compile_pattern_with_mode(&pattern, PatternMode::Fast);
 
-    // Should contain ExtractTaggedChild instructions
+    // Should contain ExtractListChild instructions
     let extract_count = instructions
         .iter()
-        .filter(|i| matches!(i, Instruction::ExtractTaggedChild { .. }))
+        .filter(|i| matches!(i, Instruction::ExtractListChild { .. }))
         .count();
     assert_eq!(
         extract_count, 2,
-        "Fast mode tagged pattern should emit 2 ExtractTaggedChild instructions"
+        "Fast mode tagged pattern should emit 2 ExtractListChild instructions"
     );
 
-    // Should NOT contain MatchTagged (full mode matching)
+    // Should NOT contain MatchListNode (full mode matching)
     let has_match_tagged = instructions
         .iter()
-        .any(|i| matches!(i, Instruction::MatchTagged { .. }));
+        .any(|i| matches!(i, Instruction::MatchListNode { .. }));
     assert!(
         !has_match_tagged,
-        "Fast mode should not use MatchTagged instruction"
+        "Fast mode should not use MatchListNode instruction"
     );
 }
 
@@ -337,9 +337,8 @@ fn test_full_mode_list_pattern_uses_match_list() {
 
 // ITER-0004d.1 T12: deleted test_full_mode_tagged_pattern_uses_match_tagged.
 // It asserted that Full-mode tagged-pattern compilation emits the
-// Instruction::MatchTagged opcode. That assertion was an implementation-
-// detail check (which opcode is chosen), not a behavioral check. The opcode
-// is also scheduled for rename in ITER-0004d.2 (MatchTagged -> MatchListNode).
+// Instruction::MatchListNode opcode. That assertion was an implementation-
+// detail check (which opcode is chosen), not a behavioral check.
 // End-to-end behavior is covered by scenario_0103 and ast_to_ir_parity.
 
 #[test]

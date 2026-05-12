@@ -128,7 +128,7 @@
 - AC-8: `Value::Tagged` enum variant is removed from `fmpl-core/src/value.rs`. All ~349 source-and-test sites that referenced it use `Value::list_node(tag, children)` (producer) or `Value::as_node()` (consumer) · impact:`cross-surface` · seam:`integration`
 - AC-9: `Expr::Tagged` AST variant is removed. The parser production for `:Tag(args)` value-constructor syntax is deleted; bare `:foo` symbol literals (`Expr::Symbol`) remain · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0104` · scenario:`SCENARIO-0106`
 - AC-10: `Pattern::Constructor(tag, [pats])` is removed. The parser productions for `:Tag(p1, p2)` pattern syntax are deleted; `[:Tag, p1, p2]` list-pattern syntax is the only way to match structured data · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0105` · scenario:`SCENARIO-0106`
-- AC-11: Tagged-specific bytecode instructions (`MakeTagged`, `MatchTag`, `ExtractTaggedChild`, `MatchTagged`, `MatchTaggedWithBindings`) are removed (or the surviving ones renamed to reflect list-node semantics) · impact:`local` · seam:`integration`
+- AC-11: Tagged-specific bytecode instructions (`MakeTagged`, `MatchTag`, `ExtractTaggedChild`, `MatchTagged`, `MatchTaggedWithBindings`) are removed (or the surviving ones renamed to reflect list-node semantics) · impact:`local` · seam:`integration` · scenario:`SCENARIO-0107` · note:`done:ITER-0004d.2 — renamed four (MakeTagged→MakeListNode, ExtractTaggedChild→ExtractListChild, MatchTagged→MatchListNode, MatchTaggedWithBindings→MatchListNodeWithBindings) with #[serde(rename)] wire-format preservation; MatchTag preserved per AC-9 (backs Pattern::Symbol matching)`
 - AC-12: `Pattern::TagMatch` and its grammar runtime/trampoline handlers are removed; `Pattern::ListMatch` is the only constructor-shape matcher · impact:`local` · seam:`integration` · scenario:`SCENARIO-0105` · scenario:`SCENARIO-0106`
 - AC-13: All FMPL stdlib files (`lib/core/*.fmpl`) use list-pattern syntax exclusively — no `:Tag(args)` patterns or constructions remain · impact:`cross-surface` · seam:`integration`
 - AC-14: All Rust tests use `Value::list_node` for construction and `value.as_node()` for shape assertions — no `Value::Tagged(...)` literals remain in test code · impact:`local` · seam:`unit`
@@ -170,7 +170,7 @@ The bulk rewrite (~349 sites) is mechanical and gets done by two transformers, n
 - `fmpl-core/src/grammar/runtime.rs:794` (`Pattern::TagMatch` handler; delete)
 - `fmpl-core/src/vm.rs:1176, 1195` (`ExtractTaggedChild`/`MatchTag`; delete or rename)
 
-**Status:** Phase A done:ITER-0004c (AC-3 through AC-7 + AC-13). AC-1, AC-2, AC-8, AC-15 already satisfied by ITER-0004b's runtime burn. Phase B AC-9/AC-10/AC-12 done:ITER-0004d.{1,3} (parser rejection + variant deletions in 0004d.1; canonical-pipeline ratchet + FMPL stdlib parser rejection + gate flip to == 0 in 0004d.3 + SCENARIO-0108). AC-11 pending in ITER-0004d.2 (opcode rename). AC-14 already satisfied by ITER-0004b.
+**Status:** Phase A done:ITER-0004c (AC-3 through AC-7 + AC-13). AC-1, AC-2, AC-8, AC-15 already satisfied by ITER-0004b's runtime burn. Phase B AC-9/AC-10/AC-12 done:ITER-0004d.{1,3} (parser rejection + variant deletions in 0004d.1; canonical-pipeline ratchet + FMPL stdlib parser rejection + gate flip to == 0 in 0004d.3 + SCENARIO-0108). AC-11 done:ITER-0004d.2 (bytecode opcode rename + SCENARIO-0107). AC-14 already satisfied by ITER-0004b. **All Phase B ACs (9-15) now done. STORY-0010 closed.**
 
 ## STORY-0011
 

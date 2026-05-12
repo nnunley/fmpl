@@ -257,7 +257,8 @@ pub enum Instruction {
     MakeMap {
         pairs: Vec<(InstrIndex, InstrIndex)>,
     },
-    MakeTagged {
+    #[serde(rename = "MakeTagged")]
+    MakeListNode {
         tag: SmolStr,
         args: Vec<InstrIndex>,
     },
@@ -360,7 +361,8 @@ pub enum Instruction {
         source: InstrIndex,
         index: usize,
     },
-    ExtractTaggedChild {
+    #[serde(rename = "ExtractTaggedChild")]
+    ExtractListChild {
         source: InstrIndex,
         index: usize,
     },
@@ -502,12 +504,14 @@ pub enum Instruction {
     /// Match a tagged/constructor value: :Tag(child_patterns...)
     /// tag_idx is constant index of expected tag name
     /// patterns are child pattern instruction indices (can be nested TagMatch, Bind, Any, etc.)
-    MatchTagged {
+    #[serde(rename = "MatchTagged")]
+    MatchListNode {
         tag_idx: ConstIndex,
         patterns: Vec<InstrIndex>,
     },
     /// Match a tagged value with simple bindings (no nested patterns execution)
-    MatchTaggedWithBindings {
+    #[serde(rename = "MatchTaggedWithBindings")]
+    MatchListNodeWithBindings {
         tag_idx: ConstIndex,
         bindings: Vec<Option<ConstIndex>>,
     },
@@ -2651,7 +2655,7 @@ impl Compiler {
                 for (i, child) in elements.iter().skip(1).enumerate() {
                     let extracted = self
                         .code
-                        .emit(Instruction::ExtractTaggedChild { source, index: i });
+                        .emit(Instruction::ExtractListChild { source, index: i });
                     match child {
                         Pattern::List(grand_elems, None)
                             if matches!(grand_elems.first(), Some(Pattern::Symbol(_))) =>
@@ -2965,7 +2969,7 @@ impl Compiler {
                 for (i, pat) in patterns.iter().skip(1).enumerate() {
                     let extracted = self
                         .code
-                        .emit(Instruction::ExtractTaggedChild { source, index: i });
+                        .emit(Instruction::ExtractListChild { source, index: i });
                     self.compile_pattern_binding(pat, extracted)?;
                 }
             }
@@ -3129,7 +3133,7 @@ impl Compiler {
                 for (i, pat) in elements.iter().skip(1).enumerate() {
                     let extracted = self
                         .code
-                        .emit(Instruction::ExtractTaggedChild { source, index: i });
+                        .emit(Instruction::ExtractListChild { source, index: i });
                     self.compile_pattern_fast(pat, extracted)?;
                 }
             }

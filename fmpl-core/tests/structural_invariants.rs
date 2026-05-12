@@ -397,23 +397,23 @@ fn scenario_0106_grep_5_pattern_tagmatch_is_absent() {
     );
 }
 
-/// Grep #6 — `Instruction::MakeTagged` qualified reference must NOT appear in
+/// Grep #6 — `Instruction::MakeListNode` qualified reference must NOT appear in
 /// `src/compiler.rs`. ITER-0004d.1 T9 deleted the AST→IR emit site that
-/// constructed `Instruction::MakeTagged` from `Expr::Tagged`. The opcode
-/// variant itself survives (rename scheduled for ITER-0004d.2), and two
-/// references remain outside compiler.rs which are explicitly out of scope
-/// for this iteration:
+/// constructed the list-node-make opcode from `Expr::Tagged`. The opcode
+/// variant itself survives (renamed in ITER-0004d.2 from `MakeTagged` to
+/// `MakeListNode`), and two references remain outside compiler.rs which are
+/// explicitly out of scope for this invariant:
 ///
 /// - `vm.rs` — the runtime dispatch handler for the surviving variant
-/// - `builtins/ir.rs` — the IR-node `:MakeTagged` builtin handler (the
-///   FMPL stdlib still has a `:MakeTagged` IR node form for codepaths that
-///   construct tagged values from FMPL-level code)
+/// - `builtins/ir.rs` — the IR-node `:MakeListNode` builtin handler (the
+///   FMPL stdlib still has a `:MakeListNode` IR node form for codepaths that
+///   construct list-shaped nodes from FMPL-level code)
 ///
 /// Grep #6 is therefore scoped to compiler.rs only — that's where T9
 /// removed the emit. A future contributor reintroducing the emit there
 /// would be caught.
 #[test]
-fn scenario_0106_grep_6_instruction_maketagged_absent_from_compiler() {
+fn scenario_0106_grep_6_instruction_makelistnode_absent_from_compiler() {
     let path = fmpl_core_src_root().join("compiler.rs");
     let contents = fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
@@ -428,28 +428,28 @@ fn scenario_0106_grep_6_instruction_maketagged_absent_from_compiler() {
             continue;
         }
         let code_part = strip_line_comment(line);
-        if line_contains_word(code_part, "Instruction::MakeTagged") {
+        if line_contains_word(code_part, "Instruction::MakeListNode") {
             hits.push((path.clone(), lineno + 1, line.to_string()));
         }
     }
     assert!(
         hits.is_empty(),
-        "SCENARIO-0106 grep #6: expected 0 `Instruction::MakeTagged` references in compiler.rs \
-         (T9 deleted the emit; surviving references in vm.rs / builtins/ir.rs are out of scope \
-         until ITER-0004d.2's opcode rename), found {}:\n{}",
+        "SCENARIO-0106 grep #6: expected 0 `Instruction::MakeListNode` references in compiler.rs \
+         (T9 deleted the emit; surviving references in vm.rs / builtins/ir.rs are out of scope), \
+         found {}:\n{}",
         hits.len(),
         format_hits(&hits)
     );
 }
 
-/// Grep #7 — `ExtractTaggedChild` MUST appear in compiler.rs (positive
+/// Grep #7 — `ExtractListChild` MUST appear in compiler.rs (positive
 /// invariant). This is the canonical replacement for the deleted
 /// pattern-extraction path; T12's `UP::ListMatch` arm uses it. If this
 /// disappears, the migration target itself is broken. Checked against the
-/// non-comment portion of each line so a stale `// ExtractTaggedChild...`
+/// non-comment portion of each line so a stale `// ExtractListChild...`
 /// narrative doesn't fool the test into passing when the live emit is gone.
 #[test]
-fn scenario_0106_grep_7_extract_tagged_child_present_in_compiler() {
+fn scenario_0106_grep_7_extract_list_child_present_in_compiler() {
     let path = fmpl_core_src_root().join("compiler.rs");
     let contents = fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
@@ -464,13 +464,13 @@ fn scenario_0106_grep_7_extract_tagged_child_present_in_compiler() {
             continue;
         }
         let code_part = strip_line_comment(line);
-        if line_contains_word(code_part, "ExtractTaggedChild") {
+        if line_contains_word(code_part, "ExtractListChild") {
             count += 1;
         }
     }
     assert!(
         count >= 1,
-        "SCENARIO-0106 grep #7: expected ≥1 live `ExtractTaggedChild` reference in compiler.rs \
+        "SCENARIO-0106 grep #7: expected ≥1 live `ExtractListChild` reference in compiler.rs \
          (canonical list-pattern extraction path), found {count}"
     );
 }

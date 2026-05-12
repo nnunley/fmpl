@@ -464,3 +464,80 @@ Both bumps are recorded in `parser_epoch.rs:66-82` bump history.
 
 **Summary:**
 ITER-0004d.3a closed three audit-flagged gaps in SCENARIO-0108 evidence: fallback-detection guard (G1), hint assertions on all three rejection inputs + pattern-position canonical rejection (G2), structural-grep-plus-isolated-test for the T7b magic-string coupling (G3). Sentinel corpus expanded to 140/3 across 7 suites. The re-audit caught a residual G3 gap (missing falsifiability guard on the postlude test) that was fixed inline. ITER-0004 progress: AC-9, AC-10, AC-12 now have genuinely-strong canonical-pipeline evidence. ITER-0004d.2 (opcode rename) and ITER-0004h (Type::Tagged cleanup) remain.
+
+---
+
+## ITER-0004d.2 — Bytecode Opcode Rename (AC-11) — done 2026-05-12
+
+**Stories committed:** STORY-0010 Phase B AC-11. Adds SCENARIO-0107. **Closes STORY-0010** (all Phase B ACs now done).
+
+**Result:** Four bytecode `Instruction` variants renamed to reflect post-ITER-0004d.1 list-node semantics. Wire-format compatibility preserved via `#[serde(rename = "...")]` (Option B). `MatchTag` correctly preserved per AC-9.
+
+**The rename:**
+
+| Old name | New name | `serde(rename)` target |
+|---|---|---|
+| `MakeTagged` | `MakeListNode` | `"MakeTagged"` |
+| `ExtractTaggedChild` | `ExtractListChild` | `"ExtractTaggedChild"` |
+| `MatchTagged` | `MatchListNode` | `"MatchTagged"` |
+| `MatchTaggedWithBindings` | `MatchListNodeWithBindings` | `"MatchTaggedWithBindings"` |
+| `MatchTag` | `MatchTag` (PRESERVED) | — (no rename attr) |
+
+**Surfaces edited:**
+
+- `fmpl-core/src/compiler.rs` — 4 variant definitions (lines 260, 364, 507, 513) + 3 `ExtractListChild` emit sites (2654, 2968, 3132). `MatchTag` at line 369 untouched.
+- `fmpl-core/src/vm.rs` — 4 handler arms (877, 1182, 2521, 2567) + 1 nested ref (2609 inside MatchListNode scope). `MatchTag` at line 1204 untouched.
+- `fmpl-core/src/builtins/ir.rs` — IR dispatcher arm key `"MakeTagged"` → `"MakeListNode"` (line 336) + construction sites at 344, 983.
+- `fmpl-core/tests/context_aware_compilation.rs` — 2 `matches!()` patterns at 109, 119 + 1 stale-narrative comment at 340.
+- `fmpl-core/tests/stream_coercion.rs` — 2 direct `Instruction::MakeTagged { ... }` constructions at 254, 371.
+- `fmpl-core/tests/structural_invariants.rs` — SCENARIO-0106 grep #6 needle `"Instruction::MakeTagged"` → `"Instruction::MakeListNode"`; grep #7 needle `"ExtractTaggedChild"` → `"ExtractListChild"`. Test names updated to reflect new needles.
+
+**Plus new evidence corpus:**
+
+- `fmpl-core/tests/opcode_rename_evidence.rs` (NEW) — 7 evidence tests:
+  - 2 variant-reachability tests: `renamed_variants_are_constructible` (all 4 renamed variants) + `match_tag_is_preserved` (the preserved variant).
+  - 5 wire-format round-trip tests: 4 renamed variants serialize to their old names via `serde_json`; `MatchTag` (preserved) serializes as `MatchTag` with no rename attribute.
+  - Round-trip property: deserialized variants come back as their Rust-side new names, preserving the wire-format/Rust-side decoupling.
+
+**Sentinels (final, 2026-05-12):**
+- ast_to_ir_parity: 57 passed, 2 ignored
+- scenario_0103_optimizer_pipeline: 32 passed, 1 ignored
+- tavern_demo: 6 passed
+- no_legacy_fmpl_syntax: 1 passed (`== 0` mode)
+- structural_invariants: 19 passed (greps #6 and #7 needles flipped)
+- diagnostics_fmpl_source_scan: 21 passed
+- canonical_pipeline_parity: 8 passed
+- opcode_rename_evidence: 7 passed (NEW)
+- **Total: 147 passed, 3 ignored across 8 suites** (vs end-of-ITER-0004d.3a baseline 140/3; net +7 tests, 0 regressions)
+
+**PAR scope review impact:**
+
+Both reviewers returned REVISE with five aggregated findings:
+
+1. **SCENARIO-0106 grep #7 would break immediately** (BOTH reviewers, CRITICAL). The grep asserts `ExtractTaggedChild` is PRESENT in compiler.rs; after rename the needle returns 0 hits and the `count >= 1` assertion fails. Resolution: new T6 task explicitly enumerates the needle flip for both grep #6 and grep #7.
+
+2. **MatchTagged and MatchTaggedWithBindings are dead code** (BOTH reviewers, SERIOUS-CRITICAL). The original roadmap's emit-site inventory at compiler.rs:3346/3809/4380/4389 was stale — those line numbers no longer reference these opcodes (ITER-0004d.1 deleted them). The VM handlers are unreachable. Sentinel-pass alone doesn't prove their handlers are correct. Resolution: T7's opcode_rename_evidence.rs adds direct variant-reachability tests (the `Instruction::MatchListNode { ... }` construction in `renamed_variants_are_constructible`).
+
+3. **stream_coercion.rs:254, 371 directly construct `Instruction::MakeTagged`** (Reviewer A, SERIOUS). The original roadmap listed stream_coercion.rs with less certainty than context_aware_compilation.rs, risking the agent treating it as optional. Resolution: T5 explicitly enumerates lines 254 + 371 as MUST be renamed.
+
+4. **bytecode_persistence.rs doesn't exercise the renamed opcodes** (Reviewer A, SERIOUS). Missing/misspelled `serde(rename)` attributes would silently ship a wire-format regression. Resolution: T7 adds 5 Serde round-trip tests asserting each renamed variant's wire-format string.
+
+5. **Step 5/8 ordering** (Reviewer B, MINOR). Step 5 (builtins/ir.rs arm-key rename) before step 8 (verify ast_to_ir.fmpl has no `:MakeTagged`) — wrong order if FMPL stdlib still emitted the old name. Resolution: pre-iteration grep confirmed zero references; scope updated with explicit pre-verification + ordering note.
+
+**Lessons:**
+
+1. **PAR-revised emit-site inventories matter.** The roadmap's emit-site map was written pre-ITER-0004d.1 and listed sites that had been deleted. Both reviewers caught this independently. The mitigation: before starting any rename iteration, re-enumerate sites with `grep` and update the scope with current line numbers. The orchestrator did this before dispatching tasks.
+
+2. **Dead-code variants need direct-construction tests.** Two of the four renamed opcodes have ZERO live emit sites — a typo in either handler would compile and ship undetected because nothing reaches the handler from the sentinel suite. The opcode_rename_evidence.rs `renamed_variants_are_constructible` test makes the variant reachable from at least one source path (a Rust test crate), so a future deletion or rename of the variant fails to compile. This pattern generalizes: any dead-code surface that's intentionally kept should have at least one source-tree reference to keep it reachable.
+
+3. **Serde wire-format is testable in isolation.** The 5 round-trip tests in opcode_rename_evidence.rs prove the `#[serde(rename)]` attributes are present without needing a full persistence test. They serialize the variant via `serde_json`, search the output string for the expected wire name, and assert both the rename-target presence AND the Rust-side new name's absence in the wire format. Lightweight, fast, and catches the most common serde-rename mistake (forgotten attribute).
+
+4. **The IR dispatcher arm-key string is a parallel namespace.** `"MakeTagged"` appears in `builtins/ir.rs` as both an arm key (the FMPL-side IR node tag) AND a `serde(rename)` target (the bytecode wire name). Both are correct uses of the old name — they're different namespaces. The rename touches one (the arm key in builtins/ir.rs) but preserves the other (the `serde(rename)` in compiler.rs). Future readers may find this confusing without the context that the bytecode and FMPL-IR are parallel namespaces sharing some legacy names.
+
+**Cross-iteration TODO resolution:**
+
+- TODO(ITER-0004d.2) markers in source: none found (`grep -rn 'TODO(ITER-0004d.2)' fmpl-core/ lib/`). All forward-references resolved.
+
+**Summary:**
+
+ITER-0004d.2 closed STORY-0010 by renaming four bytecode opcodes to reflect post-ITER-0004d.1 list-node semantics. Wire-format compatibility preserved via `serde(rename)` (Option B; ITER-0005 may choose to drop them when bumping the persistence envelope). MatchTag correctly preserved per AC-9. SCENARIO-0107 evidence covers the rename via three layers (structural greps, variant reachability, Serde round-trip) — the last two added per PAR findings about dead-code handlers and wire-format coverage gaps. Sentinel corpus: 147 passed, 3 ignored across 8 suites (+7 net). ITER-0004 remaining: only ITER-0004h (Type::Tagged cleanup) before the milestone closes.

@@ -542,7 +542,7 @@ These gates are NOT new work — they are the existing iteration gates, framed u
 
 **Rationale:** With the AST/Pattern surfaces deleted (ITER-0004d.1), the tagged-bytecode opcodes have only emit sites in dead/about-to-be-deleted code. This iteration renames the surviving list-node-shaped opcodes for clarity (`MakeTagged` → `MakeListNode`, etc.) and sweeps qualified-path references in Rust test files. **`MatchTag` is preserved unchanged** — it backs `Pattern::Symbol` matching which AC-9 explicitly preserves.
 
-**Status:** pending
+**Status:** done 2026-05-12. T2-T6 mechanical rename across 5 files: 4 variants in compiler.rs with `#[serde(rename)]` (Option B for wire-format preservation); 5 VM handler arms in vm.rs (1204 MatchTag preserved); 3 emit sites in compiler.rs + 2 in builtins/ir.rs (lines 344, 983) + the IR dispatcher arm key `"MakeTagged"` → `"MakeListNode"`; test references in context_aware_compilation.rs + stream_coercion.rs; SCENARIO-0106 grep needles flipped in structural_invariants.rs. T7 added `opcode_rename_evidence.rs` (7 tests) covering the two PAR-flagged gaps: dead-code variant reachability + Serde round-trip catching missing `serde(rename)` attributes. Final sentinel sweep: 147 passed, 3 ignored across 8 suites (+7 net tests vs end-of-ITER-0004d.3a). PARSER_EPOCH unchanged (Instruction enum lives in compiler.rs, not the ir_to_rust.rs postlude).
 **Depends on:** ITER-0004d.1 (AST/Pattern variants deleted; consumer arms in compiler.rs deleted with them; the remaining emit sites for the renamed opcodes are limited and traceable).
 **Look-ahead check:** Unblocks ITER-0005 (persistence: the renamed opcodes are what gets serialized to Fjall via `CompiledCode::save_to_fjall`). Forward-compatibility: Serde wire-format preservation handled via `#[serde(rename = ...)]` attributes (binding precondition below).
 
@@ -562,44 +562,69 @@ These gates are NOT new work — they are the existing iteration gates, framed u
 
 - **MatchTag inclusion check.** `compiler.rs:369` and `vm.rs:1204` MUST NOT appear in the rename map's edit targets. Round-2 PAR caught these as accidentally-included in an earlier draft.
 
-**Scope:**
+**Scope (PAR-revised):**
+
+The original scope's emit-site inventory was stale; the orchestrator re-verified current sites before approving the iteration. Authoritative current state (post-ITER-0004d.1):
+
+- `MakeTagged` (compiler.rs:260, vm.rs:877, builtins/ir.rs:344) — 1 live emit site (FMPL-side, `builtins/ir.rs:344`).
+- `ExtractTaggedChild` (compiler.rs:363, vm.rs:1182, builtins/ir.rs:983, compiler.rs emit sites at 2654/2968/3132) — 4 live emit sites total.
+- `MatchTagged` (compiler.rs:505, vm.rs:2567, nested ref at vm.rs:2609) — **ZERO live emit sites** (PAR finding #2 from both reviewers).
+- `MatchTaggedWithBindings` (compiler.rs:510, vm.rs:2521) — **ZERO live emit sites** (PAR finding #2).
+- `MatchTag` (compiler.rs:369, vm.rs:1204, 4 emit sites at compiler.rs:2523/2539/2663/2673) — **PRESERVED**.
+
+The MatchTagged/MatchTaggedWithBindings handlers are dead code post-ITER-0004d.1. The roadmap's earlier line-number references (3346, 3809, 4380, 4389) were stale from pre-T-task source.
 
 1. **Rename variants in `compiler.rs:260, 363, 505, 510`** (NOT line 369, which is `MatchTag`). Add `#[serde(rename = "MakeTagged")]` etc. to each renamed variant.
 
-2. **Rename VM handler arms in `vm.rs:877, 1182, 2567, 2521`** (NOT line 1204, which is `MatchTag`). Verify with `grep -nE 'Instruction::(MakeTagged|MatchTagged|MatchTaggedWithBindings|ExtractTaggedChild)' fmpl-core/src/vm.rs` returns no matches after edit.
+2. **Rename VM handler arms in `vm.rs:877, 1182, 2521, 2567`** (NOT line 1204, which is `MatchTag`; the nested ref at vm.rs:2609 is inside MatchTagged's arm scope and renames with it). Verify with `grep -nE 'Instruction::(MakeTagged|MatchTagged|MatchTaggedWithBindings|ExtractTaggedChild)' fmpl-core/src/vm.rs` returns no matches after edit.
 
-3. **Rename emit sites in `compiler.rs`** for whichever sites survived ITER-0004d.1. Run `grep -nE 'Instruction::(MakeTagged|MatchTagged|MatchTaggedWithBindings|ExtractTaggedChild)' fmpl-core/src/compiler.rs` at iteration start to enumerate. Expect 3-6 surviving sites.
+3. **Rename live compiler emit sites in `compiler.rs:2654, 2968, 3132`** — all three are `ExtractTaggedChild` emits in `Pattern::Symbol` matching paths. The previously-listed `compiler.rs:874` (MakeTagged emit) was deleted in ITER-0004d.1 T9. MatchTagged/MatchTaggedWithBindings compiler emits are likewise gone post-ITER-0004d.1.
 
-4. **Rename emit sites in `ir_builder.rs:238-240`** for `MakeTagged` → `MakeListNode`.
+4. **(REMOVED)** — `ir_builder.rs:238-240` referenced an `ir_builder::tagged` helper that was deleted in ITER-0004d.1 T9 (zero callers confirmed pre-deletion). No edit needed here.
 
-5. **Rename `builtins/ir.rs:336`** string lookup (`"MakeTagged"` → `"MakeListNode"`). Verify other tagged-opcode string lookups in the same dispatch table get renamed too.
+5. **(REORDERED) Rename `builtins/ir.rs:344, 983`** — the FMPL-IR dispatcher arm names. The arm key string `"MakeTagged"` is dispatched on by `compile_ir` (line 336 area) when an FMPL-side IR value `[:MakeTagged, ...]` is encountered. Step 8 (`ast_to_ir.fmpl` scan) MUST complete first to confirm no FMPL stdlib emits `:MakeTagged`. **Current state:** verified by orchestrator that `lib/core/ast_to_ir.fmpl` has zero `MakeTagged` references (the post-T10 state). Safe to rename both the arm key AND the emit construction:
+   - `builtins/ir.rs:344`: `Ok(self.emit(Instruction::MakeTagged { tag, args }))` → `Ok(self.emit(Instruction::MakeListNode { tag, args }))`. Match arm key `"MakeTagged"` → `"MakeListNode"`.
+   - `builtins/ir.rs:983`: `Instruction::ExtractTaggedChild { ... }` → `Instruction::ExtractListChild { ... }`.
 
-6. **Rename emit site in `builtins/ir.rs:776`** for `ExtractTaggedChild` → `ExtractListChild`.
+6. **(MERGED INTO 5)** — handled in step 5 above.
 
-7. **Sweep Rust test qualified-path references.** Round-2 PAR enumerated:
-   - `fmpl-core/tests/context_aware_compilation.rs` — 10 matches at lines 4, 105, 108, 112, 115, 118, 121, 347, 350, 353 (using `Instruction::MatchTagged` / `Instruction::ExtractTaggedChild` in `matches!()` macros).
-   - `fmpl-core/tests/stream_coercion.rs` — verify legacy opcode references.
-   - Other files: run `grep -lE 'Instruction::(MakeTagged|MatchTagged|MatchTaggedWithBindings|ExtractTaggedChild)\b' fmpl-core/tests/` at iteration start to enumerate authoritatively. Round-2 ground truth: `grep -rn 'MakeTagged\|MatchTagged\|ExtractTaggedChild' src/ tests/` returns 60+ references; enumerate before sweeping.
+7. **Sweep Rust test qualified-path references.** The orchestrator's pre-iteration grep enumerated:
+   - `fmpl-core/tests/context_aware_compilation.rs:109, 119, 340` — `matches!(i, Instruction::ExtractTaggedChild { .. })` and `Instruction::MatchTagged { .. }` plus one comment reference.
+   - `fmpl-core/tests/stream_coercion.rs:254, 371` — **CONSTRUCT `Instruction::MakeTagged { tag, args }` directly in test code** (PAR finding #3). MUST be renamed or tests fail to compile.
+   - `fmpl-core/tests/structural_invariants.rs:400, 402, 431, 437` — these are SCENARIO-0106 greps that use the LITERAL string `"Instruction::MakeTagged"` as the search needle. See step 7a below for the explicit grep-flip.
 
-8. **Update `lib/core/ast_to_ir.fmpl`** if any rule still references `:MakeTagged` as an emit target. (ITER-0004d.1 already deleted the `[:Tagged, ..., => [:MakeTagged, tag, xs]` rule at line 21.) Verify by re-scanning.
+7a. **(NEW PER PAR finding #1) Update SCENARIO-0106 greps #6 and #7 in `fmpl-core/tests/structural_invariants.rs`** — the grep needles MUST change to the new names; otherwise grep #7 (positive-presence assertion for `ExtractTaggedChild` in compiler.rs) will fail immediately after step 3 lands.
+   - Grep #6: change the needle from `"Instruction::MakeTagged"` to `"Instruction::MakeListNode"`. The semantic invariant (absent from compiler.rs) is preserved because the renamed variant also has no compiler-emit sites — only the builtins/ir.rs emitter survives. Update the test's docstring to reflect the post-rename status (the original parenthetical "rename scheduled for ITER-0004d.2" is now stale and should be removed).
+   - Grep #7: change the needle from `"ExtractTaggedChild"` to `"ExtractListChild"`. The positive-presence assertion (≥1 reference in compiler.rs) holds because the three emit sites at compiler.rs:2654/2968/3132 are renamed in step 3.
 
-9. **Add SCENARIO-0107** — bytecode-opcode invariant: 
+8. **(REORDERED, NOW BEFORE step 5) Update `lib/core/ast_to_ir.fmpl`** if any rule still references `:MakeTagged` as an emit target. **Pre-verification: orchestrator confirmed zero references.** If new references somehow appeared mid-iteration, this step catches them. Step ordering: 8 → 5 → 3 → 1 → 2 → 7 → 7a chronologically; numbering preserved for traceability.
+
+9. **(PAR-EXPANDED) Add SCENARIO-0107** — bytecode-opcode invariant. Original three observables retained:
    - `grep -rnE 'Instruction::(MakeTagged|MatchTagged|MatchTaggedWithBindings|ExtractTaggedChild)\b' fmpl-core/src/` returns no matches (legacy gone).
    - `grep -rnE 'Instruction::(MakeListNode|MatchListNode|MatchListNodeWithBindings|ExtractListChild)\b' fmpl-core/src/` returns matches (new names present).
-   - `grep -nE 'Instruction::MatchTag\b' fmpl-core/src/compiler.rs` returns matches at lines 369 (definition), 2533, 2665 (Pattern::Symbol emit sites; post-ITER-0004d.1).
-   - **Behavioral observable (not just structural):** SCENARIO-0103 + SCENARIO-0016 (sentinels) still pass — verifies that the rename preserves semantics. Round-2 PAR flagged that a grep-only observable wouldn't catch a VM handler dispatch bug; the sentinel pass is the behavioral check.
+   - `grep -nE 'Instruction::MatchTag\b' fmpl-core/src/compiler.rs` returns matches at lines 369 (definition), 2523, 2539, 2663, 2673 (Pattern::Symbol emit sites; post-ITER-0004d.1 — line numbers refreshed by orchestrator).
+
+   **NEW per PAR finding #2** — behavioral observable beyond sentinel-pass:
+   - **Direct VM-handler exercise for the dead-code opcodes.** Add a test (`fmpl-core/tests/opcode_rename_evidence.rs` or appended to `stream_coercion.rs`) that DIRECTLY constructs `Instruction::MatchListNode { ... }` and `Instruction::MatchListNodeWithBindings { ... }` bytecode, executes them via the VM (or a minimal harness), and asserts behavioral correctness. Pattern: same as `stream_coercion.rs:251-257` which constructs `MakeTagged` directly today. Without this, a typo in either handler ships undetected because no live emit path reaches them.
+
+   **NEW per PAR finding #4** — wire-format round-trip evidence:
+   - **Serde round-trip test for renamed opcodes.** Add a test that serializes a `CompiledCode` containing each of the four renamed opcodes via the FMPL pipeline, captures the JSON, and asserts the wire-format strings are still `"MakeTagged"` / `"ExtractTaggedChild"` / `"MatchTagged"` / `"MatchTaggedWithBindings"` (the `#[serde(rename)]` targets). For the two dead-code opcodes (MatchListNode, MatchListNodeWithBindings), construct the bytecode directly (same as the dead-code VM test above) and verify serialization works.
 
 10. **Update EPIC-002.md STORY-0010 AC-11** to add `· scenario:SCENARIO-0107`.
 
-**Verification:**
+**Verification (PAR-revised):**
 - `cargo test --workspace` passes.
-- SCENARIO-0103 + SCENARIO-0016 still pass (behavioral assurance for the rename).
-- SCENARIO-0107 passes (structural invariant).
-- `cargo test -p fmpl-core --test no_legacy_fmpl_syntax` still returns 0 (preserved from ITER-0004d.1).
-- `grep -rnE 'Instruction::MakeTagged\b' fmpl-core/` returns 0 matches (sanity).
-- Persisted bytecode round-trip test (whichever currently exists, e.g., `bytecode_persistence.rs`) still passes — Serde wire-format unchanged due to `#[serde(rename)]` attributes.
+- SCENARIO-0103 + SCENARIO-0016 still pass (behavioral assurance for the rename's live-emit opcodes: MakeListNode + ExtractListChild).
+- SCENARIO-0107 passes including:
+  - Structural greps (legacy absent, new names present, MatchTag preserved).
+  - Direct VM-handler exercise for MatchListNode + MatchListNodeWithBindings (the dead-code opcodes whose handlers no live emit reaches).
+  - Serde round-trip for each renamed opcode confirms wire-format compatibility.
+- `cargo test -p fmpl-core --test no_legacy_fmpl_syntax` still returns 0.
+- `grep -rnE 'Instruction::MakeTagged\b' fmpl-core/` returns 0 matches.
+- `cargo clippy --all-targets --quiet -- -D warnings` clean (pre-commit hook will block otherwise).
+- Canonical-pipeline sentinel `canonical_pipeline_parity` still passes (the rename is internal to `Instruction` enum; doesn't touch parser surface).
 
-**Out of scope:** `Type::Tagged` cleanup (ITER-0004h). Wire-format version bump (ITER-0005's STORY-0099).
+**Out of scope:** `Type::Tagged` cleanup (ITER-0004h — distinct type-system surface, no `Instruction` overlap). Wire-format version bump (ITER-0005's STORY-0099 — the `serde(rename)` attributes are the forward-compat surface ITER-0005 may choose to drop).
 
 ### ITER-0004d.3 — Bootstrap-Parse Investigation + `no_legacy_fmpl_syntax` Gate Flip (T18)
 

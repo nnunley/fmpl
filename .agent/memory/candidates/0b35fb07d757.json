@@ -1,0 +1,56 @@
+{
+  "id": "0b35fb07d757",
+  "key": "pattern_successfully_competitive_description_0b35fb",
+  "name": "pattern_successfully_competitive_description_0b35fb",
+  "claim": "Tool Agent completed successfully",
+  "conditions": [
+    "agent",
+    "competitive",
+    "completed",
+    "context",
+    "critical",
+    "description",
+    "each",
+    "evaluating",
+    "findings",
+    "finds",
+    "greatest",
+    "issues",
+    "iter-0004d",
+    "now",
+    "nscoring",
+    "number",
+    "nyou",
+    "other",
+    "par",
+    "parallel",
+    "points",
+    "prompt",
+    "right",
+    "same",
+    "see",
+    "serious",
+    "successfully",
+    "tool",
+    "whoever",
+    "wins"
+  ],
+  "evidence_ids": [
+    "2026-05-12T17:57:01.693617+00:00",
+    "2026-05-12T17:58:11.531398+00:00",
+    "2026-05-12T20:02:12.668839+00:00",
+    "2026-05-12T20:02:25.972171+00:00"
+  ],
+  "cluster_size": 4,
+  "canonical_salience": 13.5,
+  "staged_at": "2026-05-12T20:40:33.480470+00:00",
+  "status": "staged",
+  "decisions": [
+    {
+      "ts": "2026-05-12T20:40:33.480470+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    }
+  ],
+  "rejection_count": 0
+}

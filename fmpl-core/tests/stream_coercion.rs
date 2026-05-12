@@ -251,7 +251,7 @@ mod once_mode {
         let mut vm = Vm::new();
         let code = make_code(vec![
             Instruction::LoadInt(42),
-            Instruction::MakeTagged {
+            Instruction::MakeListNode {
                 tag: SmolStr::new("Some"),
                 args: vec![InstrIndex(0)],
             },
@@ -368,7 +368,7 @@ mod auto_mode {
         let mut vm = Vm::new();
         let code = make_code(vec![
             Instruction::LoadInt(1),
-            Instruction::MakeTagged {
+            Instruction::MakeListNode {
                 tag: SmolStr::new("X"),
                 args: vec![InstrIndex(0)],
             },
