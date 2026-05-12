@@ -2254,3 +2254,39 @@ For all seven greps, the count is **zero** outside the strictly-allowed sites:
 - F19 / round-6 PAR correction (this scenario was a finding in pre-T-task review that the parser-rejection scenarios alone don't prove the underlying Rust types stayed deleted)
 
 **Note:** Added 2026-05-12 (ITER-0004d.1 T17). The role of this scenario is distinct from SCENARIO-0104/0105 (which exercise the parser surface). 0106 is the structural guard that ensures a future contributor doesn't reintroduce the deleted variants by name even if the parser surface still rejects the syntax — i.e., it catches the case where someone adds a new producer for the old variants from a non-parser surface (FFI, deserialization, builtin) and assumes the variants exist again. This is a higher-confidence invariant than syntactic gates because it's typed against the canonical Rust names.
+
+## SCENARIO-0108 — Canonical-pipeline parity with source-tree parser
+
+**Kind:** contract
+**Proof seam:** integration
+**Owning stories:** STORY-0010 (EPIC-002), DESIGN-001 (metacircular bootstrap)
+
+**Preconditions:**
+- The source-tree Rust parser (`Parser::with_source(...).parse()`) is callable.
+- The canonical FMPL-generated parser (`parser::generated_parse(...)`) is callable. The build script regenerated it on the current source (no `FMPL_SKIP_PARSER_GEN=1`, no `FMPL_BOOTSTRAP_PHASE=1`).
+- The fmpl-bootstrap binary was rebuilt from current source so its embedded postlude (`ir_to_rust.rs::value_to_expr`) is up-to-date.
+
+**Action:**
+- For each representative input, invoke both parsers on the same source string. Compare results.
+
+**Expected observables (two equivalence classes):**
+
+1. **Rejection equivalence.** For legacy `:Tag(args)` inputs (SCENARIO-0104 / SCENARIO-0105 carve-outs):
+   - Both parsers MUST return `Err`.
+   - Both error messages MUST contain the canonical-form hint substring `use [:`.
+   - Specifically tested: `:Foo(1)`, `:Bar(1, 2, 3)`, `match x { :Pair(a, b) => 1 }`.
+
+2. **AST equivalence.** For representative successful inputs:
+   - Both parsers MUST return `Ok(ast)` with structurally-equal `Expr` trees under `PartialEq`.
+   - Inputs covered: `42` (int literal), `1 + 2 * 3` (arithmetic precedence), `:Foo` (bare symbol — the SCENARIO-0104 carve-out), `[:Foo, 1, 2]` (canonical list form).
+
+**Automation status:** implemented (ITER-0004d.3 T7a)
+**Execution command:** `cargo test -p fmpl-core --test canonical_pipeline_parity` (run with `FMPL_SKIP_PARSER_GEN` and `FMPL_BOOTSTRAP_PHASE` unset to exercise the canonical pipeline)
+
+**Sources:**
+- `docs/design-principles.md` (DESIGN-001 metacircular bootstrap — Rust and FMPL parsers describe the same language)
+- `fmpl-core/tests/canonical_pipeline_parity.rs` (the evidence tests; ITER-0004d.3 T7a)
+- `lib/core/fmpl_parser.fmpl` (the FMPL grammar; ITER-0004d.3 T7b added the `legacy_tagged_ctor` rejection rule)
+- `fmpl-core/src/builtins/ir_to_rust.rs` (postlude `value_to_expr` `"LegacyTagCtor"` arm — emits the rejection error during the value-to-Expr lowering, the only point where parse-action failures can survive the `ParseChoice` closure)
+
+**Note:** Added 2026-05-12 (ITER-0004d.3 T7a). Two PAR scope reviewers independently flagged the absence of a sentinel test routing through `parser::generated_parse` — every other sentinel uses either `Parser::with_source` (source-tree) or `eval_via_legacy_parser`. The "all sentinels pass with canonical pipeline" claim from earlier iterations was weaker than implied because no sentinel exercised the generated parser. SCENARIO-0108 closes that gap. Its first run (before T7b) caught a real divergence: the source-tree parser rejected `:Foo(1)` per ITER-0004d.1 but the FMPL stdlib parser silently accepted it as `Call(Symbol("Foo"), [...])` — the metacircular pipeline was weaker than the source-tree parser. T7b added the `legacy_tagged_ctor` rejection to `lib/core/fmpl_parser.fmpl` (using a poison-AST-node pattern because the FMPL grammar runtime lacks a `fail()` primitive — that limitation is a documented follow-up).

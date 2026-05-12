@@ -1,17 +1,23 @@
 //! CI gate: scan four surfaces for legacy FMPL `:Tag(args)` tagged-constructor
-//! syntax and assert the per-surface hit counts match a committed baseline
-//! JSON file (ITER-0004d.0).
+//! syntax and assert the per-surface hit counts are zero (ITER-0004d.3).
 //!
-//! Baseline JSON schema: `{ "surface_name": <hit_count>, ... }`
 //! Surfaces: "lib/core", "tests/fmpl", "tests/rs", "src/rs".
-//! Allowlist filtering applied before counting.
+//! Filters applied before counting:
+//!   - ALLOWLIST: documented grammar-DSL binding sites (e.g.,
+//!     `cmp:first (...)` in `lib/core/fmpl_parser.fmpl`). These produce a
+//!     `Symbol+LParen` token sequence the lexer cannot distinguish from
+//!     legacy syntax without grammar-DSL-aware context, so they are
+//!     suppressed by hand.
+//!   - from_doc_attr: hits originating from `#[doc = "..."]` attributes
+//!     (i.e., `///` and `//!` doc comments) are documentation about FMPL
+//!     vocabulary, not live FMPL code. Suppressed via
+//!     `SourceKind::RustString.from_doc_attr` set by the test-side
+//!     `rust_string_scanner.rs`.
 //!
-//! ITER-0004d.1 will delete the baseline JSON and flip this gate to assert
-//! `== 0` across all surfaces. Until then, the baseline records the
-//! iteration's known starting state and any growth fails the gate.
-//!
-//! To regenerate the baseline (after a deliberate change), run with:
-//!   `FMPL_REGEN_BASELINE=1 cargo test -p fmpl-core --test no_legacy_fmpl_syntax`
+//! ITER-0004d.0 introduced this gate in baseline-mode. ITER-0004d.3 flipped
+//! it to `== 0` after T3 fixed the metacircular bootstrap and T4 added the
+//! doc-attr suppression. The baseline JSON file is deleted; the
+//! FMPL_REGEN_BASELINE env var is no longer meaningful.
 //!
 //! Discovery surfaces:
 //! - `lib/core/*.fmpl` — flat directory; non-recursive `read_dir`.
@@ -55,6 +61,10 @@ const TESTS_RS_EXCLUDES: &[&str] = &[
     "no_legacy_fmpl_syntax.rs",
     "diagnostics_fmpl_source_scan.rs",
     "structural_invariants.rs",
+    // SCENARIO-0108 evidence (ITER-0004d.3 T7a). Contains `:Tag(args)`
+    // strings as parser-input fixtures to prove rejection parity between
+    // the source-tree parser and the canonical generated parser.
+    "canonical_pipeline_parity.rs",
 ];
 
 fn workspace_root() -> PathBuf {
@@ -165,7 +175,7 @@ fn scan_rs_files(root: &Path, files: &[PathBuf]) -> Vec<TaggedSyntaxHit> {
 }
 
 #[test]
-fn gate_matches_baseline() {
+fn gate_asserts_zero_legacy_hits() {
     let root = workspace_root();
 
     // Surface 1: lib/core/*.fmpl
@@ -192,9 +202,15 @@ fn gate_matches_baseline() {
     let src_rs_files = walk_rs(&root.join("fmpl-core").join("src"));
     let src_rs_hits = scan_rs_files(&root, &src_rs_files);
 
-    // Apply allowlist filter, then count per surface.
-    let count =
-        |hits: &[TaggedSyntaxHit]| -> usize { hits.iter().filter(|h| !is_allowlisted(h)).count() };
+    // Apply allowlist filter and suppress doc-attribute origins, then
+    // count per surface. Doc-attr origins (`///` / `//!` desugaring to
+    // `#[doc = "..."]`) are documentation about FMPL vocabulary, not
+    // live FMPL code, so they are not legacy hits. ITER-0004d.3 T4.
+    let count = |hits: &[TaggedSyntaxHit]| -> usize {
+        hits.iter()
+            .filter(|h| !is_allowlisted(h) && !h.source.from_doc_attr())
+            .count()
+    };
 
     let counts: BTreeMap<String, usize> = BTreeMap::from_iter([
         ("lib/core".to_string(), count(&lib_core_hits)),
@@ -203,49 +219,22 @@ fn gate_matches_baseline() {
         ("src/rs".to_string(), count(&src_rs_hits)),
     ]);
 
-    let baseline_path = root
-        .join("fmpl-core")
-        .join("tests")
-        .join("no_legacy_fmpl_syntax.baseline.json");
-
-    if std::env::var("FMPL_REGEN_BASELINE").ok().as_deref() == Some("1") {
-        let serialized = serde_json::to_string_pretty(&counts).expect("serialize baseline");
-        let with_trailing_newline = format!("{serialized}\n");
-        fs::write(&baseline_path, with_trailing_newline).expect("write baseline");
-        eprintln!(
-            "[no_legacy_fmpl_syntax] regenerated baseline: {:?}",
-            baseline_path
-        );
-        eprintln!("[no_legacy_fmpl_syntax] new counts: {:?}", counts);
-        return;
-    }
-
-    let baseline_text = fs::read_to_string(&baseline_path).unwrap_or_else(|_| {
-        panic!(
-            "baseline JSON not found at {:?}. Run with FMPL_REGEN_BASELINE=1 to generate it.",
-            baseline_path
-        )
-    });
-    let baseline: BTreeMap<String, usize> =
-        serde_json::from_str(&baseline_text).expect("parse baseline JSON");
-
-    // Strict equality: prevents both growth and silent shrinkage. ITER-0004d.1
-    // will replace this with `== 0` once cleanup lands.
-    if counts != baseline {
-        // Build a human-readable diff for the assertion message.
-        let mut report = String::from("hit-count mismatch vs baseline:\n");
+    let total: usize = counts.values().sum();
+    if total != 0 {
+        let mut report =
+            String::from("legacy FMPL `:Tag(args)` syntax detected (gate requires == 0):\n");
         let surfaces = ["lib/core", "tests/fmpl", "tests/rs", "src/rs"];
         for surface in surfaces {
             let cur = counts.get(surface).copied().unwrap_or(0);
-            let base = baseline.get(surface).copied().unwrap_or(0);
-            let marker = if cur == base { " " } else { "!" };
-            report.push_str(&format!(
-                "  {marker} {surface}: current={cur}, baseline={base}\n",
-            ));
+            let marker = if cur == 0 { " " } else { "!" };
+            report.push_str(&format!("  {marker} {surface}: {cur} hits\n"));
         }
-        report.push_str("\nIf this change is intentional, regenerate with:\n");
         report.push_str(
-            "  FMPL_REGEN_BASELINE=1 cargo test -p fmpl-core --test no_legacy_fmpl_syntax\n",
+            "\nFix: either eliminate the legacy syntax at its source, or — if the hit is\n\
+             a documentation example or a grammar-DSL bind — extend the suppression in\n\
+             `no_legacy_fmpl_syntax.rs` (ALLOWLIST for grammar-DSL bind sites in .fmpl\n\
+             files; doc-attr suppression is automatic via `from_doc_attr` for `///`/`//!`\n\
+             comments).\n",
         );
         panic!("{}", report);
     }

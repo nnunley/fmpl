@@ -487,3 +487,190 @@ fn format_hits(hits: &[(PathBuf, usize, String)]) -> String {
     }
     s
 }
+
+// ============================================================================
+// SCENARIO-0106 grep #8 + postlude-arm contract (ITER-0004d.3a / G3)
+// ============================================================================
+//
+// The T7b workaround for the missing grammar `fail()` primitive routes legacy
+// `:Tag(args)` rejections through a *poison-AST-node* protocol:
+//
+//   1. lib/core/fmpl_parser.fmpl matches the offending fragment and emits
+//      `[:LegacyTagCtor, tag]` (expression position) or
+//      `[:PatternLegacyTagCtor, tag]` (pattern position) as a normal AST node.
+//   2. fmpl-core/src/builtins/ir_to_rust.rs emits a postlude that includes
+//      `value_to_expr` / `value_to_pattern` functions with `"LegacyTagCtor" =>
+//      Err(...)` / `"PatternLegacyTagCtor" => Err(...)` arms. These arms fire
+//      during AST-construction, returning `Error::Parser` with the canonical
+//      `use [:Tag, ...]` hint.
+//
+// The poison-tag names are bare string literals coupled across the two files.
+// A rename in one without updating the other is silently broken:
+//   - If grammar renames but postlude doesn't: the poison node carries a new
+//     tag name, no postlude arm matches, and `value_to_expr` falls through to
+//     the catch-all "Unknown node" runtime error (or worse, silently accepts).
+//   - If postlude renames but grammar doesn't: the postlude arm never fires.
+//
+// Two tests below guard the coupling:
+//   - `scenario_0106_grep_8_legacy_tag_ctor_coupling` — structural grep
+//     asserting BOTH magic strings appear in BOTH files.
+//   - `g3_postlude_arms_fire_on_poison_nodes` — behavior test confirming the
+//     postlude arms return `Err(Parser)` with the canonical hint when a
+//     legacy-syntax input reaches them. This complements
+//     `canonical_pipeline_parity::parity_rejects_*` by being scoped narrowly
+//     to the postlude-arm contract (one assertion per arm, no parity check),
+//     so a regression report points directly at the postlude rather than at
+//     a parser-parity divergence.
+//
+// Why not an isolated unit-test that calls `value_to_expr` directly?
+// `value_to_expr` and `value_to_pattern` are private (`fn`, not `pub fn`)
+// inside the generator-emitted `__generated` module inside `parser.rs`. Only
+// `generated_parse` and `GENERATED_PARSER_EPOCH` are re-exported via
+// `pub use __generated::*`. No test crate can reach the inner functions
+// without modifying the generator. Routing through `generated_parse` with
+// minimal triggering inputs is the closest available isolation.
+
+/// SCENARIO-0106 grep #8 — `LegacyTagCtor` / `PatternLegacyTagCtor` magic-string
+/// name-coupling invariant. BOTH poison-tag names MUST appear in BOTH the FMPL
+/// grammar (`lib/core/fmpl_parser.fmpl`) and the Rust postlude
+/// (`fmpl-core/src/builtins/ir_to_rust.rs`). If either file is missing either
+/// name, the legacy-syntax rejection is silently broken (see module-level
+/// comment above for the failure modes).
+#[test]
+fn scenario_0106_grep_8_legacy_tag_ctor_coupling() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let fmpl_parser_path = PathBuf::from(manifest_dir)
+        .join("..")
+        .join("lib")
+        .join("core")
+        .join("fmpl_parser.fmpl");
+    let ir_to_rust_path = PathBuf::from(manifest_dir)
+        .join("src")
+        .join("builtins")
+        .join("ir_to_rust.rs");
+
+    let fmpl_parser = fs::read_to_string(&fmpl_parser_path).unwrap_or_else(|e| {
+        panic!(
+            "SCENARIO-0106 grep #8 setup error: failed to read {}: {e}",
+            fmpl_parser_path.display()
+        )
+    });
+    let ir_to_rust = fs::read_to_string(&ir_to_rust_path).unwrap_or_else(|e| {
+        panic!(
+            "SCENARIO-0106 grep #8 setup error: failed to read {}: {e}",
+            ir_to_rust_path.display()
+        )
+    });
+
+    for tag in &["LegacyTagCtor", "PatternLegacyTagCtor"] {
+        assert!(
+            fmpl_parser.contains(tag),
+            "SCENARIO-0106 grep #8: {} must contain magic string {tag:?} \
+             (poison-AST tag emitted by the legacy_tagged_ctor grammar rule). \
+             If you renamed the postlude arm in ir_to_rust.rs, you must rename \
+             the grammar emit-site too — they are coupled by string identity.",
+            fmpl_parser_path.display()
+        );
+        assert!(
+            ir_to_rust.contains(tag),
+            "SCENARIO-0106 grep #8: {} must contain magic string {tag:?} \
+             (postlude match arm in `value_to_expr` / `value_to_pattern`). \
+             If you renamed the grammar emit-site in fmpl_parser.fmpl, you \
+             must rename the postlude arm too — they are coupled by string \
+             identity.",
+            ir_to_rust_path.display()
+        );
+    }
+}
+
+/// G3 postlude-arm contract — the `"LegacyTagCtor"` and `"PatternLegacyTagCtor"`
+/// arms in the generated `value_to_expr` / `value_to_pattern` functions MUST
+/// fire when a legacy-syntax input reaches them, returning `Err(Parser)` with
+/// a message containing the canonical-form hint `use [:`.
+///
+/// Why this exists alongside `canonical_pipeline_parity::parity_rejects_*`:
+/// the parity tests assert that BOTH parsers reject the input, with the focus
+/// on cross-parser agreement. This test is scoped to the postlude arms alone
+/// — its single failure mode is "the postlude arm did not fire" (renamed,
+/// removed, or branch-collapsed). A regression here points directly at the
+/// `ir_to_rust.rs` postlude, not at a parity divergence.
+///
+/// The test cannot reach `value_to_expr` / `value_to_pattern` directly because
+/// they are private to the generator-emitted `__generated` module (see
+/// module-level comment for details), so we route through `generated_parse`
+/// with the minimal triggering inputs.
+#[test]
+#[allow(clippy::assertions_on_constants)]
+fn g3_postlude_arms_fire_on_poison_nodes() {
+    use fmpl_core::parser::generated_parse;
+
+    // Falsifiability guard (mirrors `canonical_pipeline_must_be_active` in
+    // `canonical_pipeline_parity.rs`). Under the fallback parser,
+    // `generated_parse` delegates to `Parser::with_source`, which ALSO
+    // rejects `:Foo(1)` and `match x { :Pair(a, b) => 1 }` with messages
+    // containing `use [:` and the offending tag name — every assertion
+    // below would pass trivially without proving the postlude arm fired.
+    // Asserting `IS_GENERATED_PARSER` here makes the test unfalsifiable
+    // under fallback. The lint is suppressed because the constancy is the
+    // point: the value differs between the two parser binaries.
+    assert!(
+        fmpl_core::parser::IS_GENERATED_PARSER,
+        "G3: this test requires the canonical FMPL-generated parser to verify \
+         the postlude arms fire. Under the fallback parser, `generated_parse` \
+         delegates to `Parser::with_source`, which would make every assertion \
+         pass trivially without exercising the postlude. To fix:\n  \
+         1. Ensure FMPL_SKIP_PARSER_GEN and FMPL_BOOTSTRAP_PHASE are unset.\n  \
+         2. Build fmpl-bootstrap: FMPL_BOOTSTRAP_PHASE=1 cargo build -p fmpl-bootstrap\n  \
+         3. Rebuild fmpl-core: touch fmpl-core/build.rs && cargo build -p fmpl-core\n  \
+         4. Re-run: cargo test -p fmpl-core --test structural_invariants \
+         g3_postlude_arms_fire_on_poison_nodes"
+    );
+
+    // Expression-position poison-node arm: `:Foo(1)` triggers
+    // `legacy_tagged_ctor` in the grammar, which emits
+    // `[:LegacyTagCtor, "Foo"]`. The postlude arm rejects with the canonical
+    // hint.
+    let expr_result = generated_parse(":Foo(1)");
+    let expr_err = expr_result.expect_err(
+        "G3: postlude `LegacyTagCtor` arm must reject `:Foo(1)`. \
+         If parse succeeded, the arm was deleted or the grammar emit-site \
+         was renamed without updating the postlude.",
+    );
+    let expr_msg = format!("{expr_err:?}");
+    assert!(
+        expr_msg.contains("use [:"),
+        "G3: postlude `LegacyTagCtor` arm must return an error containing the \
+         canonical-form hint `use [:`. Actual error: {expr_msg}"
+    );
+    // The hint must reference the offending tag name so the user knows what
+    // to rewrite.
+    assert!(
+        expr_msg.contains("Foo"),
+        "G3: postlude `LegacyTagCtor` arm error message must reference the \
+         tag name `Foo` from the input `:Foo(1)`. Actual error: {expr_msg}"
+    );
+
+    // Pattern-position poison-node arm: `:Pair(a, b)` inside a match arm
+    // triggers `pat_legacy_tagged_ctor` in the grammar, which emits
+    // `[:PatternLegacyTagCtor, "Pair"]`. The postlude arm rejects with the
+    // canonical hint.
+    let pat_result = generated_parse("match x { :Pair(a, b) => 1 }");
+    let pat_err = pat_result.expect_err(
+        "G3: postlude `PatternLegacyTagCtor` arm must reject \
+         `match x { :Pair(a, b) => 1 }`. If parse succeeded, the arm was \
+         deleted or the grammar emit-site was renamed without updating the \
+         postlude.",
+    );
+    let pat_msg = format!("{pat_err:?}");
+    assert!(
+        pat_msg.contains("use [:"),
+        "G3: postlude `PatternLegacyTagCtor` arm must return an error \
+         containing the canonical-form hint `use [:`. Actual error: {pat_msg}"
+    );
+    assert!(
+        pat_msg.contains("Pair"),
+        "G3: postlude `PatternLegacyTagCtor` arm error message must reference \
+         the tag name `Pair` from the input `:Pair(a, b)`. Actual error: \
+         {pat_msg}"
+    );
+}

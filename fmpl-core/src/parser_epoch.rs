@@ -63,6 +63,23 @@
 //!   tagged-value matcher (was reachable only via the deleted
 //!   `Pattern::TagMatch` parser productions, removed in F1) plus the now-
 //!   orphan `Pattern::contains_repeat` helper.
+//! - 4 — ITER-0004d.3a G1 (2026-05-12). Added the
+//!   `IS_GENERATED_PARSER: bool` discriminator constant to both the canonical
+//!   generator postlude (`ir_to_rust.rs`, set to `true`) and the fallback
+//!   parser (`build.rs::write_fallback_parser`, set to `false`). This is the
+//!   SCENARIO-0108 fix: it lets `canonical_pipeline_parity::canonical_pipeline_must_be_active`
+//!   fire when the fallback parser is silently substituted, preventing every
+//!   parity test in that suite from passing trivially. The change is a
+//!   postlude raw-string edit, which the bump policy lists as a trigger.
+//! - 5 — ITER-0004d.3a G2 (2026-05-12). Added the `PatternLegacyTagCtor` arm
+//!   to `value_to_pattern` in the generator postlude (`ir_to_rust.rs`) and
+//!   a parallel `pat_legacy_tagged_ctor` rule to `lib/core/fmpl_parser.fmpl`.
+//!   This closes the SCENARIO-0108 pattern-position gap: the canonical FMPL
+//!   parser now emits the `use [:` canonical-form hint on
+//!   `match x { :Pair(a, b) => 1 }` instead of a generic syntactic mismatch
+//!   from `pat_symbol` consuming `:Pair` and the trailing `(` being unexpected.
+//!   The change is a postlude raw-string edit, which the bump policy lists as
+//!   a trigger.
 
 /// Parser-generator epoch. See module-level docs for the bump policy.
-pub const PARSER_EPOCH: u32 = 3;
+pub const PARSER_EPOCH: u32 = 5;

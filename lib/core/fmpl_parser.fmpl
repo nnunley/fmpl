@@ -76,6 +76,18 @@ let fmpl_parser = grammar fmpl_parser {
              | sym_op_char+:name => name
     symbol = ":" sym_name:name sp => [:Symbol, name]
 
+    -- Legacy `:Tag(args)` constructor syntax is rejected (DESIGN-002 / ITER-0004d.1
+    -- T6/F2). This rule MUST appear before `symbol` in `primary` so the ordered
+    -- choice tries it first. It matches `:Tag(...)` (with or without args), consumes
+    -- the parenthesised arg-list, and emits a `[:LegacyTagCtor, tag]` poison node.
+    -- The poison node is detected in `value_to_expr` (generator postlude in
+    -- fmpl-core/src/builtins/ir_to_rust.rs) and converted to a parse error whose
+    -- message contains the canonical-form hint `use [:`, mirroring parser.rs.
+    -- Hard failure from inside an action would otherwise be swallowed by the
+    -- ParseChoice closure wrappers in the generated Rust parser.
+    legacy_tagged_ctor = ":" sym_name:tag sp "(" sp call_args:a ")" sp => [:LegacyTagCtor, tag]
+                       | ":" sym_name:tag sp "(" sp ")" sp => [:LegacyTagCtor, tag]
+
     qualified_sep = ":" ":"
     qualified_part = ident_start:first ident_rest*:rest => join(prepend(first, rest))
     qualified_rest_item = qualified_sep qualified_part:p => p
@@ -168,7 +180,8 @@ let fmpl_parser = grammar fmpl_parser {
     obj_def = "object" ~ident_rest sp obj_name:name "{" sp obj_body:content "}" sp
             => [:Object, name, content]
 
-    primary = paren | sequence | list_lit | map_lit | float_lit | int | bool | null_lit | string_lit | symbol
+    primary = legacy_tagged_ctor
+            | paren | sequence | list_lit | map_lit | float_lit | int | bool | null_lit | string_lit | symbol
             | self_expr | parent_expr | caller_expr | user_expr | args_expr | obj_tag | spawn_expr
             | named_grammar | grammar_literal | placeholder | var
 
@@ -292,7 +305,23 @@ let fmpl_parser = grammar fmpl_parser {
     pat_map_entries = pat_map_entry:first pat_map_entry_rest*:rest => prepend(first, rest)
     pat_map = "%" "{" sp pat_map_entries:entries "}" sp => [:PatternMap, entries]
             | "%" "{" sp "}" sp => [:PatternMap, []]
-    pat_primary = pat_wildcard | pat_symbol | pat_neg_int | pat_int | pat_string | pat_list | pat_map | pat_var
+
+    -- Legacy `:Tag(args)` constructor syntax is rejected in PATTERN position too
+    -- (DESIGN-002 / ITER-0004d.3a G2). This rule MUST appear before `pat_symbol`
+    -- in `pat_primary` so the ordered choice tries it first. It matches
+    -- `:Tag(...)` (with or without args), consumes the parenthesised pattern
+    -- arg-list, and emits a `[:PatternLegacyTagCtor, tag]` poison node. The
+    -- poison node is detected in `value_to_pattern` (generator postlude in
+    -- fmpl-core/src/builtins/ir_to_rust.rs) and converted to a parse error
+    -- whose message contains the canonical-form hint `use [:` — mirroring the
+    -- expression-position `legacy_tagged_ctor` rule and parser.rs's
+    -- parse_pattern_primary. The contract is asserted by
+    -- canonical_pipeline_parity::parity_rejects_pattern_constructor_in_match_arm.
+    pat_legacy_tagged_ctor = ":" sym_name:tag sp "(" sp pat_args:a ")" sp => [:PatternLegacyTagCtor, tag]
+                           | ":" sym_name:tag sp "(" sp ")" sp => [:PatternLegacyTagCtor, tag]
+
+    pat_primary = pat_legacy_tagged_ctor
+                | pat_wildcard | pat_symbol | pat_neg_int | pat_int | pat_string | pat_list | pat_map | pat_var
     pat_as = pat_primary:p "as" ~ident_rest sp sym_ident:name => [:PatternAs, p, name]
     pattern = pat_as | pat_primary
 

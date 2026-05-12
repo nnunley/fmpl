@@ -1145,7 +1145,20 @@ impl<'a> Parser<'a> {
             // List pattern: [a, b] -> has comma after first element
             // List pattern: [:Tag, ...] -> has comma after symbol
             // Character class: [a-z] -> has dash for ranges
+            //
+            // BUT: grammar-DSL list patterns also start with `[`:
+            //   [:ParseGrammar, any:name, any:rules] => ...
+            // tokenizes as [, Symbol(ParseGrammar), Comma, Ident(any), Symbol(name), ...
+            // The grammar-DSL bind operator `rule:binding` lexes as `Ident Symbol`
+            // (the `:` is fused into the trailing identifier by the Symbol regex).
+            // If we see an `Ident` immediately followed by a `Symbol` inside the
+            // outermost `[ ... ]`, the block is a grammar block, not an AST
+            // inline pattern block. (AST inline list patterns separate every
+            // element with `,`, so `Ident Symbol` adjacency cannot occur there.)
             Token::LBracket => {
+                if self.contains_grammar_bind_in_outer_brackets(1) {
+                    return false;
+                }
                 if let Some(second) = self.peek_ahead(2)
                     && let Some(third) = self.peek_ahead(3)
                 {
@@ -1179,6 +1192,60 @@ impl<'a> Parser<'a> {
             // Everything else: default to grammar parsing
             _ => false,
         }
+    }
+
+    /// Scan forward from the `[` at offset `lbracket_offset` (relative to
+    /// `self.pos`) for the grammar-DSL bind signature `Ident Symbol` while
+    /// still inside the matching `]`. Returns true if found.
+    ///
+    /// Grammar-DSL binds (`rule:binding`) tokenize as adjacent `Ident` then
+    /// `Symbol` tokens because the lexer's Symbol regex fuses `:ident` into a
+    /// single Symbol after a leading identifier. AST inline list patterns
+    /// never produce that adjacency: their elements are always separated by
+    /// `,`. So `Ident Symbol` adjacency anywhere inside the outer `[...]` is
+    /// an unambiguous tell for a grammar block.
+    ///
+    /// Bounded by a hard token cap so this stays cheap on every `@{...}`.
+    fn contains_grammar_bind_in_outer_brackets(&self, lbracket_offset: usize) -> bool {
+        // The token at lbracket_offset must be `[`.
+        if !matches!(
+            self.peek_ahead(lbracket_offset).map(|t| &t.token),
+            Some(Token::LBracket)
+        ) {
+            return false;
+        }
+
+        // Walk forward tracking bracket depth so we only look inside the
+        // outer list pattern. Cap the scan to avoid pathological lookahead.
+        const SCAN_LIMIT: usize = 64;
+        let mut depth: i32 = 1;
+        let mut i = lbracket_offset + 1;
+        let end = i + SCAN_LIMIT;
+        while i < end {
+            let Some(cur) = self.peek_ahead(i) else { break };
+            match &cur.token {
+                Token::LBracket => depth += 1,
+                Token::RBracket => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return false;
+                    }
+                }
+                // The signal: an `Ident` immediately followed by a `Symbol`
+                // (e.g. `any` then `:name` fused as `Symbol("name")`).
+                Token::Ident(_) => {
+                    if matches!(
+                        self.peek_ahead(i + 1).map(|t| &t.token),
+                        Some(Token::Symbol(_))
+                    ) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        false
     }
 
     /// Parse list literal or list comprehension.
@@ -2356,5 +2423,26 @@ mod tests {
         } else {
             panic!("expected ShortLambda");
         }
+    }
+
+    #[test]
+    fn anonymous_grammar_block_with_bind_pattern_is_not_inline_pattern() {
+        // Reproducer for ITER-0004d.3 T1: g @ { [:Tag, any:name] => ... } must
+        // be parsed as a grammar block, not an AST inline pattern block.
+        // Regression: `is_inline_pattern_block` previously misclassified the
+        // `[:ParseGrammar, any:name, any:rules]` head as an AST list pattern
+        // because its lookahead only saw `[ Symbol Comma` and stopped there.
+        let source = r#"
+            let f = lambda(g)
+                g @ {
+                    [:ParseGrammar, any:name, any:rules] => name
+                }
+            f
+        "#;
+        let result = parse(source);
+        assert!(
+            result.is_ok(),
+            "expected grammar-block parse to succeed, got: {result:?}"
+        );
     }
 }

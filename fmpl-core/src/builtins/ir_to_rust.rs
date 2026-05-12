@@ -1096,6 +1096,16 @@ impl IrToRust {
                     "pub const GENERATED_PARSER_EPOCH: u32 = {};\n\n",
                     crate::parser_epoch::PARSER_EPOCH
                 ));
+                // Fallback-parser discriminator — SCENARIO-0108 contract.
+                // The fallback parser emitted by build.rs::write_fallback_parser
+                // sets this to `false`; the canonical FMPL-generated parser
+                // (this branch) sets it to `true`. The
+                // canonical_pipeline_must_be_active test in
+                // tests/canonical_pipeline_parity.rs asserts this is true so
+                // a regression cannot silently substitute the fallback parser
+                // (whose `generated_parse` delegates to `Parser::with_source`,
+                // making every parity test pass trivially).
+                code.push_str("pub const IS_GENERATED_PARSER: bool = true;\n\n");
                 // Use inline Result type to avoid conflicts with crate::error::Result
                 code.push_str("type ParseResult<T> = std::result::Result<(T, usize), Error>;\n\n");
 
@@ -1175,6 +1185,28 @@ fn value_to_expr(value: &Value) -> Result<Expr> {
     };
 
     match tag.as_str() {
+        // Poison node emitted by the `legacy_tagged_ctor` grammar rule in
+        // lib/core/fmpl_parser.fmpl when input uses the legacy `:Tag(args)`
+        // constructor syntax (DESIGN-002 / ITER-0004d.1 T6/F2). The grammar rule
+        // matches and tags the offending fragment; rejection happens here so the
+        // error survives the ParseChoice closure boundaries in the generated
+        // parser. Error-message format mirrors parser.rs:672-682 and MUST
+        // contain the substring `use [:` (canonical-form hint asserted by
+        // canonical_pipeline_parity tests).
+        "LegacyTagCtor" => {
+            let tag_name = match children.first() {
+                Some(Value::String(s)) => s.clone(),
+                Some(Value::Symbol(s)) => s.clone(),
+                _ => SmolStr::new("?"),
+            };
+            return Err(Error::Parser {
+                token: 0,
+                message: format!(
+                    "legacy :{}(...) constructor syntax is not supported; use [:{}] or [:{}, ...] instead",
+                    tag_name, tag_name, tag_name
+                ),
+            });
+        }
         "Int" => {
             if let Some(Value::Int(n)) = children.first() {
                 Ok(Expr::Int(*n))
@@ -1840,6 +1872,28 @@ fn value_to_pattern(value: &Value) -> Result<Pattern> {
         return Err(Error::Runtime(format!("Expected pattern, got {:?}", value)));
     };
     match tag.as_str() {
+        // Poison node emitted by the `pat_legacy_tagged_ctor` grammar rule in
+        // lib/core/fmpl_parser.fmpl when input uses the legacy `:Tag(args)`
+        // constructor syntax IN PATTERN POSITION (DESIGN-002 / ITER-0004d.3a G2).
+        // The grammar rule matches and tags the offending fragment; rejection
+        // happens here so the error survives the ParseChoice closure boundaries
+        // in the generated parser. Error-message format mirrors parser.rs:1966
+        // (parse_pattern_primary) and MUST contain the substring `use [:`
+        // (canonical-form hint asserted by canonical_pipeline_parity tests).
+        "PatternLegacyTagCtor" => {
+            let tag_name = match children.first() {
+                Some(Value::String(s)) => s.clone(),
+                Some(Value::Symbol(s)) => s.clone(),
+                _ => SmolStr::new("?"),
+            };
+            return Err(Error::Parser {
+                token: 0,
+                message: format!(
+                    "legacy :{}(...) constructor pattern is not supported; use [:{}] or [:{}, ...] instead",
+                    tag_name, tag_name, tag_name
+                ),
+            });
+        }
         "PatternWildcard" => Ok(Pattern::Wildcard),
         "PatternVar" if !children.is_empty() => {
             if let Value::Symbol(name) = &children[0] {

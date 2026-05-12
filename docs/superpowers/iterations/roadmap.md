@@ -607,9 +607,11 @@ These gates are NOT new work — they are the existing iteration gates, framed u
 
 **Rationale:** ITER-0004d.1 deferred the `no_legacy_fmpl_syntax` gate flip to `== 0` mode because the metacircular pipeline is currently broken: `fmpl-bootstrap lib/core/parser_generator.fmpl` fails with `Parser error at token 20: expected Comma` when three or more `io::load(...)` calls are chained. The failure reproduces with the parent-commit source (it pre-dates the T-task work). Test sentinels stay green because `FMPL_SKIP_PARSER_GEN=1` falls back to the legacy parser, but a green `== 0` gate would silently mean "the fallback parser doesn't see legacy syntax", not "the metacircular pipeline doesn't see legacy syntax". DESIGN-001 (metacircular bootstrap) requires the latter.
 
-**Status:** pending
+**Status:** done 2026-05-12.
 
-**Impacted scenarios:** SCENARIO-0104, SCENARIO-0105, SCENARIO-0106 must re-pass under the canonical metacircular pipeline (not just the fallback parser). `no_legacy_fmpl_syntax` flips from baseline-mode to `== 0`.
+T1 reproduced and identified the root cause: `is_inline_pattern_block` heuristic at `parser.rs:1089-1182` misclassified `g @ { [:Tag, any:name, ...] => ... }` blocks as AST inline pattern blocks because it only inspected 3-4 tokens. The "three-load failure" label was incidental — it was actually a content-based misclassification that surfaced on the third load (the file containing `any:name` patterns). T1a discovered all 30 residual `no_legacy_fmpl_syntax` hits originated from Rust doc comments (`///` / `//!` desugar to `#[doc = "..."]` LitStr nodes that syn visits). T3 fixed `is_inline_pattern_block` (added `contains_grammar_bind_in_outer_brackets` helper detecting `Ident Symbol` adjacency inside brackets). T4 added `from_doc_attr: bool` to `SourceKind::RustString` and suppressed doc-attr origin hits in the gate. T5 (eliminate residual hits) was subsumed by T4's doc-attr fix — hit counts went 30→0 directly. T5a was a no-op (the ALLOWLIST entries cover non-doc-attr grammar-DSL sites in actual `.fmpl` files, still load-bearing). T6 flipped the gate to `== 0` mode and deleted the baseline JSON. T7a added SCENARIO-0108 + `canonical_pipeline_parity.rs` evidence tests (per the PAR-revised scope). T7b discovered via SCENARIO-0108's first run that the FMPL stdlib parser silently accepted `:Foo(1)` while the source-tree parser rejected it — fixed by adding a `legacy_tagged_ctor` rule to `lib/core/fmpl_parser.fmpl` using a poison-AST-node pattern (the FMPL grammar runtime lacks a `fail()` primitive — that limitation is a documented follow-up).
+
+**Impacted scenarios:** SCENARIO-0104, SCENARIO-0105, SCENARIO-0106 re-pass under the canonical metacircular pipeline. `no_legacy_fmpl_syntax` is now in `== 0` mode (baseline JSON deleted). SCENARIO-0108 NEW provides positive evidence that the canonical pipeline is behaviorally equivalent to the source-tree parser.
 
 **Depends on:** ITER-0004d.1 (the T-task variant deletions; the parser-rejection contract scenarios; the parser-epoch freshness signal that would catch a regressing generator).
 
@@ -656,6 +658,53 @@ These gates are NOT new work — they are the existing iteration gates, framed u
 - If a PARSER_EPOCH bump was needed (step 3a), the regenerated parser's embedded `GENERATED_PARSER_EPOCH` matches the new source `PARSER_EPOCH` value.
 
 **Out of scope:** ITER-0004d.2's opcode rename (separately scheduled). The data-driven scenario runner (ITER-0004d.4 below). The bootstrap-parse fix is bounded to the three-load issue; broader bootstrap refactoring is not in scope. Migrating SCENARIO-0108 into the scenario-runner card format (deferred to ITER-0004d.4 along with the others).
+
+### ITER-0004d.3a — SCENARIO-0108 audit-fix-up (G1+G2+G3)
+
+**Stories:** STORY-0010 Phase B AC-9/AC-10/AC-12 evidence strengthening. Direct response to ITER-0004d.3's three-tier audit findings.
+
+**Rationale:** The ITER-0004d.3 audit (PAR, two parallel auditors) returned GAPS FOUND with three high-confidence findings — two CRITICAL (raised by BOTH auditors) and one SERIOUS (raised by both). The findings are bounded and concrete; rather than ship ITER-0004d.3 with known gaps or fold them into the unrelated ITER-0004d.2 (opcode rename), this fix-up iteration closes the gaps surgically.
+
+**Status:** done 2026-05-12. G1 added `IS_GENERATED_PARSER: bool` to both real and fallback parser binaries + `canonical_pipeline_must_be_active` assertion test (PARSER_EPOCH 3→4). G2 strengthened the two remaining SCENARIO-0108 rejection tests with `use [:` hint assertions and added `pat_legacy_tagged_ctor` rule + `PatternLegacyTagCtor` postlude arm (PARSER_EPOCH 4→5). G3 added structural grep `scenario_0106_grep_8_legacy_tag_ctor_coupling` (asserts both magic strings in both files) + isolated postlude test `g3_postlude_arms_fire_on_poison_nodes`. Focused re-audit caught a residual gap (G3 behavioral test lacked the IS_GENERATED_PARSER guard, making it trivially passable under fallback — exactly the failure mode G1 prevented). Fixed by adding the guard. Final sentinel sweep: 140 passed, 3 ignored across 7 suites (+3 net tests vs end-of-ITER-0004d.3 baseline; 0 regressions).
+
+**The three gaps:**
+
+- **G1 (CRITICAL).** SCENARIO-0108's `canonical_pipeline_parity` tests are unfalsifiable when the fallback parser is active. The fallback's `generated_parse` delegates to `Parser::with_source(...).parse()` — identical to the source-tree path — so all 7 tests pass trivially in fallback mode. The test designed to catch fallback substitution cannot itself detect it. The iteration's manual verification doesn't survive into CI.
+- **G2 (CRITICAL).** SCENARIO-0108's contract states "both error messages MUST contain `use [:`" for all three rejection inputs. Only `parity_rejects_value_constructor_single_arg` actually checks this; the other two only assert `is_err()`. The pattern-position case can't satisfy the hint requirement at all — `legacy_tagged_ctor` is only in `primary` (expression position), not `pat_primary`. The canonical parser rejects pattern-position `:Tag(a, b)` via a generic syntactic mismatch, not the canonical-form hint.
+- **G3 (SERIOUS).** The T7b workaround couples a magic string ("LegacyTagCtor") between `lib/core/fmpl_parser.fmpl` (the grammar rule's emitted tag) and `fmpl-core/src/builtins/ir_to_rust.rs` (the postlude match arm). A rename in one without the other silently breaks the rejection. No isolated unit test exercises the postlude arm directly; no structural invariant catches the name-coupling.
+
+**Impacted scenarios:** SCENARIO-0108 evidence strengthened (no new scenario added; the existing scenario gets tighter tests). No other scenarios change.
+
+**Depends on:** ITER-0004d.3 (the surface that needs strengthening).
+
+**Look-ahead check:** ITER-0004d.2 (opcode rename) is unaffected. The G2 pattern-position rejection edit to `pat_primary` may interact with ITER-0004d.4's scenario-runner if that ever lands — the runner would presumably check `legacy_tagged_ctor` rejection via the scenario-card format, and the pattern-position case becoming a real rejection (not generic mismatch) makes the card more cleanly expressible.
+
+**Scope:**
+
+1. **G1 fix.** Add `pub const IS_GENERATED_PARSER: bool` to both the real generated parser (emitted by `fmpl-core/src/builtins/ir_to_rust.rs` postlude → set to `true`) and the fallback parser (emitted by `fmpl-core/build.rs::write_fallback_parser` → set to `false`). At the top of `fmpl-core/tests/canonical_pipeline_parity.rs`, add an assertion that `fmpl_core::parser::IS_GENERATED_PARSER` is `true` with a panic message explaining how to rebuild fmpl-bootstrap and unset `FMPL_SKIP_PARSER_GEN`/`FMPL_BOOTSTRAP_PHASE`. Document the contract in the test file's module docs.
+
+2. **G2 fix.** Two sub-edits:
+    - Add `assert!(st_msg.contains("use [:"))` and `assert!(cn_msg.contains("use [:"))` to `parity_rejects_value_constructor_multi_arg` and `parity_rejects_pattern_constructor_in_match_arm`, mirroring the existing `parity_rejects_value_constructor_single_arg` pattern.
+    - Add a `legacy_tagged_ctor`-equivalent to `pat_primary` in `lib/core/fmpl_parser.fmpl` so the canonical FMPL parser also rejects pattern-position `:Tag(p1, p2)` via the `LegacyTagCtor` postlude path (producing the same `use [:` hint as the source-tree parser).
+
+3. **G3 fix.** Two sub-edits:
+    - Add a unit test (in `fmpl-core/src/builtins/ir_to_rust.rs` or a sibling test) that directly invokes `value_to_expr` with `Value::list_node("LegacyTagCtor", vec![Value::Symbol("Foo".into())])` and asserts `Err(Error::Parser{...})` with message containing `use [:`. This catches a regression where the postlude arm is renamed without updating the grammar (or vice versa).
+    - Add a structural invariant grep to `structural_invariants.rs` (or a similar test) that confirms the literal `"LegacyTagCtor"` appears in BOTH `lib/core/fmpl_parser.fmpl` AND `fmpl-core/src/builtins/ir_to_rust.rs`. The grep can use the existing `find_word_in_code`-style helper.
+
+4. **Re-run sentinels.** Full sweep (canonical pipeline active, no env-skip) — expected ≥137 passed (the new G1/G2/G3 tests add net ≥3 tests; nothing removed).
+
+5. **Focused re-audit (single round).** Confirm the three flagged gaps are closed — not a full three-tier audit, just a targeted check on G1/G2/G3.
+
+**Acceptance:**
+
+- `cargo test -p fmpl-core --test canonical_pipeline_parity` fails immediately with a clear error if run against the fallback parser (G1 closed).
+- All three SCENARIO-0108 rejection tests assert the `use [:` hint on BOTH parsers' errors (G2 closed).
+- `cargo test -p fmpl-core --test structural_invariants` includes the new name-coupling grep (G3 closed).
+- A unit test directly exercises `value_to_expr` with the `LegacyTagCtor` poison node and asserts the rejection (G3 closed).
+- Full sentinel sweep: ≥137 passed, 3 ignored across 7 suites, 0 regressions.
+- Focused re-audit reports CLEAN on the three gap surfaces.
+
+**Out of scope:** Anything not in G1/G2/G3. The structural_invariants.rs migration to the scenario runner (deferred to ITER-0004d.4). Opcode rename (ITER-0004d.2). Broader audit findings beyond the three gaps.
 
 ### ITER-0004d.4 — Data-Driven Scenario Runner (cucumber/SLIM-style)
 

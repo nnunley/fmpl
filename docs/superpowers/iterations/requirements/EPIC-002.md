@@ -170,7 +170,7 @@ The bulk rewrite (~349 sites) is mechanical and gets done by two transformers, n
 - `fmpl-core/src/grammar/runtime.rs:794` (`Pattern::TagMatch` handler; delete)
 - `fmpl-core/src/vm.rs:1176, 1195` (`ExtractTaggedChild`/`MatchTag`; delete or rename)
 
-**Status:** Phase A done:ITER-0004c (AC-3 through AC-7 + AC-13). AC-1, AC-2, AC-8, AC-15 already satisfied by ITER-0004b's runtime burn. Phase B (AC-9, AC-10, AC-11, AC-12, AC-14) pending in ITER-0004d.
+**Status:** Phase A done:ITER-0004c (AC-3 through AC-7 + AC-13). AC-1, AC-2, AC-8, AC-15 already satisfied by ITER-0004b's runtime burn. Phase B AC-9/AC-10/AC-12 done:ITER-0004d.{1,3} (parser rejection + variant deletions in 0004d.1; canonical-pipeline ratchet + FMPL stdlib parser rejection + gate flip to == 0 in 0004d.3 + SCENARIO-0108). AC-11 pending in ITER-0004d.2 (opcode rename). AC-14 already satisfied by ITER-0004b.
 
 ## STORY-0011
 

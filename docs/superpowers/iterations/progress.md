@@ -1,9 +1,25 @@
 # Progress
 
-**Phase:** ITER-0004d.1 DONE; ITER-0004d.4 brainstormed-then-DEFERRED 2026-05-12. Next critical-path iteration is ITER-0004d.3 (bootstrap-parse + T18 gate flip) to close ITER-0004's correctness ratchet.
-**Iterations:** 7/13 done (ITER-0004d.1 closed; ITER-0004d.2, 0004d.3, 0004d.4, 0004e, 0004f, 0004g, 0004h, 0005+ pending). ITER-0004d.4 has a written spec at `docs/superpowers/specs/2026-05-12-scenario-runner-design.md` but is deferred until ITER-0004 closes.
-**Sentinel corpus (final, 2026-05-12):** ast_to_ir_parity 57/57 (2 #[ignore]); scenario_0103 32/32 (1 ignored); tavern_demo 6/6; no_legacy_fmpl_syntax 1/1 (baseline mode, gate flip deferred to ITER-0004d.3); structural_invariants 17/17 (NEW — SCENARIO-0104/0105/0106 evidence). 113 passed, 3 ignored across 5 suites. Full fmpl-core suite: 1200 passed, 182 ignored across 71 suites (fallback parser — metacircular path pending ITER-0004d.3).
-**Last event:** 2026-05-12 — ITER-0004d.4 brainstorming session produced a design spec including a bootstrap-durability extension (lib/tests/scenarios/scenarios.fmpl artifact, FMPL-surface runner). User then deferred the iteration pending ITER-0004 closure. Ratchet check confirmed: ITER-0004 correctness is already protected by the no_legacy_fmpl_syntax baseline, sentinel corpus, parser-epoch system, and structural_invariants — the scenario runner adds elegance, not new ratchet capability.
+**Phase:** ITER-0004d.3a DONE 2026-05-12 (audit fix-up closing three gaps in SCENARIO-0108 evidence). ITER-0004 remaining: ITER-0004d.2 (opcode rename), ITER-0004h (Type::Tagged cleanup). ITER-0004d.4 (scenario runner) still deferred per prior user decision.
+**Iterations:** 9/14 done. Pending: ITER-0004d.2, 0004d.4 (spec written, deferred), 0004e, 0004f, 0004g, 0004h, 0005+.
+**Sentinel corpus (final, 2026-05-12):** ast_to_ir_parity 57/57 (2 #[ignore]); scenario_0103 32/32 (1 ignored); tavern_demo 6/6; no_legacy_fmpl_syntax 1/1 (== 0 mode, baseline JSON deleted); structural_invariants 17/17; diagnostics_fmpl_source_scan 21/21 (was 17; +4 in T4); canonical_pipeline_parity 7/7 (NEW — SCENARIO-0108 evidence). **137 passed, 3 ignored across 7 suites** (+24 tests vs end-of-0004d.1, 0 regressions). Canonical pipeline confirmed active — no FMPL_SKIP_PARSER_GEN or FMPL_BOOTSTRAP_PHASE in test invocation; `target/.../out/generated_parser.rs` has GENERATED_PARSER_EPOCH=3 matching source.
+**Last event:** 2026-05-12 — ITER-0004d.3 wrap-up: T1+T1a investigations identified root causes (is_inline_pattern_block misclassification; doc-attr origin hits); T3+T4 fixed both surfaces; T6 flipped gate to == 0; T7a SCENARIO-0108 caught a real bug (FMPL parser silently weaker than source-tree); T7b added FMPL grammar rejection. PAR scope review's finding #1 (sentinel gap) directly produced T7a, which directly caught T7b's bug — concrete evidence of PAR value.
+
+## Ratchet status (ITER-0004 critical-path verification — post-ITER-0004d.3)
+
+After ITER-0004d.3:
+
+1. **`no_legacy_fmpl_syntax` gate (UPGRADED).** Was baseline-mode; now `== 0`-mode. Baseline JSON deleted; FMPL_REGEN_BASELINE env var no longer meaningful. Filters: ALLOWLIST (grammar-DSL bind sites in .fmpl files) + from_doc_attr suppression (Rust doc comments).
+2. **Sentinel test corpus (EXPANDED).** 7 suites, 137 passed, 3 ignored. New: diagnostics_fmpl_source_scan expanded (17→21 tests), canonical_pipeline_parity (NEW, 7 tests). Any regression in any suite fails CI.
+3. **Parser-epoch system (unchanged).** `PARSER_EPOCH = 3` matches generated parser's `GENERATED_PARSER_EPOCH = 3`. Compile-time assertion in parser.rs (cfg-gated to canonical pipeline) catches stale generators.
+4. **Structural invariants (unchanged).** Seven greps in structural_invariants.rs confirm deleted Rust variants stay deleted; canonical replacement ExtractTaggedChild stays present.
+5. **Canonical-pipeline parity (NEW gate).** SCENARIO-0108 evidence asserts the source-tree Rust parser and the FMPL-stdlib-generated parser produce equivalent results (rejection equivalence + AST equivalence). This is the gate that previously was implicit and unmeasurable.
+
+ITER-0004 closes when the remaining sub-iterations land:
+- **ITER-0004d.2** — opcode rename (AC-11). Mechanical sweep; low risk; sequencing-independent.
+- **ITER-0004h** — Type::Tagged cleanup. Last Tagged surface in the type system.
+
+ITER-0004d.4 (scenario runner) is still deferred — orthogonal to the ratchet.
 
 ## Ratchet status (ITER-0004 critical-path verification)
 

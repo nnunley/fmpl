@@ -87,3 +87,4 @@
 | SCENARIO-0104 | Parser rejects `:Tag(args)` value-constructor syntax | unit | sentinel | `cargo test -p fmpl-core --test structural_invariants scenario_0104` | STORY-0010, STORY-0095 |
 | SCENARIO-0105 | Parser rejects `:Tag(p1, p2)` pattern-position syntax | unit | sentinel | `cargo test -p fmpl-core --test structural_invariants scenario_0105` | STORY-0010, STORY-0095 |
 | SCENARIO-0106 | Rust-side greppable invariant: deleted variants stay deleted | unit | sentinel | `cargo test -p fmpl-core --test structural_invariants scenario_0106` | STORY-0010, STORY-0095 |
+| SCENARIO-0108 | Canonical-pipeline parity with source-tree parser | integration | sentinel | `cargo test -p fmpl-core --test canonical_pipeline_parity` | STORY-0010 |

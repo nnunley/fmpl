@@ -175,3 +175,103 @@ fn scan_rust_strings_swallows_lexer_errors_silently() {
         hits
     );
 }
+
+// --- doc-attribute discrimination (ITER-0004d.3 T4) ---
+//
+// `///` and `//!` Rust doc comments desugar to `#[doc = "..."]` attributes
+// during parsing. The scanner must distinguish doc-attr-origin `LitStr`s
+// from regular string literals so the gate can suppress doc hits without
+// silencing genuine legacy syntax in code.
+
+#[test]
+fn scan_doc_attr_outer_litstr_is_marked_from_doc_attr() {
+    // `///` doc comment in front of an item — desugars to
+    // `#[doc = "..."]`. The string contains `:Foo(1, 2)` which scans as
+    // one hit; that hit's `SourceKind::RustString.from_doc_attr` must be
+    // `true`.
+    let rust_src = r#"
+/// Convert :Foo(1, 2) to bar.
+pub fn x() {}
+"#;
+    let hits =
+        common::rust_string_scanner::scan_rust_strings(rust_src, &PathBuf::from("example.rs"))
+            .expect("syn parses example.rs");
+    assert_eq!(hits.len(), 1, "expected 1 hit, got {:?}", hits);
+    assert!(
+        hits[0].source.from_doc_attr(),
+        "doc-attr LitStr should be flagged: {:?}",
+        hits[0]
+    );
+}
+
+#[test]
+fn scan_doc_attr_inner_litstr_is_marked_from_doc_attr() {
+    // `//!` inner doc comment — desugars to `#![doc = "..."]`. Same
+    // discrimination requirement as outer doc comments.
+    let rust_src = r#"
+//! Module doc with :Bar(42) example.
+
+pub fn x() {}
+"#;
+    let hits =
+        common::rust_string_scanner::scan_rust_strings(rust_src, &PathBuf::from("example.rs"))
+            .expect("syn parses example.rs");
+    assert_eq!(hits.len(), 1, "expected 1 hit, got {:?}", hits);
+    assert!(
+        hits[0].source.from_doc_attr(),
+        "inner doc-attr LitStr should be flagged: {:?}",
+        hits[0]
+    );
+    assert_eq!(hits[0].tag.as_str(), "Bar");
+}
+
+#[test]
+fn scan_regular_litstr_is_not_marked_from_doc_attr() {
+    // A plain string literal in code — `from_doc_attr` must be `false`.
+    let rust_src = r#"
+pub fn x() {
+    let s = ":Foo(1, 2)";
+    let _ = s;
+}
+"#;
+    let hits =
+        common::rust_string_scanner::scan_rust_strings(rust_src, &PathBuf::from("example.rs"))
+            .expect("syn parses example.rs");
+    assert_eq!(hits.len(), 1, "expected 1 hit, got {:?}", hits);
+    assert!(
+        !hits[0].source.from_doc_attr(),
+        "regular LitStr must not be flagged as doc-attr: {:?}",
+        hits[0]
+    );
+}
+
+#[test]
+fn scan_mixed_doc_and_regular_litstrs_discriminates_correctly() {
+    // Both kinds in one file. Ensure flag flips per-hit rather than
+    // leaking across the visitor traversal.
+    let rust_src = r#"
+/// Doc with :Foo(1) inside.
+pub fn x() {
+    let s = ":Bar(2)";
+    let _ = s;
+}
+"#;
+    let hits =
+        common::rust_string_scanner::scan_rust_strings(rust_src, &PathBuf::from("example.rs"))
+            .expect("syn parses example.rs");
+    assert_eq!(hits.len(), 2, "expected 2 hits, got {:?}", hits);
+    // Order: doc attr is visited before the function body in syn's
+    // default traversal. The doc hit should be flagged, the body hit not.
+    let doc_hit = hits.iter().find(|h| h.tag.as_str() == "Foo").expect("Foo");
+    let body_hit = hits.iter().find(|h| h.tag.as_str() == "Bar").expect("Bar");
+    assert!(
+        doc_hit.source.from_doc_attr(),
+        "Foo hit (in doc attr) must be flagged: {:?}",
+        doc_hit
+    );
+    assert!(
+        !body_hit.source.from_doc_attr(),
+        "Bar hit (in code literal) must NOT be flagged: {:?}",
+        body_hit
+    );
+}

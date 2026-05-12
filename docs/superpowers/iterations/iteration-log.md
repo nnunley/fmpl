@@ -355,3 +355,112 @@ User feedback during the T19 review: per-scenario Rust tests work but the scenar
 
 **Summary:**
 ITER-0004d.1 closed the parser surface for `:Tag(args)` syntax (both expression and pattern positions) by deleting four producer/consumer AST/pattern variants and ~300+ lines of dead consumer arms across compiler.rs, vm.rs, grammar runtime/trampoline, repr, builtins, and value_to_ast. Three new behavior-corpus scenarios (SCENARIO-0104/0105/0106) document the contracts; 17 passing Rust evidence tests in `structural_invariants.rs` provide proof at the unit seam. The parser-epoch system was added as a freshness signal for future generator-regeneration cycles. T18 (CI gate flip to `== 0`) was deferred to ITER-0004d.3 pending the bootstrap-parse follow-up; ITER-0004d.4 was scheduled for the data-driven scenario runner the user raised during T19 review. Sentinel corpus is green (113 passed, 3 ignored across 5 suites covering the impacted scenarios + sentinels).
+
+---
+
+## ITER-0004d.3 — Bootstrap-Parse Fix + `no_legacy_fmpl_syntax` Gate Flip — done 2026-05-12
+
+**Stories committed:** STORY-0010 Phase B AC-9 / AC-10 / AC-12 final CI-gate ratchet (the deferred T18 from ITER-0004d.1). Adds SCENARIO-0108 (canonical-pipeline parity).
+
+**Result:** The metacircular pipeline now works end-to-end. The `no_legacy_fmpl_syntax` gate runs in `== 0` mode against the canonical generated parser. SCENARIO-0108 provides positive behavioral evidence that the canonical pipeline produces the same parse results as the source-tree Rust parser.
+
+| Surface | Before | After |
+|---|---|---|
+| `is_inline_pattern_block` heuristic | misclassified `g @ { [:Tag, any:name] => ... }` as AST inline pattern, broke metacircular bootstrap on 3rd load | distinguishes via `Ident Symbol` adjacency inside `[ ... ]`; routes grammar-DSL blocks to `parse_anonymous_grammar_block` |
+| `no_legacy_fmpl_syntax` gate mode | baseline-mode (`lib/core=0, src/rs=26, tests/fmpl=0, tests/rs=4`) | `== 0` mode (baseline JSON deleted) |
+| `SourceKind::RustString` | no doc-attr discrimination — `syn` visited doc comments as `LitStr`, producing 30 false positives | `from_doc_attr: bool` flag; gate suppresses doc-attr origin hits |
+| `lib/core/fmpl_parser.fmpl` | accepted `:Foo(1)` as `Call(Symbol("Foo"), [...])` — silently weaker than source-tree parser | rejects `:Foo(1)` with same error as source-tree (via `legacy_tagged_ctor` rule + `"LegacyTagCtor"` postlude arm) |
+
+**Plus new evidence corpus:**
+
+- `fmpl-core/tests/canonical_pipeline_parity.rs` (NEW) — 7 evidence tests covering SCENARIO-0108: 3 rejection-parity tests (`:Foo(1)`, `:Bar(1, 2, 3)`, `match x { :Pair(a, b) => 1 }`), 4 AST-parity tests (`42`, `1 + 2 * 3`, `:Foo`, `[:Foo, 1, 2]`).
+- `behavior-scenarios.md` — SCENARIO-0108 added with full Preconditions / Action / Expected observables (two equivalence classes: rejection equivalence + AST equivalence).
+- `behavior-corpus.md` — SCENARIO-0108 entry with concrete `cargo test -p fmpl-core --test canonical_pipeline_parity` command, marked `sentinel` cadence.
+- `requirements/EPIC-002.md` STORY-0010 status updated: AC-9/AC-10/AC-12 done:ITER-0004d.{1,3}; AC-11 pending in ITER-0004d.2.
+
+**Sentinels (final, 2026-05-12):**
+- ast_to_ir_parity: 57 passed, 2 ignored (FOLLOWUP #30)
+- scenario_0103_optimizer_pipeline: 32 passed, 1 ignored
+- tavern_demo: 6 passed
+- no_legacy_fmpl_syntax: 1 passed (`== 0` mode, baseline JSON deleted)
+- structural_invariants: 17 passed
+- diagnostics_fmpl_source_scan: 21 passed (was 17; added 4 doc-attr discrimination tests in T4)
+- canonical_pipeline_parity: 7 passed (NEW — SCENARIO-0108 evidence)
+- **Total: 137 passed, 3 ignored across 7 suites** (vs prior 113/3 across 5 suites — net +24 tests, 0 regressions)
+- Confirmed canonical pipeline active: `unset FMPL_BOOTSTRAP_PHASE FMPL_SKIP_PARSER_GEN; cargo build` produces no "Parser generation skipped" or "using legacy parser" warning; `target/debug/build/fmpl-core-*/out/generated_parser.rs` has `GENERATED_PARSER_EPOCH: u32 = 3` matching source.
+
+**PAR scope review impact:**
+
+Two adversarial reviewers returned REVISE in parallel with six aggregated findings:
+
+1. **Sentinel gap — no test exercises `parser::generated_parse`.** Both reviewers flagged independently. Resolution: SCENARIO-0108 + canonical_pipeline_parity.rs added. **Caught a real divergence on first run** — the FMPL parser silently accepted `:Foo(1)` while the source-tree parser rejected it. T7b fixed the FMPL grammar. Without this finding, ITER-0004d.3 would have shipped with the metacircular pipeline silently weaker than the source-tree parser.
+2. **ACs conflated syntactic vs behavioral gates.** Resolution: Acceptance section split into "Syntactic-cleanliness gate" and "Behavioral-correctness gate" as distinct AC families.
+3. **Scanner discriminator direction may be wrong** (the `module:function(args)` characterization). T1a confirmed the description was wrong — all 30 hits were doc-attr origin, not `module:function(args)` token sequences. The single-token lookback approach was the wrong design; doc-attr origin discrimination was the right one.
+4. **Scope-creep allowlist hedge.** Resolution: "no new allowlist entries" binding precondition added.
+5. **Grammar-runtime fix → PARSER_EPOCH bump unmodeled.** Resolution: T3a contingency added. T1's investigation showed the fix lives in `parser.rs` (not grammar/runtime.rs), so T3a became a no-op.
+6. **Redundant allowlist cleanup.** Resolution: T5a planned but turned out to be a no-op — the allowlist entries cover non-doc-attr grammar-DSL sites in actual `.fmpl` files (still load-bearing).
+
+The PAR loop did not need a second round; all six findings were addressed with surgical scope edits. The fact that finding #1 caught a real bug (FMPL parser weaker than source-tree) is concrete evidence of PAR's value on this iteration.
+
+**Lessons:**
+
+1. **"All sentinels pass" is not the same as "the canonical pipeline is correct".** Both PAR reviewers flagged this independently. Every sentinel routed through either `Parser::with_source` (source-tree) or `eval_via_legacy_parser`; none used `generated_parse`. The claim "we test the canonical pipeline" was empirically false — and the absence was invisible without explicitly checking which parser entry point each sentinel called. Lesson: when a proof obligation says "X works through pipeline Y", at least one sentinel must mechanically execute through pipeline Y.
+2. **The label can mislead.** The bootstrap failure was called "the three-load failure" for two days because it surfaced consistently on the third `io::load(...)` call. T1 showed the real mechanism was content-dependent (only files with `g @ { [:Tag, any:name] => ... }` blocks failed); the three-load coincidence was just the order in which files of different content were loaded. Lesson: when an investigation produces a heuristic label, treat it as a hypothesis to verify, not a name to keep.
+3. **PAR review can find bugs by predicting them.** Finding #1 (no sentinel exercises generated_parse) was not a hypothetical concern — adding the missing sentinel immediately surfaced a real divergence (FMPL parser silently weaker). The reviewer didn't know the bug existed; they inferred from the test architecture that a divergence COULD hide there. Adding the coverage forced the bug into view. Lesson: when a reviewer says "you're missing coverage at boundary X", evaluate whether boundary X is one where bugs could hide silently, regardless of whether you have direct evidence of a bug.
+4. **FMPL grammar runtime lacks parse-failure primitive.** T7b discovered that the grammar runtime / IR-to-Rust transpiler has no native `fail(msg)` mechanism: no `"Throw"` arm in `ir_to_rust::transpile_tagged`, and `ParseChoice` wraps alternatives in closures that catch early returns. Workaround: emit a poison AST node (`[:LegacyTagCtor, tag]`) from the grammar and reject it in the postlude `value_to_expr`. This works but is unconventional. Documented follow-up: a real grammar-side `fail()` primitive would require both a new IR arm and a rework of `ParseChoice` codegen to allow controlled hard-failure across alternatives. Out of scope for ITER-0004d.3 but tracked for a future iteration.
+
+**Cross-iteration TODO resolution:**
+
+- TODO(ITER-0004d.3) markers in source: none found (`grep -rn 'TODO(ITER-0004d.3)' fmpl-core/ lib/`). All forward-references resolved.
+
+**Summary:**
+
+ITER-0004d.3 closed the metacircular-pipeline correctness gap that ITER-0004d.1 deferred. The bootstrap-parse failure was root-caused (not three-load; content-dependent `is_inline_pattern_block` misclassification) and fixed. The legacy-syntax gate is now in `== 0` mode with doc-attr origin discrimination. PAR scope review caught a real bug class (FMPL stdlib parser silently weaker than source-tree) that the new SCENARIO-0108 surface evidenced and T7b fixed. Sentinel corpus: 137 passed, 3 ignored across 7 suites (+24 net tests, 0 regressions). Canonical pipeline confirmed active. ITER-0004's correctness ratchet has tightened by one more turn.
+
+---
+
+## ITER-0004d.3a — SCENARIO-0108 audit fix-up (G1+G2+G3) — done 2026-05-12
+
+**Stories committed:** STORY-0010 Phase B AC-9/AC-10/AC-12 evidence strengthening. Direct response to ITER-0004d.3's three-tier audit findings.
+
+**Result:** All three audit-flagged gaps closed. SCENARIO-0108 evidence is now genuinely falsifiable; the magic-string coupling between FMPL grammar and Rust postlude is statically asserted; the postlude arms have an isolated regression test.
+
+**Audit findings closed:**
+
+| Gap | Severity | Fix |
+|---|---|---|
+| G1: SCENARIO-0108 tests unfalsifiable under fallback parser (both auditors) | CRITICAL | Added `pub const IS_GENERATED_PARSER: bool` to both real (true) and fallback (false) parser binaries. `canonical_pipeline_must_be_active` test asserts the constant; tests now FAIL loudly under fallback rather than passing trivially. PARSER_EPOCH bumped 3→4. |
+| G2: SCENARIO-0108 hint assertions missing on 2/3 cases + pattern-position couldn't produce hint (both auditors) | CRITICAL | Strengthened `parity_rejects_value_constructor_multi_arg` and `parity_rejects_pattern_constructor_in_match_arm` with `use [:` assertions on both parsers' errors. Added `pat_legacy_tagged_ctor` rule to `lib/core/fmpl_parser.fmpl` placed first in `pat_primary` alternation; added `"PatternLegacyTagCtor"` arm in `value_to_pattern` postlude. PARSER_EPOCH bumped 4→5. |
+| G3: magic-string coupling between fmpl_parser.fmpl and ir_to_rust.rs not tested (both auditors) | SERIOUS | Added `scenario_0106_grep_8_legacy_tag_ctor_coupling` structural grep asserting both `LegacyTagCtor` and `PatternLegacyTagCtor` appear in both files. Added `g3_postlude_arms_fire_on_poison_nodes` isolated test exercising both postlude arms via crafted `generated_parse` inputs (route A2 since `value_to_expr` / `value_to_pattern` are private to the generated `__generated` module). |
+
+**Plus residual-gap-fix found in the re-audit:**
+
+The first-cut G3 implementation forgot the `IS_GENERATED_PARSER` guard on `g3_postlude_arms_fire_on_poison_nodes` — exactly the failure mode G1 was designed to prevent (test would pass trivially under fallback because the source-tree parser also rejects `:Foo(1)` and `match x { :Pair(a, b) => 1 }` with messages containing `use [:`). Caught by the focused re-audit (which the iteration's acceptance criteria specifically required). Fixed by adding the same `assert!(IS_GENERATED_PARSER)` guard at the top of the test.
+
+**Sentinels (final, 2026-05-12):**
+- ast_to_ir_parity: 57 passed, 2 ignored
+- scenario_0103_optimizer_pipeline: 32 passed, 1 ignored
+- tavern_demo: 6 passed
+- no_legacy_fmpl_syntax: 1 passed (== 0 mode)
+- structural_invariants: 19 passed (was 17 — +2 from G3)
+- diagnostics_fmpl_source_scan: 21 passed
+- canonical_pipeline_parity: 8 passed (was 7 — +1 from G1)
+- **Total: 140 passed, 3 ignored across 7 suites** (vs end-of-ITER-0004d.3 baseline 137/3; net +3 tests, 0 regressions)
+
+**PARSER_EPOCH lineage:**
+
+ITER-0004d.3a touched the postlude raw-string twice (G1 adds `IS_GENERATED_PARSER`; G2 adds `PatternLegacyTagCtor` arm). Each change independently bumped per the `parser_epoch.rs:27-29` policy:
+- 3 → 4 (G1, 2026-05-12 — postlude const addition)
+- 4 → 5 (G2, 2026-05-12 — postlude match arm addition for pattern-position rejection)
+
+Both bumps are recorded in `parser_epoch.rs:66-82` bump history.
+
+**Lessons:**
+
+1. **Audit-fix-up iterations can themselves require audits.** The re-audit step caught a residual G3 gap (missing `IS_GENERATED_PARSER` guard) that would have shipped silently. Without re-auditing, the iteration would have closed with an evidence test that was itself unfalsifiable — defeating the iteration's own purpose. The lesson: a fix-up iteration's acceptance criterion MUST include "the re-audit confirms the gaps are closed," not just "the new tests pass."
+2. **Pattern: PAR finds bugs by predicting them.** Same pattern as ITER-0004d.3's PAR finding #1: auditors saw a structural weakness and predicted a class of regression. The class wasn't hypothetical — adding the guards immediately surfaced the trivially-passing condition. Demonstrates concrete PAR value on TWO consecutive iterations.
+3. **Magic strings across files need a structural test.** The T7b workaround (poison AST node) created a hardcoded coupling between the FMPL grammar's emitted tag name and the Rust postlude's match-arm string. Without the structural grep in G3, a rename in either file would silently break the rejection. Future work: consider extracting the magic strings into a single Rust constant referenced from both sides (cleaner than a structural grep, but requires changes to the FMPL grammar to reference Rust-side identifiers — out of scope for this iteration).
+4. **Parser-epoch bump policy works.** Two independent bumps in one iteration handled cleanly by `build.rs`'s `read_generated_parser_epoch` invalidation — no manual `cargo clean` needed. The mechanism is robust to legitimate concurrent edits.
+
+**Summary:**
+ITER-0004d.3a closed three audit-flagged gaps in SCENARIO-0108 evidence: fallback-detection guard (G1), hint assertions on all three rejection inputs + pattern-position canonical rejection (G2), structural-grep-plus-isolated-test for the T7b magic-string coupling (G3). Sentinel corpus expanded to 140/3 across 7 suites. The re-audit caught a residual G3 gap (missing falsifiability guard on the postlude test) that was fixed inline. ITER-0004 progress: AC-9, AC-10, AC-12 now have genuinely-strong canonical-pipeline evidence. ITER-0004d.2 (opcode rename) and ITER-0004h (Type::Tagged cleanup) remain.

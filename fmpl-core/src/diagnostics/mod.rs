@@ -31,10 +31,32 @@ pub enum SourceKind {
     /// the `span-locations` feature, so the current test helper passes
     /// `None`). Future consumers must treat `None` as "exact location
     /// unavailable" rather than zero.
+    ///
+    /// `from_doc_attr` is `true` when the `LitStr` originated from a
+    /// `#[doc = "..."]` attribute (which is what Rust doc comments —
+    /// `///` and `//!` — desugar into). Doc-attr origins describe FMPL
+    /// vocabulary in prose, not live FMPL code, so the
+    /// `no_legacy_fmpl_syntax` gate filters them out before counting.
+    /// `false` indicates a regular string literal in code (e.g.
+    /// `let s = ":Foo(1)";`), which still counts as a live legacy hit.
     RustString {
         rust_path: PathBuf,
         rust_byte_offset: Option<usize>,
+        from_doc_attr: bool,
     },
+}
+
+impl SourceKind {
+    /// Convenience accessor: `true` iff this source is a `RustString`
+    /// whose `LitStr` came from a `#[doc = "..."]` attribute (i.e. a
+    /// Rust doc comment). Returns `false` for `FmplFile` and for regular
+    /// `RustString` literals.
+    pub fn from_doc_attr(&self) -> bool {
+        match self {
+            SourceKind::RustString { from_doc_attr, .. } => *from_doc_attr,
+            SourceKind::FmplFile { .. } => false,
+        }
+    }
 }
 
 /// One occurrence of legacy `:Tag(args)` syntax in source.
