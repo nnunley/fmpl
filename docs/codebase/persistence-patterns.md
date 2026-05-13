@@ -1,6 +1,6 @@
-# Fjall Persistence Patterns
+# Persistence Patterns
 
-Feature flag: `fjall-persistence` (optional, enabled in tests with `--features fjall-persistence`).
+Feature flag: `persistence` (optional, enabled in tests with `--features persistence`). Fjall is the underlying KV store used by this feature.
 
 ## Serialization: serde JSON currently, migrating to rkyv
 
@@ -11,14 +11,14 @@ Current persistence uses **serde_json**. The target is **rkyv** (zero-copy deser
 All persistence follows the same pattern:
 
 ```rust
-#[cfg(feature = "fjall-persistence")]
+#[cfg(feature = "persistence")]
 pub fn save_to_fjall(&self, keyspace: &fjall::Keyspace, key: &str) -> Result<()> {
     let bytes = serde_json::to_vec(self)?;
     keyspace.insert(key.as_bytes(), bytes)?;
     Ok(())
 }
 
-#[cfg(feature = "fjall-persistence")]
+#[cfg(feature = "persistence")]
 pub fn load_from_fjall(keyspace: &fjall::Keyspace, key: &str) -> Result<Option<Self>> {
     match keyspace.get(key.as_bytes())? {
         Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
@@ -40,7 +40,7 @@ Errors wrap into `Error::BytecodePersistenceError(String)` or `Error::ObjectPers
 ## Test Pattern
 
 ```rust
-#![cfg(feature = "fjall-persistence")]
+#![cfg(feature = "persistence")]
 
 #[test]
 fn test_name() {

@@ -1,5 +1,10 @@
 # Build artifacts
 /target/
+# Stray rlib emissions to the repo root (e.g. a one-off
+# `rustc --crate-name X` outside cargo emits to CWD by default).
+# ITER-0005a.5 T1 had one such artifact appear; ITER-0005b closing
+# PAR R-L-C-1 made the policy explicit.
+*.rlib
 
 # macOS
 .DS_Store

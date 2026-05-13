@@ -1,6 +1,6 @@
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use fjall::{Config, PartitionCreateOptions, PartitionHandle};
+use fmpl_persistence::Store;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -48,28 +48,33 @@ impl SnapshotEnvelope {
 }
 
 pub struct ContinuationStore {
-    partition: PartitionHandle,
+    /// Trait-object form keeps the backend swappable: the concrete
+    /// type `FjallStore` is named only at construction. Per ITER-
+    /// 0005a.6 R-H-C-1 PAR fix — the prior `store: FjallStore` field
+    /// silently leaked the backend identity into consumer code.
+    store: Box<dyn Store + Send + Sync>,
 }
 
 impl ContinuationStore {
     pub fn new(path: impl AsRef<Path>) -> Result<Self> {
-        let keyspace = Config::new(path).open()?;
-        let partition =
-            keyspace.open_partition("continuations", PartitionCreateOptions::default())?;
-        Ok(Self { partition })
+        let store =
+            fmpl_persistence::fjall_backend::FjallStore::open(path.as_ref().join("continuations"))?;
+        Ok(Self {
+            store: Box::new(store),
+        })
     }
 
     pub fn save(&self, session_id: &str, env: SnapshotEnvelope) -> Result<String> {
         let token = self.generate_token(session_id);
         let key = format!("{}:{}", session_id, token);
         let bytes = serde_json::to_vec(&env)?;
-        self.partition.insert(key, bytes)?;
+        self.store.insert(key.as_bytes(), &bytes)?;
         Ok(token)
     }
 
     pub fn load(&self, session_id: &str, token: &str) -> Result<SnapshotEnvelope> {
         let key = format!("{}:{}", session_id, token);
-        let bytes = self.partition.get(key)?;
+        let bytes = self.store.get(key.as_bytes())?;
         let Some(bytes) = bytes else {
             return Err("continuation not found".into());
         };
@@ -123,7 +128,7 @@ impl ContinuationStore {
             };
             let prev_key = format!("{}:{}", session_id, prev_token);
             let prev_bytes = serde_json::to_vec(&prev_env)?;
-            self.partition.insert(prev_key, prev_bytes)?;
+            self.store.insert(prev_key.as_bytes(), &prev_bytes)?;
             payload["stream"] = serde_json::json!({
                 "source": [event],
                 "ops": [],
@@ -139,7 +144,7 @@ impl ContinuationStore {
         env.payload = serde_json::to_vec(&payload)?;
         let key = format!("{}:{}", session_id, token);
         let bytes = serde_json::to_vec(&env)?;
-        self.partition.insert(key, bytes)?;
+        self.store.insert(key.as_bytes(), &bytes)?;
         Ok(())
     }
 

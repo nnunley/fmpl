@@ -126,7 +126,7 @@ Note: `Collect`, `Take`, `Drop` are not implemented as StreamOp variants.
 
 No optional features enabled.
 
-### `fjall-persistence`
+### `persistence`
 
 Enables Fjall-backed persistence for:
 
@@ -136,7 +136,7 @@ Enables Fjall-backed persistence for:
 
 ```toml
 [dependencies]
-fmpl-core = { path = "../fmpl-core", features = ["fjall-persistence"] }
+fmpl-core = { path = "../fmpl-core", features = ["persistence"] }
 ```
 
 ---

@@ -1,21 +1,19 @@
-//! Tests for ObjectDb persistence to Fjall storage (AC-P3-1).
+//! Tests for ObjectDb persistence to Store-backed storage (AC-P3-1).
 
-#![cfg(feature = "fjall-persistence")]
+#![cfg(feature = "fjall-backend")]
 
 use fmpl_core::object::ObjectDb;
 use fmpl_core::value::Value;
+use fmpl_persistence::fjall_backend::FjallStore;
 use smol_str::SmolStr;
 
-/// AC-1: ObjectDb.save_to_fjall() serializes all objects to Fjall partition.
-/// AC-2: ObjectDb.load_from_fjall() restores objects with properties intact.
+/// AC-1: ObjectDb.save_to_store() serializes all objects to Store-backed storage.
+/// AC-2: ObjectDb.load_from_store() restores objects with properties intact.
 /// AC-3: Object IDs are preserved across save/restore.
 #[test]
 fn object_survives_save_restore() {
     let dir = tempfile::tempdir().unwrap();
-    let _db = fjall::Database::builder(dir.path()).open().unwrap();
-    let keyspace = _db
-        .keyspace("objects", fjall::KeyspaceCreateOptions::default)
-        .unwrap();
+    let store = FjallStore::open(dir.path()).unwrap();
 
     // Create object with property
     let mut db = ObjectDb::new();
@@ -25,12 +23,12 @@ fn object_survives_save_restore() {
     db.set_property(id, SmolStr::new("count"), Value::Int(42))
         .unwrap();
 
-    // Save to Fjall
-    db.save_to_fjall(&keyspace).unwrap();
+    // Save to Store
+    db.save_to_store(&store).unwrap();
 
-    // Create new ObjectDb and load from Fjall
+    // Create new ObjectDb and load from Store
     let mut db2 = ObjectDb::new();
-    db2.load_from_fjall(&keyspace).unwrap();
+    db2.load_from_store(&store).unwrap();
 
     // Verify object restored with same ID and properties
     assert_eq!(db2.get(id).unwrap().id, id);
@@ -45,10 +43,7 @@ fn object_survives_save_restore() {
 #[test]
 fn prototype_chain_survives_save_restore() {
     let dir = tempfile::tempdir().unwrap();
-    let _db = fjall::Database::builder(dir.path()).open().unwrap();
-    let keyspace = _db
-        .keyspace("objects", fjall::KeyspaceCreateOptions::default)
-        .unwrap();
+    let store = FjallStore::open(dir.path()).unwrap();
 
     // Create parent object
     let mut db = ObjectDb::new();
@@ -70,10 +65,10 @@ fn prototype_chain_survives_save_restore() {
     .unwrap();
 
     // Save and restore
-    db.save_to_fjall(&keyspace).unwrap();
+    db.save_to_store(&store).unwrap();
 
     let mut db2 = ObjectDb::new();
-    db2.load_from_fjall(&keyspace).unwrap();
+    db2.load_from_store(&store).unwrap();
 
     // Verify prototype chain is restored
     assert_eq!(db2.get(child_id).unwrap().parent, Some(parent_id));
@@ -91,10 +86,7 @@ fn prototype_chain_survives_save_restore() {
 #[test]
 fn multiple_objects_survive_save_restore() {
     let dir = tempfile::tempdir().unwrap();
-    let _db = fjall::Database::builder(dir.path()).open().unwrap();
-    let keyspace = _db
-        .keyspace("objects", fjall::KeyspaceCreateOptions::default)
-        .unwrap();
+    let store = FjallStore::open(dir.path()).unwrap();
 
     let mut db = ObjectDb::new();
     let id1 = db.create(None);
@@ -108,10 +100,10 @@ fn multiple_objects_survive_save_restore() {
     db.set_property(id3, SmolStr::new("z"), Value::Int(3))
         .unwrap();
 
-    db.save_to_fjall(&keyspace).unwrap();
+    db.save_to_store(&store).unwrap();
 
     let mut db2 = ObjectDb::new();
-    db2.load_from_fjall(&keyspace).unwrap();
+    db2.load_from_store(&store).unwrap();
 
     // All objects present with correct IDs and properties
     assert!(db2.get(id1).is_some());
@@ -128,20 +120,17 @@ fn multiple_objects_survive_save_restore() {
 #[test]
 fn next_id_restored_correctly() {
     let dir = tempfile::tempdir().unwrap();
-    let _db = fjall::Database::builder(dir.path()).open().unwrap();
-    let keyspace = _db
-        .keyspace("objects", fjall::KeyspaceCreateOptions::default)
-        .unwrap();
+    let store = FjallStore::open(dir.path()).unwrap();
 
     let mut db = ObjectDb::new();
     let _id1 = db.create(None);
     let _id2 = db.create(None);
     let id3 = db.create(None);
 
-    db.save_to_fjall(&keyspace).unwrap();
+    db.save_to_store(&store).unwrap();
 
     let mut db2 = ObjectDb::new();
-    db2.load_from_fjall(&keyspace).unwrap();
+    db2.load_from_store(&store).unwrap();
 
     // New objects created should not reuse old IDs
     let new_id = db2.create(None);

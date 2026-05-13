@@ -36,6 +36,9 @@ pub mod tuplespace;
 pub mod types;
 pub mod value;
 pub mod vm;
+pub mod vm_version;
+
+pub use vm_version::{VM_VERSION, VM_VERSION_MAJOR, VM_VERSION_MINOR, VM_VERSION_PATCH};
 
 pub use ast::Expr;
 pub use compiler::{CompiledCode, Compiler, Instruction};

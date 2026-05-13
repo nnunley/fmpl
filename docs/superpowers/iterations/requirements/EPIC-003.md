@@ -198,13 +198,13 @@
 **Title:** Enable Fjall-backed persistence via feature flag
 
 **As a** FMPL deployment
-**I want** to enable fjall-persistence feature for durable storage
+**I want** to enable persistence feature for durable storage
 **So that** stream positions, memo tables, and parse state survive process restarts
 
 **Acceptance criteria:**
-- AC-1: When fjall-persistence is enabled, large stream buffers spill to disk via Fjall · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0069`
-- AC-2: When fjall-persistence is enabled, memoization tables persist across suspension/resume · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0069`
-- AC-3: When fjall-persistence is enabled, ParseState can be serialized for durable parse suspension · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0069`
+- AC-1: When persistence is enabled, large stream buffers spill to disk via Fjall · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0069`
+- AC-2: When persistence is enabled, memoization tables persist across suspension/resume · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0069`
+- AC-3: When persistence is enabled, ParseState can be serialized for durable parse suspension · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0069`
 - AC-4: By default (no feature flags), no optional features are enabled · impact:`none` · seam:`unit`
 
 **Sources:**
@@ -232,12 +232,17 @@
 
 **Sources:**
 - This conversation: design discussion 2026-05-08
-- `docs/codebase/fjall-persistence-patterns.md` (current raw-serde pattern being replaced)
-- `fmpl-core/src/persistence/{schema,envelope,checksum,loader}.rs` (ITER-0005a.1 implementation)
-- `fmpl-core/tests/scenario_0099_envelope_loader.rs` (SCENARIO-0099 evidence test, ITER-0005a.1)
-- `fmpl-core/tests/persistence_schema_anti_rot.rs` (AC-6 anti-rot ratchet, ITER-0005a.1)
+- `docs/codebase/persistence-patterns.md` (current raw-serde pattern being replaced)
+- `fmpl-persistence/src/{schema,envelope,checksum,loader,store,fjall_backend}.rs` (ITER-0005a.1 implementation, relocated to dedicated crate in ITER-0005a.5)
+- `fmpl-persistence/tests/scenario_0099_envelope_loader.rs` (SCENARIO-0099 evidence test, relocated ITER-0005a.5)
+- `fmpl-persistence/tests/scenario_0111_envelope_writer_roundtrip.rs` (SCENARIO-0111 writer→loader round-trip, relocated ITER-0005a.5)
+- `fmpl-persistence/tests/scenario_0112_operator_detection.rs` (SCENARIO-0112 operator-actionable histograms, relocated ITER-0005a.5)
+- `fmpl-persistence/tests/iter_store.rs` (AC-7 public-API evidence, renamed from `iter_keyspace.rs` per ITER-0005a.5 T4.13)
+- `fmpl-persistence/tests/persistence_schema_format_anti_rot.rs` (schema-format anti-rot ratchet, ITER-0005a.5)
+- `fmpl-core/tests/persistence_envelope_invariant.rs` (AC-5 writer-bypass-prevention ratchet — stays at fmpl-core/tests/ to police fmpl-core/src/)
+- `fmpl-core/tests/persistence_schema_anti_rot.rs` (AC-6 anti-rot ratchet — stays at fmpl-core/tests/; exemption rule updated to `/vm_version.rs` + `/lib.rs` per ITER-0005a.5 T0.5)
 
-**Status:** in progress — AC-1, AC-2, AC-3, AC-4, AC-6 done:ITER-0005a.1 (2026-05-13); AC-5 done:ITER-0005a.2 (2026-05-13). AC-7 splits across ITER-0005a.3 (public API: `LoaderStats` + `iter_keyspace` + first consumer + operator-detection scenario SCENARIO-0112) and ITER-0005a.4 (per-call-site load-side rewire through the new API + 24+ caller-update fanout + closure of 4 deferred audit findings from 0005a.2). The 0005a.3/0005a.4 split was sanctioned by 2026-05-13 PAR scope review on the original 0005a.3 card; same writer/reader-axis split discipline that drove 0005a.1/0005a.2 and 0005a.2/0005a.3. AC-1 note: checksum field is `crc32: U32<LE>` for AC-1 wording stability but the algorithm is `blake3(header_with_crc_zeroed || payload)` truncated to its lower 32 bits — chosen for consistency with ITER-0005b's source content-addressing (single hash crate across the persistence family). Source-bytes integrity is enforced via the `source_hash` field's content-addressing rather than by widening the envelope checksum scope. AC-5 note: load-side rewire from transitional manual prefix-strip to `loader::decode` is in ITER-0005a.4 (originally bundled in 0005a.3 but split out per the 2026-05-13 PAR review); transitional `// TODO(ITER-0005a.3)` markers in `compiler.rs`, `object.rs`, `grammar/incremental.rs`, and `grammar/stream_input.rs` (5 markers total — stream_input.rs has 2) track the rewire sites for ITER-0005a.4 to remove.
+**Status:** in progress — AC-1, AC-2, AC-3, AC-4, AC-6 done:ITER-0005a.1 (2026-05-13); AC-5 done:ITER-0005a.2 (2026-05-13), reaffirmed ITER-0005a.5 (2026-05-13): the writer-only-through-envelope invariant is still enforced by `fmpl-core/tests/persistence_envelope_invariant.rs` (✅ enforced), and is further strengthened architecturally — `fmpl-core` no longer depends on `fjall` as a regular dependency, so writer-bypass routes are structurally impossible inside `fmpl-core/src/`; AC-7 public-API surface done:ITER-0005a.3 (2026-05-13), relocated ITER-0005a.5 (2026-05-13): `LoaderStats` + `iter_keyspace` renamed to `iter_store` per ITER-0005a.5 T4.13 and now live at `fmpl_persistence::loader::{iter_store, LoaderStats}` (✅ enforced at `fmpl-persistence/tests/iter_store.rs`, renamed from `fmpl-core/tests/iter_keyspace.rs`). AC-7 public-API closure: `LoaderStats` (aggregate counters + per-sub-reason histograms with `check_invariants` typed gate) and `iter_store<F>(store, on_record) -> Result<LoaderStats, fjall::Error>` shipped in `fmpl-persistence/src/loader.rs`. First consumers: `fmpl-persistence/tests/iter_store.rs` (4 integration tests), `fmpl-persistence/tests/scenario_0099_envelope_loader.rs` extended with `scenario_0099_iter_store_aggregates_stats` (existing decode-pathway test preserved), `fmpl-persistence/tests/scenario_0112_operator_detection.rs` (2 tests proving histograms pinpoint operator-actionable signals — disk corruption vs schema drift vs VM incompatibility — that aggregates alone cannot distinguish). The 0005a.3/0005a.4 split was sanctioned by 2026-05-13 PAR scope review on the original 0005a.3 card; same writer/reader-axis split discipline that drove 0005a.1/0005a.2. The per-call-site `load_from_fjall` rewires (24+ caller-update fanout) + closure of 4 deferred audit findings from 0005a.2 are scheduled in ITER-0005a.4 — transitional `// TODO(ITER-0005a.4)` markers (renamed from 0005a.3 during the 0005a.3 comment-discipline sweep) in `compiler.rs`, `object.rs`, `grammar/incremental.rs`, and `grammar/stream_input.rs` track the rewire sites. AC-1 note: checksum field is `crc32: U32<LE>` for AC-1 wording stability but the algorithm is `blake3(header_with_crc_zeroed || payload)` truncated to its lower 32 bits — chosen for consistency with ITER-0005b's source content-addressing. Source-bytes integrity is enforced via the `source_hash` field's content-addressing rather than by widening the envelope checksum scope.
 
 ## STORY-0100
 
@@ -261,4 +266,13 @@
 - This conversation: design discussion 2026-05-08
 - `Cargo.toml:42` (blake3 already a workspace dependency)
 
-**Status:** pending
+**Status:** partial (2026-05-14)
+
+**AC status:**
+- AC-1: closed by ITER-0005b (SCENARIO-0100 integration evidence at `fmpl-persistence/tests/scenario_0100_content_addressed_source.rs`).
+- AC-2: **re-opened** — ITER-0005b shipped the `save_to_store` API surface but no `eval()`→persist integration. The declared `seam:integration` for a `journey`-impact AC is not met. Re-routed through **ITER-0005b-FIX-B** AC-2-DECIDE (post-scope-review split: pick eval-seam-API path OR AC-wording-amendment path with pre-iter PAR; possible impact-label amendment also in scope).
+- AC-3: deferred to **ITER-0005b-OBJ** (Grammar source_hash; ObjectDb shape mismatch design).
+- AC-4: deferred to **ITER-0005b-SYNTH** (blocked by ITER-0005b-AST-SLOT — Lambda holds bytecode not AST).
+- AC-5: deferred to **ITER-0005b-SYNTH** (cascades from AC-4).
+- AC-6: **re-opened** — ITER-0005b shipped `recover_incompatible` as a standalone pass with a no-op test closure. AC-6's required observables (loader-auto-chain, eval-recompile, bind-under-key, `Value::Int(3)` execution) have zero evidence. Re-routed through **ITER-0005b-FIX-B** AC-6-DECIDE (post-scope-review split: pick loader-auto-chain path OR standalone-pass+AC-wording-amendment path with pre-iter PAR).
+- AC-7: primitive `SourceStore::compact()` closed by ITER-0005b; keyspace-scan orchestration deferred to **ITER-0005b-GC**.

@@ -693,40 +693,76 @@ impl CompiledCode {
         self.rule_entry_points.get(rule_name).copied()
     }
 
-    /// Save compiled bytecode to a Fjall keyspace under the given key.
+    /// Save compiled bytecode to a [`Store`][crate::persistence::Store]
+    /// under the given key, with optional source provenance.
     ///
-    /// Routes through [`persistence::envelope::write`][crate::persistence::envelope::write]
-    /// per STORY-0099 AC-5 — every persisted record is wrapped in a versioned
-    /// envelope (`PayloadKind::CompiledCode = 0x03`). Source-hash population is
-    /// deferred to ITER-0005b; for now all CompiledCode records carry
-    /// [`NO_SOURCE_HASH`][crate::persistence::envelope::NO_SOURCE_HASH].
-    #[cfg(feature = "fjall-persistence")]
-    pub fn save_to_fjall(&self, keyspace: &fjall::Keyspace, key: &str) -> Result<()> {
-        use crate::persistence::envelope::{NO_SOURCE_HASH, write};
+    /// Routes through [`fmpl_persistence::envelope::write`] so every
+    /// persisted record is wrapped in a versioned envelope
+    /// (`PayloadKind::CompiledCode = 0x03`). The stamped VM version is
+    /// [`crate::VM_VERSION`].
+    ///
+    /// # `source` parameter (ITER-0005b)
+    ///
+    /// - `Some(bytes)`: the bytes are inserted into `source_store`
+    ///   (which hashes them content-addressably). The resulting
+    ///   [`Hash`] is stamped into the envelope's `source_hash` field.
+    ///   This enables recovery via
+    ///   [`fmpl_persistence::loader::recover_incompatible`] when the
+    ///   payload schema later drifts.
+    /// - `None`: stamps `Hash::NONE` as the envelope's source_hash.
+    ///   No source-store insert. Used when this CompiledCode was not
+    ///   produced from user source (e.g. builtin synthesis). Constructor
+    ///   synthesis for sourceless artifacts (STORY-0100 AC-4) is
+    ///   deferred to ITER-0005b-SYNTH per the iteration plan.
+    ///
+    /// Gated `#[cfg(feature = "persistence")]` because `SourceStore`
+    /// is only available when fmpl-persistence's `fjall-backend`
+    /// feature is on. fmpl-core's `persistence` feature activates it.
+    #[cfg(feature = "persistence")]
+    pub fn save_to_store<S: crate::persistence::Store>(
+        &self,
+        store: &S,
+        source_store: &fmpl_persistence::SourceStore,
+        key: &str,
+        source: Option<&[u8]>,
+    ) -> Result<()> {
+        use crate::persistence::envelope::write;
         use crate::persistence::schema::PayloadKind;
+        use fmpl_types::Hash;
+
+        let source_hash = match source {
+            Some(bytes) => source_store
+                .put(bytes)
+                .map_err(|e| Error::BytecodePersistenceError(format!("source store put: {e}")))?,
+            None => Hash::NONE,
+        };
+
         write(
-            keyspace,
+            store,
             key.as_bytes(),
             self,
             PayloadKind::CompiledCode,
-            NO_SOURCE_HASH,
+            crate::VM_VERSION,
+            source_hash,
         )
         .map_err(|e| Error::BytecodePersistenceError(e.to_string()))?;
         Ok(())
     }
 
-    /// Load compiled bytecode from a Fjall keyspace by key.
-    /// Returns None if the key does not exist.
+    /// Load compiled bytecode from a [`Store`][crate::persistence::Store]
+    /// by key. Returns `None` if the key does not exist.
     ///
-    /// **TODO(ITER-0005a.3):** Transitional manual prefix-strip. After
-    /// 0005a.2's writer sweep, on-disk values have a 56-byte envelope header
-    /// followed by the serialized payload. ITER-0005a.3 will replace this
-    /// manual strip with `loader::decode(&bytes)` returning a `DecodedRecord`
-    /// whose `payload` is the borrowed `serde_json::from_slice` input.
-    #[cfg(feature = "fjall-persistence")]
-    pub fn load_from_fjall(keyspace: &fjall::Keyspace, key: &str) -> Result<Option<Self>> {
+    /// **TODO(ITER-0005a.4):** Transitional manual prefix-strip. On-disk
+    /// values have a 56-byte envelope header followed by the serialized
+    /// payload; this will be replaced with `loader::decode(&bytes)`
+    /// returning a `DecodedRecord` whose `payload` is the borrowed
+    /// `serde_json::from_slice` input.
+    pub fn load_from_store<S: crate::persistence::Store>(
+        store: &S,
+        key: &str,
+    ) -> Result<Option<Self>> {
         use crate::persistence::envelope::ENVELOPE_HEADER_SIZE;
-        let bytes = keyspace
+        let bytes = store
             .get(key.as_bytes())
             .map_err(|e| Error::BytecodePersistenceError(e.to_string()))?;
         match bytes {

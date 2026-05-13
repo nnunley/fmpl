@@ -22,7 +22,7 @@ to load through fmpl-core's swept `load_from_fjall` paths. The loader's
 transitional manual prefix-strip (to be replaced by `loader::decode` in
 ITER-0005a.3) assumes every value starts with the 56-byte header.
 
-**Acceptable because:** the `fjall-persistence` feature has no production
+**Acceptable because:** the `persistence` feature has no production
 consumers at the time of this break. Pre-existing fjall databases are not
 durable user data and are expected to be discarded across the upgrade.
 

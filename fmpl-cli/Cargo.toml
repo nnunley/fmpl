@@ -11,7 +11,10 @@ name = "fmpl"
 path = "src/main.rs"
 
 [dependencies]
-fmpl-core = { path = "../fmpl-core" }
+fmpl-core = { workspace = true }
 rustyline = { workspace = true }
-dirs = "5.0"
-tokio = { workspace = true }
+dirs = { workspace = true }
+# tokio: previously `workspace = true` with implicit full features.
+# After Task #21 the workspace pin has NO default features; declare
+# what the CLI's runtime actually needs.
+tokio = { workspace = true, features = ["full"] }

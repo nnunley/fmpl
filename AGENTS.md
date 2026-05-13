@@ -182,7 +182,7 @@ cargo run -p fmpl-tui            # Launch TUI (Ctrl+L for LLM chat)
 
 ### Feature Flags
 
-- `fjall-persistence` — Enable Fjall-backed durable storage (optional)
+- `persistence` — Enable Fjall-backed durable storage (optional)
 - `trampolined-grammar` — Bounded stack usage for grammar evaluation
 - `cross_compile` — Cross-compilation to execution_tape (disabled by default)
 
@@ -264,7 +264,7 @@ All integration tests use `run(code).expect("runtime error")` or `map_err(|e| e.
 `docs/codebase/` contains consolidated implementation patterns discovered during development.
 **Read these before exploring the codebase** — they save significant research time.
 
-- `docs/codebase/fjall-persistence-patterns.md` — Save/load patterns, serde serialization, keyspace layout, test setup
+- `docs/codebase/persistence-patterns.md` — Save/load patterns, serde serialization, keyspace layout, test setup
 
 ## Current Limitations (Mar 2026)
 

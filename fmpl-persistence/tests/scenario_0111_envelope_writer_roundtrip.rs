@@ -10,7 +10,8 @@
 //! via `persistence::loader::decode`, and assert the round-trip
 //! preserves `(PayloadKind, payload bytes)`.
 //!
-//! Sentinel cadence — runs on every `cargo test -p fmpl-core` invocation.
+//! Sentinel cadence — runs on every `cargo test -p fmpl-persistence
+//! --features fjall-backend` invocation.
 //!
 //! Currently-extant writer PayloadKinds covered (per the ITER-0005a.2
 //! sweep):
@@ -28,17 +29,20 @@
 //! their writers land in ITER-0005d/e, at which point this scenario
 //! should be extended.
 
-use fmpl_core::persistence::envelope::{NO_SOURCE_HASH, write};
-use fmpl_core::persistence::loader::{DecodeOutcome, decode};
-use fmpl_core::persistence::schema::PayloadKind;
+#![cfg(feature = "fjall-backend")]
 
-fn fresh_keyspace() -> (tempfile::TempDir, fjall::Keyspace) {
+use fmpl_core::{VM_VERSION, VM_VERSION_MAJOR};
+use fmpl_persistence::Store;
+use fmpl_persistence::envelope::write;
+use fmpl_persistence::fjall_backend::FjallStore;
+use fmpl_persistence::loader::{DecodeOutcome, decode};
+use fmpl_persistence::schema::PayloadKind;
+use fmpl_types::Hash;
+
+fn fresh_store() -> (tempfile::TempDir, FjallStore) {
     let dir = tempfile::tempdir().unwrap();
-    let db = fjall::Database::builder(dir.path()).open().unwrap();
-    let keyspace = db
-        .keyspace("scenario_0111", fjall::KeyspaceCreateOptions::default)
-        .unwrap();
-    (dir, keyspace)
+    let store = FjallStore::open(dir.path()).unwrap();
+    (dir, store)
 }
 
 /// Generic round-trip helper. Writes `value` under `key` with `kind`,
@@ -48,11 +52,11 @@ fn assert_roundtrip<T>(kind: PayloadKind, key: &[u8], value: &T)
 where
     T: serde::Serialize,
 {
-    let (_dir, keyspace) = fresh_keyspace();
-    write(&keyspace, key, value, kind, NO_SOURCE_HASH).expect("envelope write");
-    let raw = keyspace.get(key).expect("fjall get").expect("key present");
+    let (_dir, store) = fresh_store();
+    write(&store, key, value, kind, VM_VERSION, Hash::NONE).expect("envelope write");
+    let raw = store.get(key).expect("store get").expect("key present");
 
-    let (outcome, decoded) = decode(&raw);
+    let (outcome, decoded) = decode(&raw, VM_VERSION_MAJOR);
     assert_eq!(
         outcome,
         DecodeOutcome::Loaded,
@@ -153,16 +157,17 @@ fn scenario_0111_streamposition_roundtrip() {
 /// decodes with kind=StreamPosition, NOT ParseState.
 #[test]
 fn scenario_0111_streamposition_and_parsestate_are_distinguishable() {
-    let (_dir, keyspace) = fresh_keyspace();
+    let (_dir, store) = fresh_store();
 
     // Write a stream-position spill under StreamPosition.
     let position_payload: Option<Vec<u8>> = Some(vec![1, 2, 3]);
     write(
-        &keyspace,
+        &store,
         b"pos:1",
         &position_payload,
         PayloadKind::StreamPosition,
-        NO_SOURCE_HASH,
+        VM_VERSION,
+        Hash::NONE,
     )
     .unwrap();
 
@@ -171,25 +176,26 @@ fn scenario_0111_streamposition_and_parsestate_are_distinguishable() {
         "position_index": 1, "rule_stack": [], "bindings": {}
     });
     write(
-        &keyspace,
+        &store,
         b"parse:1",
         &parse_state_payload,
         PayloadKind::ParseState,
-        NO_SOURCE_HASH,
+        VM_VERSION,
+        Hash::NONE,
     )
     .unwrap();
 
     // Read each back and verify the kind discriminator is preserved.
-    let pos_raw = keyspace.get(b"pos:1").unwrap().unwrap();
-    let (_pos_outcome, pos_decoded) = decode(&pos_raw);
+    let pos_raw = store.get(b"pos:1").unwrap().unwrap();
+    let (_pos_outcome, pos_decoded) = decode(&pos_raw, VM_VERSION_MAJOR);
     assert_eq!(
         pos_decoded.unwrap().kind,
         PayloadKind::StreamPosition,
         "stream-position spill decodes as StreamPosition",
     );
 
-    let parse_raw = keyspace.get(b"parse:1").unwrap().unwrap();
-    let (_parse_outcome, parse_decoded) = decode(&parse_raw);
+    let parse_raw = store.get(b"parse:1").unwrap().unwrap();
+    let (_parse_outcome, parse_decoded) = decode(&parse_raw, VM_VERSION_MAJOR);
     assert_eq!(
         parse_decoded.unwrap().kind,
         PayloadKind::ParseState,

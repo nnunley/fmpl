@@ -132,7 +132,7 @@ git commit -m "feat(grammar): add to_bytes/from_bytes for ParseState serializati
 Add to tests module:
 
 ```rust
-#[cfg(feature = "fjall-persistence")]
+#[cfg(feature = "persistence")]
 #[test]
 fn test_parse_state_fjall_roundtrip() {
     use tempfile::tempdir;
@@ -167,7 +167,7 @@ fn test_parse_state_fjall_roundtrip() {
     assert_eq!(restored.bindings.get(&SmolStr::new("result")), Some(&Value::Int(999)));
 }
 
-#[cfg(feature = "fjall-persistence")]
+#[cfg(feature = "persistence")]
 #[test]
 fn test_parse_state_fjall_not_found() {
     use tempfile::tempdir;
@@ -187,7 +187,7 @@ fn test_parse_state_fjall_not_found() {
 
 **Step 2: Run test to verify it fails**
 
-Run: `cargo test -p fmpl-core test_parse_state_fjall --features fjall-persistence --no-run 2>&1 | head -20`
+Run: `cargo test -p fmpl-core test_parse_state_fjall --features persistence --no-run 2>&1 | head -20`
 Expected: Compilation error - `save_to_fjall` and `load_from_fjall` don't exist
 
 **Step 3: Write minimal implementation**
@@ -195,7 +195,7 @@ Expected: Compilation error - `save_to_fjall` and `load_from_fjall` don't exist
 Add to `ParseState` impl:
 
 ```rust
-#[cfg(feature = "fjall-persistence")]
+#[cfg(feature = "persistence")]
 impl ParseState {
     /// Save parse state to Fjall partition.
     pub fn save_to_fjall(
@@ -228,7 +228,7 @@ impl ParseState {
 pub enum ParseStateError {
     Serialize(serde_json::Error),
     Deserialize(serde_json::Error),
-    #[cfg(feature = "fjall-persistence")]
+    #[cfg(feature = "persistence")]
     Fjall(fjall::Error),
 }
 
@@ -237,7 +237,7 @@ impl std::fmt::Display for ParseStateError {
         match self {
             Self::Serialize(e) => write!(f, "serialize error: {}", e),
             Self::Deserialize(e) => write!(f, "deserialize error: {}", e),
-            #[cfg(feature = "fjall-persistence")]
+            #[cfg(feature = "persistence")]
             Self::Fjall(e) => write!(f, "fjall error: {}", e),
         }
     }
@@ -248,7 +248,7 @@ impl std::error::Error for ParseStateError {}
 
 **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p fmpl-core test_parse_state_fjall --features fjall-persistence -v`
+Run: `cargo test -p fmpl-core test_parse_state_fjall --features persistence -v`
 Expected: PASS
 
 **Step 5: Commit**
@@ -273,7 +273,7 @@ git commit -m "feat(grammar): add Fjall storage helpers for ParseState"
 //! Simulates the agent pause/resume scenario where a parse is suspended
 //! mid-stream, persisted to Fjall, and resumed in a new "session".
 
-#[cfg(feature = "fjall-persistence")]
+#[cfg(feature = "persistence")]
 mod tests {
     use fmpl_core::grammar::incremental::{ParseState, ParseStateError};
     use fmpl_core::value::Value;
@@ -397,7 +397,7 @@ mod tests {
 
 **Step 2: Run test to verify it passes**
 
-Run: `cargo test -p fmpl-core parse_state_persistence --features fjall-persistence -v`
+Run: `cargo test -p fmpl-core parse_state_persistence --features persistence -v`
 Expected: PASS
 
 **Step 3: Commit**
@@ -505,5 +505,5 @@ git commit -m "docs(specs): add streaming grammar and ParseState persistence to 
 After completing all tasks, run the full test suite:
 
 ```bash
-cargo test -p fmpl-core --features fjall-persistence
+cargo test -p fmpl-core --features persistence
 ```

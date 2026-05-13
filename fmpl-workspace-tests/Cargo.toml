@@ -1,0 +1,11 @@
+[package]
+name = "fmpl-workspace-tests"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Workspace-level structural invariants (no source code, integration tests only)"
+publish = false
+
+# No [dependencies] — gates here scan source on disk via env!() paths
+# and don't need to compile any consumer crate code.

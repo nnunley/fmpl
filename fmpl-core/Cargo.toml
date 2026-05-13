@@ -12,34 +12,52 @@ default = []
 trampolined-grammar = []
 # Enable cross-compilation to execution_tape VM
 cross_compile = ["execution_tape"]
-# Enable Fjall-backed persistence for objects, bytecode, and grammars
-fjall-persistence = []
+# Activate the fjall-backed Store impl in fmpl-persistence. Without this
+# feature, fmpl-core still compiles against the Store trait; runtime use
+# requires the caller to supply a Store impl (production callers pass
+# FjallStore which depends on this feature).
+# Renamed from fjall-persistence in ITER-0005a.5 (T4.9): the storage
+# backend is an implementation detail and no longer named in fmpl-core.
+persistence = ["fmpl-persistence/fjall-backend"]
 
 [dependencies]
-curl = "0.4"
+curl = { workspace = true }
 execution_tape = { optional = true, path = "../../execution/execution_tape", package = "execution_tape" }
-fjall = "3"
+fmpl-persistence = { workspace = true }
+fmpl-types = { workspace = true }
 logos = { workspace = true }
-rand = "0.8"
+rand = { workspace = true }
 rkyv = { workspace = true }
 serde = { workspace = true }
-serde_json = "1.0"
+serde_json = { workspace = true }
 smol_str = { workspace = true }
-stacker = "0.1"
+stacker = { workspace = true }
 thiserror = { workspace = true }
-tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time"] }
-zerocopy = { version = "0.8", features = ["derive"] }
-blake3 = "1"
+tokio = { workspace = true, features = [
+  "sync",
+  "rt",
+  "rt-multi-thread",
+  "time",
+] }
+zerocopy = { workspace = true }
+blake3 = { workspace = true }
 
 [dev-dependencies]
-fmpl-scenario-runner = { path = "../fmpl-scenario-runner" }
-inventory = "0.3"
-pretty_assertions = "1.4"
-serde_json = "1.0"
-syn = { version = "2", features = ["full", "extra-traits", "visit"] }
-tokio = { version = "1", features = ["full", "test-util"] }
-wiremock = "0.6"
-tempfile = "3"
+fmpl-persistence = { workspace = true, features = ["fjall-backend"] }
+fmpl-scenario-runner = { workspace = true }
+inventory = { workspace = true }
+pretty_assertions = { workspace = true }
+serde_json = { workspace = true }
+syn = { workspace = true }
+tokio = { workspace = true, features = ["full", "test-util"] }
+wiremock = { workspace = true }
+tempfile = { workspace = true }
+# fjall v3 direct pin: integration tests probe FjallStore semantics
+# directly (matches fmpl-persistence). Production fmpl-core code names
+# no fjall at all — enforced by the no_fjall_in_fmpl_core ratchet at
+# tests/persistence_envelope_invariant.rs (the in-crate gate;
+# 0005a.6 T5 added a workspace-wide cross-consumer gate).
+fjall = "3"
 
 [build-dependencies]
-fmpl-scenario-runner = { path = "../fmpl-scenario-runner" }
+fmpl-scenario-runner = { workspace = true }

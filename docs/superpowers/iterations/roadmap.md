@@ -1053,12 +1053,14 @@ After this iteration, ITER-0005 (Image Persistence) has direct evidence for what
 
 **Family roster (post-2026-05-13 PAR splits):**
 
-- ITER-0005a.0 — MigrationEngine infrastructure (DEFERRED — ships with first real MigrationRule). Pure speculative infrastructure; deferred per 2026-05-12 PAR.
+- ITER-0005a.0 — `fmpl-types` shared-types crate (resurrected + RESCOPED 2026-05-13 — was MigrationEngine, now `VmVersion` + `Hash` + `SourceHash` shared types). Prerequisite for 0005a.5 to land cleanly; resolves R4-C1 contradiction structurally by giving cross-crate types a stable home. The original MigrationEngine scope stays deferred to a future iteration when a real MigrationRule consumer exists.
 - ITER-0005a.1 — STORY-0099 envelope format + loader (DONE 2026-05-13).
 - ITER-0005a.2 — STORY-0099 AC-5 write-side sweep (pending; PAR-revised 2026-05-13).
-- ITER-0005a.3 — STORY-0099 AC-7 LoaderStats + iter_keyspace public API + first consumer (pending; twice-PAR-revised — first split from 0005a.2 on writer/reader axis; second split 2026-05-13 into 0005a.3 API/consumer + 0005a.4 per-call-site rewire).
-- ITER-0005a.4 — STORY-0099 read-side decode wiring through LoaderStats API (pending; PAR-split from 0005a.3 — per-call-site rewire of all `load_from_fjall` sites; addresses 4 deferred audit findings from 0005a.2).
-- ITER-0005b — Content-addressed source store (pending; introduces `Hash` newtype).
+- ITER-0005a.3 — STORY-0099 AC-7 LoaderStats + iter_keyspace public API + first consumer (DONE 2026-05-13; twice-PAR-revised).
+- ITER-0005a.5 — Extract `fmpl-persistence` crate; storage abstraction in fmpl-core only, no fjall in public API (pending; PAR-revised 4x 2026-05-13 — 4 rounds of REVISE; final revision uses `fmpl_types::VmVersion`/`Hash` per ITER-0005a.0 rescoped; fmpl-web migration moved to ITER-0005a.6).
+- ITER-0005a.6 — Migrate fmpl-web from fjall v2 direct-use to `fmpl-persistence::Store` trait (pending; PAR-split from 0005a.5 — covers v2→v3 data-migration story, ContinuationStore + ImageStore rewrite, workspace `fjall = "2"` removal).
+- ITER-0005a.4 — STORY-0099 read-side decode wiring through LoaderStats API (pending; blocked by 0005a.5 so per-call-site rewires cross the new crate boundary cleanly; addresses 4 deferred audit findings from 0005a.2; 0005a.4 card text itself will be rewritten as part of 0005a.5 close to reshape its signatures from `&fjall::Keyspace` → `&impl Store`).
+- ITER-0005b — Content-addressed source store (pending; `Hash` newtype absorbed into ITER-0005a.0 rescoped; 0005b adds `Hash::compute()` + the source store itself).
 - ITER-0005c — Bytecode persistence (proof case).
 - ITER-0005d — Remaining payload classes (objects, grammars, GrammarRegistry, memo tables).
 - ITER-0005e — VM snapshot + tracer substrate foundation.
@@ -1078,7 +1080,142 @@ After this iteration, ITER-0005 (Image Persistence) has direct evidence for what
 
 ---
 
-#### ITER-0005a.0 — MigrationEngine infrastructure (DEFERRED — ships with first real MigrationRule)
+#### ITER-0005a.0 (RESCOPED 2026-05-13) — Extract `fmpl-types` shared-types crate (`VmVersion` + `Hash` + `SourceHash`)
+
+**Stories:** none (cross-cutting architectural extraction; prerequisite for 0005a.5; absorbs the `Hash` newtype work originally planned for ITER-0005b).
+
+**Status:** done (2026-05-14). `fmpl-types` crate shipped at `fmpl-types/{src/{lib,vm_version,hash}.rs, Cargo.toml}`. 12/12 smoke tests pass (6 vm_version + 6 hash). Workspace builds clean with `--all-features` (207 crates, 0 errors). Sentinel sweep 1352/1352 — zero regressions. Wall-clock T0→T5 code-complete: ~5.5 minutes per `/tmp/iter-0005a.0-checkpoints/`. **Implementation deviations from the card:** (a) `blake3` dep dropped per R5-S2/S3 — `Hash::compute` deferred to ITER-0005b where the source store needs it; (b) all 6 R5 textual fixes applied inline before T0 started. **0005a.5 + 0005a.6 unblocked.**
+
+**Driving evidence (2026-05-13):**
+
+1. **R4-C1 dep-graph contradiction in 0005a.5.** PAR Round-4 surfaced that 0005a.5's T0.5 needs cross-crate access to `VmVersion` while simultaneously requiring `cargo build -p fmpl-core --no-default-features` to build without an fmpl-persistence dep. The contradiction has only one structurally clean resolution: a shared-types crate that both fmpl-core and fmpl-persistence depend on UNCONDITIONALLY.
+2. **Three concrete shared types exist today** (no premature abstraction): `VmVersion` (semver triple — needed by envelope writer + loader compat check + fmpl-core's CARGO_PKG_VERSION derivation); `Hash` newtype (originally ITER-0005b scope — content-addressing source store); `SourceHash` alias for `Hash` (used in `EnvelopeHeader.source_hash` today as bare `[u8; 32]`).
+3. **`ship-infrastructure-with-first-consumer.md` satisfied.** Three real consumers (fmpl-core via vm_version.rs + writer call sites; fmpl-persistence via envelope.rs + loader.rs signatures; fmpl-bootstrap can take a lean fmpl-types dep without fjall) each have a concrete need for at least one of the types.
+
+**Scope (build order):**
+
+1. **T0 — Create `fmpl-types` crate skeleton.** New workspace member at `fmpl-types/`. `Cargo.toml`:
+   ```toml
+   [package]
+   name = "fmpl-types"
+   version.workspace = true
+   edition.workspace = true
+   authors.workspace = true
+   license.workspace = true
+   description = "FMPL shared cross-crate types: VmVersion, Hash, SourceHash"
+
+   [dependencies]
+   serde = { workspace = true }
+   # NOTE (R5-S2/S3 fix): blake3 is NOT added until 0005b adds Hash::compute().
+   # `Hash::from_bytes` is a plain newtype wrap, no hashing primitive needed.
+
+   [dev-dependencies]
+   serde_json = "1.0"
+   ```
+   Add `fmpl-types` to workspace `Cargo.toml:3-11` members array (alphabetical position).
+
+2. **T1 — Define `VmVersion`.**
+   ```rust
+   /// Semantic version triple as a 6-byte value-type.
+   /// Constructed from `env!("CARGO_PKG_VERSION")` at consumer crate
+   /// compile time via the `parse_version_part` const fn.
+   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+   pub struct VmVersion {
+       pub major: u16,
+       pub minor: u16,
+       pub patch: u16,
+   }
+
+   impl VmVersion {
+       pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
+           Self { major, minor, patch }
+       }
+   }
+
+   /// Parse a version-part digit substring from CARGO_PKG_VERSION at const time.
+   /// `index = 0` returns major, 1 minor, 2 patch.
+   pub const fn parse_version_part(version: &str, index: usize) -> u16 { ... }
+   ```
+   `parse_version_part` is the const fn currently at `fmpl-core/src/persistence/schema.rs:155-194` — moved here. Includes the existing test suite (`#[cfg(test)] mod tests`) from that file.
+
+3. **T2 — Define `Hash` + `SourceHash`.**
+   ```rust
+   /// blake3-derived 32-byte hash. Used for content-addressing source bytes
+   /// and (in future iterations) compiled-artifact deduplication.
+   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+   pub struct Hash(pub [u8; 32]);
+
+   impl Hash {
+       pub const fn from_bytes(bytes: [u8; 32]) -> Self { Self(bytes) }
+       pub const fn as_bytes(&self) -> &[u8; 32] { &self.0 }
+
+       /// Sentinel hash for "no source" — all-zero bytes. Used by
+       /// envelope records that have no associated source (e.g. spawned
+       /// objects, runtime grammars) until ITER-0005b wires source recovery.
+       pub const NONE: Hash = Hash([0u8; 32]);
+   }
+
+   /// Type alias for the source-bytes hash used in EnvelopeHeader.
+   pub type SourceHash = Hash;
+   ```
+   T2 designs the `Hash::NONE` constant in fmpl-types ONLY. **fmpl-core/envelope.rs is NOT edited in 0005a.0.** Per R5 PAR feedback + the "Out of scope" rule below, the actual `NO_SOURCE_HASH` field's relationship with `Hash::NONE` is owned by 0005a.5's T0.5 — which (per R5-C1 zerocopy compat resolution) keeps `NO_SOURCE_HASH: [u8; 32]` unchanged in envelope.rs and adds a helper `fmpl_types::no_source_hash() -> Hash` for API-edge consumers.
+
+4. **T3 — Smoke tests.** `fmpl-types/tests/`:
+   - `parse_version_part` exercises the const-fn parser against several version strings.
+   - `Hash::NONE` is all-zeros.
+   - `serde` round-trips `VmVersion` and `Hash` to JSON.
+   - `VmVersion::new(1, 2, 3)` builds at const time (`const _: VmVersion = VmVersion::new(1, 2, 3);`).
+
+5. **T4 — Wire fmpl-types into the workspace.** Update workspace `Cargo.toml` to add `fmpl-types` as a `[workspace.dependencies]` entry: `fmpl-types = { path = "fmpl-types" }`. **No consumer crate changes yet** — that happens in 0005a.5.
+
+6. **T5 — Wrap artifacts.**
+   - Iteration log entry with wall-clock from `/tmp/iter-0005a.0-checkpoints/`.
+   - progress.md snapshot.
+   - Roadmap status → done.
+   - Update ITER-0005b's card text to note that `Hash` newtype is now shipped in 0005a.0 (its 0005b work shrinks to: content-addressed source store + constructor synthesis only).
+   - Save lesson: "shared-types crate is the structurally clean answer when a single shared type creates a feature-gating contradiction" — record as feedback memory.
+
+**Impacted scenarios:**
+
+- None. This is pure infrastructure — no behavior change, no scenario updates. The crate ships with smoke tests in T3 but no SCENARIO-NNNN cards.
+
+**Verification gates:**
+
+- `cargo build -p fmpl-types` builds.
+- `cargo build --workspace --all-features` builds (proves the new workspace member integrates cleanly).
+- `cargo test -p fmpl-types` passes (T3 smoke tests).
+- Full sentinel sweep passes: `cargo test -p fmpl-core --no-fail-fast` (baseline 1352 from 0005a.3 close — no regression, since no consumers are touched yet).
+- Citation check clean.
+- Clippy clean across all members.
+
+**Out of scope (deferred):**
+
+- **Consumer-side changes** — no fmpl-core/fmpl-persistence/fmpl-web edits this iteration; those happen in 0005a.5 + 0005a.6 (and the 0005a.0 card explicitly does NOT change any existing imports).
+- **Migration helpers for legacy `[u8; 32]` source-hash sites** — handled in 0005a.5 as part of the envelope-header reshape.
+- **`Hash` content-addressing semantics** — `Hash::compute(bytes: &[u8])` helper is NOT added this iteration. 0005b adds it when the source store actually uses it.
+
+**Dependencies / ordering:**
+
+- BLOCKED BY: ITER-0005a.3 (done).
+- BLOCKS: ITER-0005a.5 (0005a.5's T0.5 + T3 assume `fmpl_types::VmVersion` exists).
+- SHRINKS scope of: ITER-0005b (the `Hash` newtype work is moved here; 0005b's T-tasks for newtype design are dropped).
+
+**Risk callouts:**
+
+- **`Hash` newtype design without an immediate content-addressing consumer.** This iteration ships `Hash` ahead of any code that does `blake3::hash(source_bytes)`. Per ship-infrastructure-with-first-consumer, we'd normally object. The exception here: `Hash` already has TWO concrete consumers via 0005a.5 (envelope `source_hash` field reshape + the `NO_SOURCE_HASH` rename to `Hash::NONE`). The `compute()` method is deferred — that's the truly speculative part.
+- **`SourceHash` as `type Hash = Hash;` is a trivial alias.** Slight readability cost vs naming directly. Trade-off: the alias makes call sites (`source_hash: SourceHash`) clearer than `source_hash: Hash` while costing zero extra type definition.
+- **Workspace dep-graph cycle check.** fmpl-types has NO deps on any other workspace member. fmpl-core/fmpl-persistence/fmpl-web/fmpl-bootstrap depend on fmpl-types. No cycles.
+
+**Sources:**
+
+- 2026-05-13 PAR Round-4 finding R4-C1 (contradiction in 0005a.5's T0.5 dep-graph).
+- 2026-05-13 user architectural call: "Shouldn't we have a common structures crate? ... Introduce fmpl-types now with VmVersion + Hash + SourceHash."
+- `feedback_ship_infrastructure_with_first_consumer.md` (three concrete consumers satisfy the discipline).
+- `feedback_dependency_policy.md` (new workspace-internal crate is acceptable; serde + blake3 are public crates earning compile-time cost).
+
+---
+
+#### ITER-0005a.0 (ORIGINAL — MigrationEngine; DEFERRED — ships with first real MigrationRule)
 
 **Stories:** none. Was pure infrastructure; deferred pending a consumer.
 
@@ -1311,7 +1448,7 @@ After this iteration, ITER-0005 (Image Persistence) has direct evidence for what
 
 **Stories:** STORY-0099 (versioned envelope) — AC-7 (LoaderStats public API surface) only.
 
-**Status:** pending (PAR-revised 2026-05-13 — see "PAR-aggregate findings → resolution map" at bottom).
+**Status:** done (2026-05-13). Public `LoaderStats` + `iter_keyspace` shipped in `fmpl-core/src/persistence/loader.rs`. T0-T3 evidence: 10 new LoaderStats unit tests (`loader::tests`), 4 new iter_keyspace integration tests (`tests/iter_keyspace.rs`), `tests/scenario_0099_envelope_loader.rs` extended with `scenario_0099_iter_keyspace_aggregates_stats` (existing decode-pathway test preserved), new `tests/scenario_0112_operator_detection.rs` with 2 tests proving histograms distinguish operator-actionable signals from isomorphic aggregates. Default-features sentinel: 1352 passing (baseline 1342, +10). fjall-persistence integration: 11 passing. AC-5 grep invariant gate green. The per-call-site rewire of `load_from_fjall` paths is deferred to ITER-0005a.4 as planned.
 
 **Rationale (twice-PAR-revised):** Original 0005a.3 bundled the public API (T0-T1) + the per-call-site rewire (T2-T5) + scenario rebinding (T6-T7). The 2026-05-13 pre-iteration PAR review found this violated the same writer/reader split discipline that drove 0005a.0/0005a.1/0005a.2 — and additionally surfaced 2 Critical findings (fjall 3 iterator API mismatch in the proposed `iter_keyspace` signature; semantic regression from graceful `None` → panic in `stream_input.rs`'s read paths). Re-split per `feedback_split_iterations_on_reader_writer_asymmetry.md`: this iteration ships the public API + first consumer (SCENARIO-0099 rebinding); ITER-0005a.4 ships the per-call-site rewire + the 24+ caller-update fanout. The 0005a.4 split lets the API shape pressure-test against one real consumer before 4 downstream sites commit to it.
 
@@ -1440,7 +1577,20 @@ The `iter_keyspace` helper returns `Result<LoaderStats, fjall::Error>` (no value
 
 **Stories:** none new. Closes STORY-0099 fully by wiring every `load_from_fjall` call site through ITER-0005a.3's public API + addressing the 4 single-auditor Minor findings deferred from 0005a.2's audit (inconsistent corruption-handling across load sites).
 
-**Status:** pending.
+> **⚠️ STATUS BANNER — partially superseded by ITER-0005a.5 (2026-05-13).**
+>
+> ITER-0005a.5 absorbed the per-call-site rewires this card scoped:
+> - T1-T3 (rewire `CompiledCode`, `ObjectDb`, `ParseState` load paths) — **DONE** as part of 0005a.5 T4.1-T4.6. Methods renamed `load_from_fjall` → `load_from_store`; signatures take `&impl Store` not `&fjall::Keyspace`; `ParseStateError::Fjall` → `ParseStateError::Store(StoreError)`.
+> - T4 (rewire `stream_input.rs::restore_from_store` + `get_memo`) — **DONE** as part of 0005a.5 PAR fix R-A-S-2 / R-B-S-1: these now route through `loader::decode` with full envelope integrity (magic + CRC + VM-major + payload-kind). Graceful-skip semantics preserved (the "Critical decision pinned" section below holds: corrupt records degrade to `None`, not panic).
+>
+> **What remains unique to 0005a.4 if/when resumed:**
+> - The `&mut LoaderStats` parameter threading at the 24 call-site enumerated below. 0005a.5's rewires preserved the OLD `Result<Option<T>>` return shape without LoaderStats accumulator threading. If the LoaderStats-as-accumulator pattern is still wanted, this iteration would re-thread that one parameter through the call sites.
+> - The 4 inconsistent-corruption-handling Minor findings from 0005a.2's audit.
+> - T5 of this card (graceful-skip preservation gate) — covered by 0005a.5's `stream_input_store.rs::memo_with_bitflipped_record_is_cache_miss` integration test.
+>
+> Signatures shown below are the ORIGINAL pre-0005a.5 shape (`&fjall::Keyspace`, `load_from_fjall`). Read them as the iteration's historical scope, not as a target for new work. Any resumption of 0005a.4 must first reconcile against 0005a.5's actual implementation: methods are now `load_from_store<S: Store>(&S, key, ...)`, fjall is not named in fmpl-core, and the per-call-site rewires are already done.
+
+**Status:** pending (partially superseded — see banner above).
 
 **Rationale:** Split from the original ITER-0005a.3 per the 2026-05-13 pre-iteration PAR review. ITER-0005a.3 ships the public API (`LoaderStats`, `iter_keyspace`) + first consumer (SCENARIO-0099 iter sub-test); 0005a.4 wires every existing point-key `load_from_fjall` call site through the API. Splitting lets 0005a.3's API design pressure-test against one real consumer (the SCENARIO-0099 rebinding) before 4 downstream sites lock in the return-shape decision.
 
@@ -1518,11 +1668,407 @@ Total: ~20+ caller sites. Each receives `&mut LoaderStats::default()` in the sim
 
 ---
 
+#### ITER-0005a.5 — Extract `fmpl-persistence` crate; abstract storage in fmpl-core only (NOT fmpl-web)
+
+**Stories:** none (cross-cutting architectural extraction; enables 0005a.4 + every downstream 0005x consumer; addresses dep-audit findings from 2026-05-13).
+
+**Status:** **DONE** 2026-05-13 (UTC ~03:00 of 2026-05-14). See `iteration-log.md` ITER-0005a.5 entry for full close-out. Implementation PAR returned REVISE with 8 findings (2 Critical, 3 Serious, 3 Minor); all addressed in commit `3c80b3b8`. Verification: fmpl-core 1292/1292 + fmpl-persistence 69/69 passing; clippy clean; no-fjall-in-fmpl-core invariant verified (0 occurrences in fmpl-core/src/).
+
+**Prior PAR history:** scope card was TWICE PAR-revised 2026-05-13 — original card returned REVISE from both reviewers with 7 Critical + 11 Serious findings; first split into 0005a.5 (fmpl-core scope) + 0005a.6 (fmpl-web scope); second PAR loop returned REVISE again with 4 new Critical + 14 new Serious findings; both revisions' resolution maps are below.
+
+**PAR-aggregated findings from 2026-05-13 review (both reviewers, REVISE) — addressed in this revision:**
+
+| Finding | Severity | Resolution in this revised card |
+|---|---|---|
+| C-AGG-1: Store trait missing `is_empty()` / `len()` | Critical | Trait sized to fmpl-core consumers only this iteration; `is_empty` deferred to 0005a.6 where fmpl-web is the first real consumer that needs it. |
+| C-AGG-2: stream_input.rs has fjall struct fields + helper constructors not in T4 scope | Critical | T4 below explicitly enumerates ALL `fjall::*` reference sites in fmpl-core/src/, not just save/load methods. Includes `FjallOverflow.keyspace`, `MemoFjall(Keyspace)`, `from_async_with_fjall`, `from_async_memo_fjall`, `restore_from_fjall`, `spill_to_fjall`, `set_memo`, `get_memo`. Function/field renames are scheduled. |
+| C-AGG-3: `EnvelopeWriteError::Keyspace(#[from] fjall::Error)` + `ParseStateError::Fjall(fjall::Error)` leak fjall | Critical | T3 + T4 explicitly reshape both error types. `StoreError` becomes the canonical wrapper; `fjall::Error` is wrapped inside `FjallStore`'s `From<fjall::Error> for StoreError` impl. No fjall::Error in any public type after this iteration. |
+| C-AGG-4: AC-5/AC-6 invariant gates use `CARGO_MANIFEST_DIR/src` which silently passes after relocation | Critical | T5 below specifies the gate stays physically in `fmpl-core/tests/` (NOT relocated), so `CARGO_MANIFEST_DIR` still resolves to fmpl-core. Gate scope becomes "fmpl-core/src/ contains zero `fjall::*` substrings" — strengthened, not weakened. (Final implementation: kept the existing `fmpl-core/tests/persistence_envelope_invariant.rs` since the dep-graph already enforces no-fjall structurally; the typed gate upgrade was deferred. AC-6 stayed in fmpl-core/tests/persistence_schema_anti_rot.rs per R3-C3 below.) |
+| C-AGG-5: fjall v2→v3 data migration unaddressed | Critical | **Deferred to 0005a.6.** 0005a.5 does NOT touch fmpl-web; fmpl-web continues using fjall v2 unchanged. Workspace `fjall = "2"` stays. fmpl-persistence pins fjall v3 directly (non-workspace). Both compile during the transition; the duplicate-compile cost stays until 0005a.6 closes — accepted as a temporary state. |
+| C-AGG-6: T6 ≤40-deps target unachievable (default = [] already empty) | Critical | T6 removed. fmpl-bootstrap dep count is no longer a verification gate this iteration. The realistic floor (limited by unconditional curl, rkyv, tokio, blake3 in fmpl-core) is ~80-90 deps even after fjall becomes optional. The bootstrap-leanness story moves to a separate ITER-0005a-DEPS-CLEANUP (deferred). |
+| C-AGG-7: parse_state_persistence.rs / bytecode_persistence.rs / object_persistence.rs not in relocation list | Critical | T0's file-relocation list expanded below. ALL fjall-touching tests in `fmpl-core/tests/` are enumerated and either relocated to `fmpl-persistence/tests/` OR updated to use the new `Store` API (keeping `FjallStore` construction local to test setup). |
+| S-AGG-1: ITER-0005a.4 text references `&fjall::Keyspace`; 0005a.5 doesn't schedule its rewrite | Serious | T8 below (wrap) explicitly rewrites 0005a.4's card text as part of the wrap-up, reshaping every signature in that card from `&fjall::Keyspace` → `&impl Store`. (Final implementation: 0005a.4 is the per-call-site rewire; since 0005a.5 absorbed the call-site rewrites in T4.1-T4.8, the rewrite of 0005a.4's card text became moot — 0005a.4 itself is deferred/superseded.) |
+| S-AGG-2: `Box<dyn Iterator>` in `Store::iter` forces dyn dispatch + boxing | Serious | T1 below uses GAT-based `type Iter<'a>: Iterator<Item = Result<(StoreKey, StoreValue), StoreError>>;`. Edition 2024 supports GATs natively (workspace pins edition 2024). Monomorphized. |
+| S-AGG-3: Public re-export plan from fmpl-core unaddressed | Serious | T4 below explicitly adds `pub use fmpl_persistence::{EnvelopeHeader, PayloadKind, LoaderStats, DecodeOutcome, ...};` to fmpl-core's `lib.rs` to preserve the public API contract for downstream `fmpl_core::persistence::*` consumers. |
+| S-AGG-4: tower-sessions risk callout misnamed | Serious | Risk callout removed (was wrong — `fmpl-web/src/main.rs:17` uses `tower_sessions::MemoryStore`, not fjall). |
+| S-AGG-5: T2-T3 ordering: FjallStore can't be tested standalone | Serious | T2 ships a minimal smoke test of `FjallStore` using only the `Store` trait API; the relocated SCENARIO tests land in T3 after the envelope rewrite. |
+| S-AGG-6: tempfile + dev-deps not enumerated for fmpl-persistence/Cargo.toml | Serious | T0 below enumerates the full dev-deps block: `tempfile = "3"`, `fmpl-scenario-runner` (path), `serde_json = "1.0"`, `fjall = "3"` (gated `fjall-backend`). |
+| S-AGG-7: T8 conflated fjall=2 removal with dead-deps audit; async-trait/tokio-stream removal unverified | Serious | T8 reduced to just the workspace `fjall = "2"` removal — but **only** if 0005a.6 has closed. Otherwise T8 is skipped and stays for 0005a.6's wrap. Dead-deps audit deferred to a separate ITER-0005a-DEPS-CLEANUP. |
+| S-AGG-8: `fjall-persistence` feature in fmpl-core becomes vestigial | Serious | T4 below specifies the disposition: the `fjall-persistence` feature in fmpl-core is renamed to `persistence` and activates the optional `fmpl-persistence` dep + its `fjall-backend` feature. `#[cfg(feature = "fjall-persistence")]` annotations on `save_to_fjall`/`load_from_fjall` methods drop; the methods now take `&impl Store` and are unconditional. |
+| S-AGG-9: Function-name `save_to_fjall` still names fjall after fjall is supposedly an implementation detail | Serious | T4 below renames every `save_to_fjall` → `save_to_store`, `load_from_fjall` → `load_from_store`, `spill_to_fjall` → `spill_to_store`, `restore_from_fjall` → `restore_from_store`, `from_async_with_fjall` → `from_async_with_store`, `from_async_memo_fjall` → `from_async_memo_store`. **API-breaking rename** — flagged below. |
+| S-AGG-10: tuplespace-bridge claim overstates | Serious | Rationale prose refined below: `PayloadKind::Tuple` bridges the write-side of a future durable tuplespace; the pattern-match query layer sits outside the Store trait and would need a separate abstraction at that future point. |
+| S-AGG-11: Driving evidence #1 framing miscalibrated | Serious | Driving evidence rewritten below: duplicate fjall compile stems from fmpl-web pulling workspace `fjall = "2"` while fmpl-core pulls direct `fjall = "3"` — NOT from a workspace pin leak. Per `feedback_calibrate_claims_to_evidence.md`. |
+
+**PAR round-2 findings → resolution (2026-05-13, second loop):**
+
+| Finding | Severity | Resolution in this revision |
+|---|---|---|
+| R2-C1: `env!("CARGO_PKG_VERSION")` rebrands when schema.rs moves crates | Critical | `VM_VERSION_MAJOR/MINOR/PATCH` constants STAY in fmpl-core. fmpl-persistence's envelope writer accepts them as parameters: `pub fn write(store: &impl Store, key: &[u8], payload: &T, kind: PayloadKind, vm_version: VmVersion, source_hash: SourceHash)`. `VmVersion` is a small newtype struct in `fmpl-persistence`. fmpl-core defines `pub const VM_VERSION: VmVersion = VmVersion { major: env!("CARGO_PKG_VERSION", ...), ... }` (or a const fn that parses CARGO_PKG_VERSION) and passes it at every write site. The schema's compatibility-check constants (`ENVELOPE_FORMAT_VERSION`, `PayloadKind::current_schema_version`) stay in fmpl-persistence. **The version derivation never leaves fmpl-core.** |
+| R2-C2: AC-6 ratchet exemption becomes vacuous post-relocation | Critical | T6 below specifies the new exemption rule. (Final implementation per R3-C3: exemption changed from `s.contains("/persistence/")` to `s.ends_with("/vm_version.rs") || s.ends_with("/lib.rs")` because the version constants moved to fmpl-core/src/vm_version.rs in T0.5 and lib.rs re-exports them.) |
+| R2-C3: Re-export enumeration missing 10+ public items | Critical | T4.10 below now lists the COMPLETE enumeration from `grep -rn '^pub ' fmpl-core/src/persistence/*.rs`: `EnvelopeHeader`, `PayloadKind`, `LoaderStats`, `DecodeOutcome`, `IncompatibilityReason`, `UnknownKindReason`, `CorruptionReason`, `IncompatibilityReasonCounts`, `UnknownKindReasonCounts`, `CorruptionReasonCounts`, `DecodedRecord`, `EnvelopeWriteError`, `NO_SOURCE_HASH`, `MAGIC`, `VM_VERSION_MAJOR` (stays in fmpl-core), `VM_VERSION_MINOR` (stays in fmpl-core), `VM_VERSION_PATCH` (stays in fmpl-core), `ENVELOPE_FORMAT_VERSION`, `ENVELOPE_HEADER_SIZE`, and the free fns `write`, `decode`, `iter_store` (renamed from `iter_keyspace`), `checksum::compute`. |
+| R2-C4: GAT-based `Store::iter` not stably implementable for fjall v3 | Critical | T1 below reverses S-AGG-2's resolution: trait uses `fn iter(&self) -> Box<dyn Iterator<Item = Result<(&[u8], &[u8]), StoreError>> + '_>;`. **Box<dyn Iterator> with BORROWED slice item type.** Rationale: (a) The loader is bootup-scale, not per-message — dyn dispatch cost is negligible; (b) borrowing key/value as `&[u8]` preserves the zero-copy property (resolving R2-S2 below). This is the principled trade: accept dyn dispatch in exchange for stable Rust + zero-copy. S-AGG-2's original "monomorphized GAT" framing was wrong; this revision corrects it. |
+| R2-S1: Cyclic dev-dep risk; T0 missing `fmpl-core` in dev-deps | Serious | T0 dev-deps block updated to include `fmpl-core = { path = "../fmpl-core" }`. Cargo permits dev-dep cycles (dev-deps don't propagate). Explicit `cargo build --workspace` verification gate added (resolves R2-S9). |
+| R2-S2: `StoreKey/StoreValue` as `Vec<u8>` regresses zero-copy | Serious | Resolved by R2-C4: trait's iter yields `(&[u8], &[u8])` borrowed from the iterator step. `StoreKey` / `StoreValue` newtypes are removed; the trait surfaces raw byte slices. Per `feedback_ship_infrastructure_with_first_consumer.md`, newtype wrappers added later when a real need surfaces. |
+| R2-S3: Re-export shim shape unspecified | Serious | T4.10 below picks shape (b): `pub mod persistence` stays in fmpl-core/src/lib.rs. fmpl-core/src/persistence/mod.rs replaced with `pub use fmpl_persistence::{envelope, loader, schema, checksum};` (4 submodule re-exports). Preserves qualified paths `fmpl_core::persistence::envelope::write` etc. |
+| R2-S4: T4.8 reshape text mismatched; `from_values_with_memo_fjall` missed | Serious | T4.8 rewritten below: `MemoFjall` struct field reshape is the real work (replacing `fjall::Keyspace` interior with `MemoStore<S: Store>` — or trait-object). `set_memo`/`get_memo` method signatures DON'T change (they already use `MemoEntry`, not fjall types). `from_values_with_memo_fjall` added to the rename list → `from_values_with_memo_store`. |
+| R2-S5: In-source `#[cfg(test)]` modules using fjall directly | Serious | T4.11 (new sub-task) relocates the in-source `#[cfg(test)] mod tests` blocks in `grammar/incremental.rs:170-293` and `grammar/stream_input.rs:823-996` to integration tests under fmpl-persistence/tests/ (or fmpl-core/tests/ rewritten to use the Store API). After this, the strengthened gate's "any `fjall::*` substring" check passes. |
+| R2-S6: `fjall-persistence` feature-rename cascade under-specified | Serious | T4.9 enumerates the 4 cfg-gate sites: compiler.rs:703, 726; object.rs:186, 223. All flip to `#[cfg(feature = "persistence")]` (the renamed feature) — but per T4.9 these annotations also DROP entirely (the methods become unconditional after taking `&impl Store`). The cfg-gates on the relocated test files (`bytecode_persistence.rs:3`, `object_persistence.rs:3`, `iter_keyspace.rs:14`) flip to `#![cfg(feature = "fjall-backend")]` (gating on fmpl-persistence's feature) since those tests construct `FjallStore`. |
+| R2-S7: rustdoc cross-reference links break silently | Serious | T4.12 (new sub-task) rewrites the 7 rustdoc cross-reference links across `grammar/incremental.rs:88, 89, 91, 92, 100, 103` and `stream_input.rs:563`. Verified by `cargo doc -p fmpl-core --no-deps 2>&1 \| grep -c 'broken intra-doc link' = 0`. |
+| R2-S8: 0005a.6 T0 `is_empty` "non-breaking" claim wrong without default impl | Serious | 0005a.6 T0 updated: `is_empty` ships with a default impl `fn is_empty(&self) -> Result<bool, StoreError> { Ok(self.iter().next().is_none()) }`. Now genuinely additive non-breaking. |
+| R2-S9: No `cargo build --workspace` verification gate | Serious | New gate added below: `cargo build --workspace --all-features` must pass at every T-task boundary. Catches workspace-wide feature unification under resolver=2 even while per-crate builds pass. |
+| R2-S10: 0005a.6 T1 data-migration discovery defers load-bearing decision | Serious | 0005a.6 T1 promoted to pre-iteration spike. The spike runs BEFORE 0005a.6 starts; its outcome is one of: (a) commit to clean-slate (no production data), or (b) pin a concrete v2→v3 migration design. 0005a.6 cannot enter with T1.3 unresolved. |
+| R2-S11: 0005a.6 T6 cross-crate `CARGO_MANIFEST_DIR.parent()` fragile | Serious | 0005a.6 T6 updated: gate moves to a new workspace-level test crate `fmpl-workspace-tests` (no source code, just integration tests against the workspace's structural invariants). OR, simpler: a `build.rs`-emitted const in fmpl-core providing the workspace root path. Pick the simpler at iteration entry. |
+| R2-S12: `iter_keyspace` call-site enumeration missed | Serious | T4.13 (new sub-task) explicitly lists the call-site updates: scenario_0099_envelope_loader.rs:221+325+335+339; scenario_0112_operator_detection.rs:26+143+211+212; iter_keyspace.rs (file rename target); plus the 5 doc-comment references at loader.rs:288, 356, 359, 367, 371. All `iter_keyspace` → `iter_store`. |
+| R2-S13: `fjall-persistence` rename cascade across docs | Serious | T8 expanded: also rewrite CHANGELOG.md, specs/persistence.md, specs/grammar-system.md, docs/codebase/fjall-persistence-patterns.md to use the renamed feature `persistence`. |
+| R2-S14: T5 dep-count delta empirical claim unsubstantiated | Serious | T5 dropped. The fmpl-bootstrap leanness story is entirely deferred to ITER-0005a-DEPS-CLEANUP. No claim made; no measurement gate. fmpl-bootstrap simply continues to work (it doesn't use the persistence feature, so the renamed feature flag is unset by default). |
+
+**PAR round-3 findings → resolution (2026-05-13, third loop):**
+
+| Finding | Severity | Resolution in this revision |
+|---|---|---|
+| R3-C1: Loader's `VM_VERSION_MAJOR` reference has no home (R2-C1 fixed writer, missed reader) | Critical | T3 below extended: `decode(value, expected_vm_major: u16) -> (DecodeOutcome, Option<DecodedRecord>)` and `iter_store<S: Store, F>(store: &S, expected_vm_major: u16, on_record: F)` both take the expected major as a parameter. fmpl-core's call sites pass `fmpl_core::VM_VERSION_MAJOR`. The constant never leaves fmpl-core. |
+| R3-C2: `is_empty` default impl swallows iterator errors | Critical | 0005a.6 T0 default impl rewritten: `fn is_empty(&self) -> Result<bool, StoreError> { match self.iter().next() { None => Ok(true), Some(Ok(_)) => Ok(false), Some(Err(e)) => Err(e) } }`. Errors propagate correctly. |
+| R3-C3: AC-6 ratchet relocated to wrong crate; constants stay in fmpl-core | Critical | T6 reversed: AC-6 ratchet STAYS in fmpl-core/tests/persistence_schema_anti_rot.rs, scans fmpl-core/src/ (where the constants now live per R2-C1). Exemption rule changes to `s.ends_with("/vm_version.rs")` (or wherever the constants are placed in fmpl-core post-T4.10). The relocated fmpl-persistence has its own schema-format anti-rot but for DIFFERENT constants (ENVELOPE_FORMAT_VERSION, PayloadKind variants) — that gate is a separate workspace member, NOT a relocation of AC-6. |
+| R3-C4: `cargo doc` grep gate doesn't catch broken links (empirically verified) | Critical | Verification gate replaced: `RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc -p fmpl-core --no-deps` — uses rustdoc lint with deny level. Fails the build on broken links. |
+| R3-C5: schema.rs split between crates not decomposed | Critical | NEW T0.5 (between T0 and T1): split `fmpl-core/src/persistence/schema.rs` into TWO files. `fmpl-core/src/vm_version.rs` holds `VM_VERSION_MAJOR/MINOR/PATCH` constants + the `parse_version_part` const fn helper (lines 33-60 of current schema.rs). `fmpl-persistence/src/schema.rs` holds `PayloadKind`, `ENVELOPE_FORMAT_VERSION`, schema versions, the `let _ = VM_VERSION_*;` use-markers REMOVED (those were anti-rot reminders; that role moves to the new fmpl-core-side `vm_version.rs` exemption in T6). |
+| R3-C6: T4.7's `OverflowStore<S: Store>` cascade un-bounded | Critical | T4.7 pinned to trait-object form (no generic parameter): `OverflowStore(Arc<dyn Store + Send + Sync>)`. Matches T4.8's MemoFjall→MemoStore decision; both fields hold `Arc<dyn Store + Send + Sync>` so no generic cascade through `StreamPosition`, `StreamSource`, or `Input::Position`. **T1 below now requires `Store: Send + Sync` supertrait bound** (resolving R3-S13 from B). |
+| R3-S (multiple, both reviewers): stale task cross-references + renumbering | Serious | T-task numbering reflowed: T0, T0.5 (new schema split), T1, T2, T3, T4 (.1-.13), T5 (AC-5 gate / no-fjall-in-core; landed as the additional test in `persistence_envelope_invariant.rs`), T6 (AC-6 gate, STAYS in fmpl-core, + new schema-format gate in fmpl-persistence), T7 (cross-reference sweep), T8 (wrap). T7 sweep at iteration close updated 4 forward-references (line 16: C-AGG-4 "T7 below" → "T5 below"; line 20: S-AGG-1 "T9 below" → "T8 below" with supersession note for 0005a.4; line 37: R2-C2 "T7 below" → "T6 below"; line 45: R2-S6 "T4.0" → "T4.9") and rewrote line 1903's "Impacted scenarios" entry to record that AC-6 stayed in fmpl-core. Some intra-0005a.6-card "T1.3" references are intentionally preserved — they refer to 0005a.6's own pre-iteration spike numbering, not 0005a.5 tasks. The meta-claim "every reference rewritten" overstated what T7 needed to do; the accurate framing is "every 0005a.5-internal dangling reference rewritten." |
+| R3-S: `fmpl-workspace-tests` crate never added to workspace members | Serious | 0005a.6 T5 explicitly adds `fmpl-workspace-tests` to `Cargo.toml:3-11` members array as part of the same atomic commit. |
+| R3-S: Test-file cfg-gate flips miss scenario_0099 + scenario_0112 | Serious | T4.9 enumeration extended: `scenario_0099_envelope_loader.rs:218` (`#[cfg(feature = "fjall-persistence")]` on iter_keyspace_pathway submodule) → `fjall-backend`; `scenario_0112_operator_detection.rs:23` (`#![cfg(...)]`) → `fjall-backend`; `parse_state_persistence.rs` GAINS `#![cfg(feature = "fjall-backend")]` (didn't have one before; needs it after relocation). |
+| R3-S: `EnvelopeHeader::new_for_current_vm` reads VM_VERSION_* internally | Serious | T3 extended: `new_for_current_vm` renamed to `new(vm_version: VmVersion, kind, payload_len, source_hash)` taking the version as a parameter, NOT reading from any const. The 13+ call sites at envelope.rs/loader.rs tests pass `fmpl_core::VM_VERSION` explicitly. |
+| R3-S: Doc cascade misses specs/fmpl-core.md + 2 docs/plans/ files | Serious | T8 doc-cascade list extended: `specs/fmpl-core.md`, `docs/plans/2026-01-20-parse-state-serialization-implementation-plan.md`, `docs/plans/2026-01-20-streaming-grammar-push-model-implementation-plan.md`, `docs/superpowers/iterations/behavior-corpus.md` lines 87-88, `docs/superpowers/iterations/progress.md`, `docs/superpowers/iterations/requirements/EPIC-003.md` lines 201, 205-207, 235. |
+| R3-S: T4.13 mis-cites doc-comment line numbers in loader.rs | Serious | T4.13 corrected: actual `iter_keyspace` doc-comment sites are loader.rs:288 and loader.rs:371 (verified by grep); loader.rs:356/359/367 do NOT contain iter_keyspace text — those were misidentified in the prior revision. Plus loader.rs:747 (inside `#[cfg(test)]` block — moved by T4.11). |
+| R3-S: 0005a.6 Design B (migration writer) incompatible with T1-T3 build order | Serious | 0005a.6 reshaped: if pre-iteration spike picks Design B (migration writer), insert a new T0.5 BEFORE T1 that performs the one-time v2-read/v3-write migration as a standalone code path. T0.5 runs WHILE fjall v2 is still a workspace dep (T3 hasn't dropped it yet). After T0.5 completes successfully, T1+T2 (the rewrite) proceeds; T3 drops the workspace fjall v2 only after T0.5 has been run + deployed. Order is: spike → T0 (is_empty) → T0.5 (migration if Design B) → T1+T2 (rewrite to Store) → T3 (drop workspace fjall) → T4 (remove workspace fjall pin) → T5 (gate) → T6 (wrap). |
+| R3-S: pre-iteration spike has no defined runner | Serious | Pre-iteration spike now invokes 2 paired investigators per the PAR-pair-pattern (parallel subagents, blind to each other, surface evidence, recommend Design A or Design B). Their convergent recommendation pins the spike's outcome; if disagreement, escalate to user. |
+| R3-S: `Store: Send + Sync` supertrait not on T1's trait | Serious | T1 updated: `pub trait Store: Send + Sync { ... }`. Required for the `Arc<dyn Store + Send + Sync>` form used by T4.7 + T4.8. |
+| R3-S: hard grep gate scope omissions | Serious | Gate scope extended to also include `fmpl-core/tests/` and `fmpl-web/src/` and `fmpl-bootstrap/src/`: `grep -rn 'iter_keyspace' fmpl-persistence/ fmpl-core/ fmpl-web/src/ fmpl-bootstrap/src/ | wc -l = 0`. |
+| R3-S: workspace serde feature unification for MemoEntry | Serious | T4.8 extended: MemoEntry stays in fmpl-core/src/grammar/ (NOT relocated); the relocated MemoStore field holds `Arc<dyn Store + Send + Sync>` not MemoEntry. The serde derives on MemoEntry are unaffected by the move. The store reads/writes raw bytes; MemoEntry serialization happens at the call-site (compiler.rs / object.rs / grammar/incremental.rs / grammar/stream_input.rs), in fmpl-core, where serde + workspace serde-derive features are unchanged. |
+| R3-S: `cargo build --workspace --all-features` at every task boundary unachievable | Serious | Verification gate softened: workspace-build runs at task-GROUP boundaries (after T0+T0.5 land; after T3 lands; after T4 lands; before T8). NOT at every micro-T-task. Intermediate states are allowed to break workspace-features as long as the gate passes at the named boundary. |
+| R3-S: T4.7 `OverflowStore<S>` cascade — addressed by R3-C6 (trait-object pin). |  | (no new task) |
+| R3-S: R2-S11 "simpler" path self-contradiction | Serious | 0005a.6 T5 reshaped: the `fmpl-workspace-tests` crate is the ONLY option (the build.rs-emitted const idea is dropped — it's brittle for the same reason CARGO_MANIFEST_DIR is brittle). Workspace-tests crate gets explicit member-array registration in 0005a.6 T5. |
+
+**Driving evidence (2026-05-13, calibrated):**
+
+1. **Duplicate fjall compile** — fmpl-web/Cargo.toml:20 pulls `fjall = { workspace = true }` resolving to workspace `Cargo.toml:40` `fjall = "2"`; fmpl-core/Cargo.toml:21 hard-pins `fjall = "3"` (not workspace). Both versions compile from scratch, each with its own `lsm-tree`, `byteview`, `dashmap`, `quick_cache`. This is the structural cause of a non-trivial fraction of the 36 GB `target/` reclaimed by `cargo clean` this session. **0005a.5 does NOT eliminate this — 0005a.6 does, by migrating fmpl-web off fjall v2.** 0005a.5's win is making fjall an implementation detail within `fmpl-persistence`, which is the prerequisite for 0005a.6.
+2. **Storage leaks across the API seam** — current public APIs name `fjall::*` directly: `iter_keyspace(&fjall::Keyspace, F)`, `save_to_fjall(&fjall::Keyspace, ...)` and counterparts in compiler.rs/object.rs/grammar/{incremental,stream_input}.rs, public error variants `EnvelopeWriteError::Keyspace(#[from] fjall::Error)` at envelope.rs:222 and `ParseStateError::Fjall(fjall::Error)` at incremental.rs:70, and private struct fields `FjallOverflow.keyspace: fjall::Keyspace` + `MemoFjall(fjall::Keyspace)` in stream_input.rs. The storage backend should not appear in any consumer's public API.
+3. **Tuplespace overlap is surface-level only** — tuplespaces are pure-RAM today (`fmpl-core/src/tuplespace/store.rs:23-30`); spec's `durable: true` (`specs/tuplespace.md:111-115`) is aspirational with no implementing field on `Tuple`. Per `feedback_ship_infrastructure_with_first_consumer.md`, do NOT design a shared abstraction now. A future `PayloadKind::Tuple = 0x0A` bridges the write-side of a durable tuplespace if/when it ships; the pattern-match query layer would need a separate abstraction at that future point (NOT part of the Store trait).
+
+**The API-seam constraint (load-bearing, applies to fmpl-core only this iteration):**
+
+`fmpl-persistence`'s public API must not name `fjall::*` in any signature, trait bound, error type, struct field, or re-export. `fjall` is an implementation detail behind a `fjall-backend` feature. After 0005a.5, fmpl-core also contains zero `fjall::*` substrings (verified by T7's typed gate). fmpl-web is explicitly OUT OF SCOPE this iteration and continues using fjall v2 directly until 0005a.6.
+
+**Scope (build order):**
+
+1. **T0 — Create `fmpl-persistence` crate skeleton.** New workspace member added to `Cargo.toml:3-11` members array (position after `fmpl-core`). `fmpl-persistence/Cargo.toml`:
+   ```toml
+   [package]
+   name = "fmpl-persistence"
+   version.workspace = true
+   edition.workspace = true
+   authors.workspace = true
+   license.workspace = true
+   description = "FMPL persistence layer: envelope writer, loader, Store trait"
+
+   [features]
+   default = []
+   fjall-backend = ["dep:fjall"]
+
+   [dependencies]
+   fjall = { version = "3", optional = true }
+   blake3 = "1"
+   serde = { workspace = true }
+   serde_json = "1.0"
+   thiserror = { workspace = true }
+   zerocopy = { version = "0.8", features = ["derive"] }
+
+   [dev-dependencies]
+   tempfile = "3"
+   fmpl-scenario-runner = { path = "../fmpl-scenario-runner" }
+   fmpl-core = { path = "../fmpl-core" }  # cyclic dev-dep — Cargo permits (dev-deps don't propagate); needed for relocated bytecode/object/parse_state tests
+   serde_json = "1.0"
+   fjall = "3"
+   ```
+   Move `fmpl-core/src/persistence/{envelope,loader,schema,checksum,mod}.rs` → `fmpl-persistence/src/{envelope,loader,schema,checksum,lib}.rs` (renaming `mod.rs` → `lib.rs`).
+   Move ALL fjall-touching tests from `fmpl-core/tests/` to `fmpl-persistence/tests/`:
+   - `scenario_0099_envelope_loader.rs`
+   - `scenario_0111_envelope_writer_roundtrip.rs`
+   - `scenario_0112_operator_detection.rs`
+   - `iter_keyspace.rs`
+   - `persistence_schema_anti_rot.rs` (AC-6 ratchet)
+   - `bytecode_persistence.rs`
+   - `object_persistence.rs`
+   - `parse_state_persistence.rs`
+   Keep `persistence_envelope_invariant.rs` IN PLACE at `fmpl-core/tests/` (rewritten in T7 as "no fjall in fmpl-core/src/" — the gate's correct location stays under fmpl-core so `CARGO_MANIFEST_DIR` resolves correctly).
+
+**T0.5 (REVISED post-R4 + post-fmpl-types decision) — Split schema.rs; use `fmpl_types::VmVersion` everywhere.** Assumes ITER-0005a.0 (rescoped) shipped first. Before T1 lands the trait:
+- Create `fmpl-core/src/vm_version.rs` containing:
+  ```rust
+  use fmpl_types::{VmVersion, parse_version_part};
+  pub const VM_VERSION_MAJOR: u16 = parse_version_part(env!("CARGO_PKG_VERSION"), 0);
+  pub const VM_VERSION_MINOR: u16 = parse_version_part(env!("CARGO_PKG_VERSION"), 1);
+  pub const VM_VERSION_PATCH: u16 = parse_version_part(env!("CARGO_PKG_VERSION"), 2);
+  pub const VM_VERSION: VmVersion = VmVersion::new(VM_VERSION_MAJOR, VM_VERSION_MINOR, VM_VERSION_PATCH);
+  ```
+  fmpl-core gains an unconditional `fmpl-types = { workspace = true }` dep (added in 0005a.0 T4). No feature-gating needed; fmpl-types has no fjall transitives.
+- The relocated `fmpl-persistence/src/schema.rs` contains: `pub const ENVELOPE_FORMAT_VERSION: u16 = 1;`, `pub enum PayloadKind { ... }`, the `current_schema_version` methods, and the schema-version constants per PayloadKind. **Does NOT contain VM_VERSION_*.** fmpl-persistence ALSO depends on `fmpl-types` unconditionally — its `EnvelopeHeader` field types use `fmpl_types::Hash`.
+- Split the existing schema.rs `#[cfg(test)] mod tests` (lines 196-288): tests for `parse_version_part` already moved to fmpl-types in 0005a.0 T3; tests for `PayloadKind`/`ENVELOPE_FORMAT_VERSION` move to fmpl-persistence/src/schema.rs.
+- Remove the `let _ = VM_VERSION_*;` use-markers at schema.rs:284-286 (vm_version.rs's `pub const VM_VERSION` references the constants, eliminating the dead-code concern).
+- Source-hash type strategy (R5-C1 RESOLVED — zerocopy compatibility): `EnvelopeHeader.source_hash` field STAYS as `[u8; 32]` because `EnvelopeHeader` derives zerocopy traits and `Hash` doesn't (it derives serde + Hash + PartialEq only). **`Hash` is used at the API edge, not as a struct field type.** Writer signature takes `source_hash: Hash`; internally `EnvelopeHeader::new` accepts `source_hash: Hash` and stores `source_hash.into_bytes()` (or `*source_hash.as_bytes()`) into the `[u8; 32]` field. Reader exposes `header.source_hash` as the raw `[u8; 32]` (callers wrap into `Hash` if needed). `pub const NO_SOURCE_HASH: [u8; 32]` STAYS as `[u8; 32]` in envelope.rs (preserves zerocopy compatibility and callers' direct-array comparisons). A new `pub const fn no_source_hash() -> Hash { Hash::NONE }` helper is added in fmpl-types for the API-edge form when needed.
+- After T0.5: `cargo build -p fmpl-core --no-default-features` builds (fmpl-types is unconditional dep). `cargo build -p fmpl-persistence --features fjall-backend` builds. **Workspace `--all-features` build passes at T0.5 boundary** — fmpl-types is in the dep graph and resolves cleanly for both crates.
+
+2. **T1 — Define the `Store` trait + `StoreError`.** Trait sized to actual current consumers (envelope writer, loader, the 4 `save_to_fjall`/`load_from_fjall` paths in fmpl-core/src/). **Box<dyn Iterator> with owned `Vec<u8>` items**, **`Send + Sync` supertrait per R3-C6 / R3-S**:
+   ```rust
+   #[derive(Debug, thiserror::Error)]
+   pub enum StoreError {
+       #[error("backend error: {0}")]
+       Backend(Box<dyn std::error::Error + Send + Sync>),
+       // ... grows as real needs surface
+   }
+
+   pub trait Store: Send + Sync {
+       fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StoreError>;
+       fn insert(&self, key: &[u8], value: &[u8]) -> Result<(), StoreError>;
+       fn iter(&self) -> Box<dyn Iterator<Item = Result<(Vec<u8>, Vec<u8>), StoreError>> + '_>;
+   }
+   ```
+   **Design notes:**
+   - `iter()` yields `(Vec<u8>, Vec<u8>)` — owned bytes, materializing from fjall's `Slice` into Vec on each step. This is a real per-record allocation cost. Documented trade-off: simplicity (stable Rust, no GATs, no lifetime acrobatics) at the cost of one Vec allocation per record at bootup-scan time. **The loader is bootup-scale, not per-message — the trade is acceptable.** A future `iter_borrowed()` variant returning `&[u8]` slices is non-breaking to add when a measured perf need surfaces.
+   - `get()` returns `Vec<u8>` (owned) for the same reason — callers can drop the copy if they only need bytes-len or to deserialize.
+   - `Box<dyn Iterator>` adds dyn dispatch on each `.next()`. Profiled trade-off: at bootup-scan rates (~10s-100s of records), dyn dispatch is negligible vs the deserialization cost downstream.
+   - `is_empty()` is NOT in this trait — fmpl-core's consumers don't need it. 0005a.6 adds it (with a default impl) when fmpl-web is the first real consumer.
+   - **No `StoreKey`/`StoreValue` newtypes** — bare `Vec<u8>` for now. Newtypes added later if a real semantic need surfaces (e.g., to enforce key prefixing).
+
+3. **T2 — `FjallStore` implementation + smoke test.** `fmpl-persistence/src/fjall_backend.rs`, gated `#[cfg(feature = "fjall-backend")]`. Implements `Store` for a wrapper around `fjall::Keyspace`. `From<fjall::Error> for StoreError` impl (the ONLY place `fjall::Error` is named in fmpl-persistence). T2 ships a minimal smoke test (`fmpl-persistence/tests/fjall_store_smoke.rs`) that constructs a `FjallStore`, inserts one key, gets it back, iterates and finds it. Proves `Store` is implementable without depending on T3's envelope rewrite.
+
+4. **T3 — Rewrite envelope writer + loader against `Store`. Uses `fmpl_types::VmVersion` and `fmpl_types::Hash` (R4-C1 RESOLVED via fmpl-types).**
+   - **Writer:** `pub fn write<T: Serialize>(store: &impl Store, key: &[u8], payload: &T, kind: PayloadKind, vm_version: VmVersion, source_hash: Hash) -> Result<(), EnvelopeWriteError>` replaces `write(keyspace: &fjall::Keyspace, ...)`. Both `VmVersion` and `Hash` come from `fmpl_types` (shipped in ITER-0005a.0).
+   - **Reader (R3-C1 fix):** `pub fn decode(value: &[u8], expected_vm_major: u16) -> (DecodeOutcome, Option<DecodedRecord<'_>>)` and `pub fn iter_store<S: Store, F>(store: &S, expected_vm_major: u16, on_record: F) -> Result<LoaderStats, StoreError>`. Both take `expected_vm_major: u16` (just the major — the only compat-check field). fmpl-core call sites pass `fmpl_core::VM_VERSION.major` or equivalently `fmpl_core::VM_VERSION_MAJOR`.
+   - **`EnvelopeHeader::new_for_current_vm` renamed to `EnvelopeHeader::new(vm_version: VmVersion, kind, payload_len, source_hash: Hash)`** (per R3-S `new_for_current_vm` finding). Takes the version struct directly. The 13+ call sites in envelope.rs + loader.rs tests pass `fmpl_core::VM_VERSION` explicitly.
+   - `EnvelopeWriteError::Keyspace(#[from] fjall::Error)` is reshaped to `EnvelopeWriteError::Store(#[from] StoreError)`. **API-breaking rename.**
+   - The 8 relocated tests construct `FjallStore` locally and feed it to the new API with `fmpl_core::VM_VERSION` (or a synthetic `VmVersion::new(...)` for compat-failure tests).
+   - **Ordering note (per R4-C2):** T3 lands AFTER T4.9 wires fmpl-persistence as fmpl-core's optional dep. **Implementation order:** T0 → T0.5 → T1 → T2 → T4.9 (Cargo.toml + persistence/mod.rs shim) → T3 → T4.1-T4.8 + T4.10-T4.13 → T5 → T6 → T7 → T8.
+   - **Verification:** `cargo build --workspace --all-features` passes after T3 lands.
+
+5. **T4 — Rewire fmpl-core call sites + ENUMERATE every fjall::* reference site.** Each subtask is one commit (atomic per jj split workflow).
+   - T4.1: `compiler.rs::CompiledCode::save_to_fjall` → `save_to_store(&impl Store, ...)`. Drop `#[cfg(feature = "fjall-persistence")]`.
+   - T4.2: `compiler.rs::CompiledCode::load_from_fjall` → `load_from_store(&impl Store, ...)`.
+   - T4.3: `object.rs::ObjectDb::save_to_fjall` → `save_to_store(&impl Store, ...)`.
+   - T4.4: `object.rs::ObjectDb::load_from_fjall` → `load_from_store(&impl Store, ...)`.
+   - T4.5: `grammar/incremental.rs::ParseState::save_to_fjall` → `save_to_store(&impl Store, ...)`. Reshape `ParseStateError::Fjall(fjall::Error)` → `ParseStateError::Store(#[from] StoreError)`.
+   - T4.6: `grammar/incremental.rs::ParseState::load_from_fjall` → `load_from_store(&impl Store, ...)`.
+   - T4.7: `grammar/stream_input.rs::FjallOverflow` struct rename → **`OverflowStore(Arc<dyn Store + Send + Sync>)`** (trait-object form pinned per R3-C6 — no generic parameter; no cascade through StreamSource/StreamPosition/Input). `from_async_with_fjall` → `from_async_with_store(store: Arc<dyn Store + Send + Sync>, ...)`. `spill_to_fjall` → `spill_to_store`. `restore_from_fjall` → `restore_from_store`. `from_values_with_memo_fjall` → `from_values_with_memo_store` (per R2-S4 — was missed in prior revision).
+   - T4.8: `grammar/stream_input.rs::MemoFjall(fjall::Keyspace)` struct → **`MemoStore(Arc<dyn Store + Send + Sync>)`** (trait-object form pinned per R3-C6, matching T4.7's choice). **`set_memo`/`get_memo` signatures DON'T change** — they already operate on `MemoEntry`, not fjall types. The real work is the interior-field reshape. MemoEntry itself stays in fmpl-core/src/grammar/ (NOT relocated); the store reads/writes raw bytes; MemoEntry's serde derives are unaffected.
+   - T4.9: fmpl-core's `Cargo.toml` — drop direct `fjall = "3"`, gain `fmpl-persistence = { path = "../fmpl-persistence", optional = true, features = ["fjall-backend"] }` under a renamed feature `persistence = ["dep:fmpl-persistence"]` (was `fjall-persistence`). The 4 sites with `#[cfg(feature = "fjall-persistence")]` in fmpl-core/src/ (compiler.rs:703, 726; object.rs:186, 223) **drop the cfg-annotation entirely** — the methods take `&impl Store` and are unconditional. Cfg gates on RELOCATED tests flip to `#![cfg(feature = "fjall-backend")]` (gating on fmpl-persistence's feature since they construct `FjallStore`): `bytecode_persistence.rs:3`, `object_persistence.rs:3`, `iter_keyspace.rs:14`, **`scenario_0099_envelope_loader.rs:218`** (per R3-S), **`scenario_0112_operator_detection.rs:23`** (per R3-S), and **`parse_state_persistence.rs` GAINS `#![cfg(feature = "fjall-backend")]`** (didn't have one before; needs it after relocation — per R3-S).
+   - T4.10: fmpl-core's `persistence/mod.rs` becomes a re-export shim. `pub mod persistence` STAYS in lib.rs. New `persistence/mod.rs` body:
+     ```rust
+     pub use fmpl_persistence::envelope;
+     pub use fmpl_persistence::loader;
+     pub use fmpl_persistence::schema;
+     pub use fmpl_persistence::checksum;
+     ```
+     This preserves qualified paths like `fmpl_core::persistence::envelope::write` for downstream consumers (the relocated tests still use these qualified paths, plus any external code). Per R2-S3 this is shape (b) from the analysis.
+
+     Additionally, fmpl-core defines (NOT re-exports) its own VM version constants:
+     ```rust
+     // in fmpl-core/src/lib.rs or a new src/vm_version.rs
+     pub const VM_VERSION: fmpl_persistence::VmVersion = /* const-parse from env!("CARGO_PKG_VERSION") */;
+     pub const VM_VERSION_MAJOR: u16 = VM_VERSION.major;
+     pub const VM_VERSION_MINOR: u16 = VM_VERSION.minor;
+     pub const VM_VERSION_PATCH: u16 = VM_VERSION.patch;
+     ```
+     **The version constants stay in fmpl-core** (per R2-C1); only the carrier struct `VmVersion` lives in fmpl-persistence.
+
+   - T4.11 (NEW per R2-S5): Relocate in-source `#[cfg(test)] mod tests` blocks containing fjall direct-use. Source sites: `grammar/incremental.rs:170-293` (4 fjall::Database::builder calls), `grammar/stream_input.rs:823-996` (multiple fjall calls). Two options per block (pick at task entry):
+     - (a) Move to integration tests under fmpl-persistence/tests/ — clean separation but loses access to private/internal types.
+     - (b) Rewrite to use the Store trait directly with FjallStore constructed in test setup — keeps the test in-source but removes fjall::* references.
+     Option (b) is preferred where the test exercises private items.
+
+   - T4.12 (NEW per R2-S7): Rewrite rustdoc cross-reference links broken by the rename. Sites: `grammar/incremental.rs:88, 89, 91, 92, 100, 103`; `grammar/stream_input.rs:563`. Verification: `cargo doc -p fmpl-core --no-deps 2>&1 | grep -c 'broken intra-doc link' = 0`.
+
+   - T4.13 (NEW per R2-S12; line refs CORRECTED per R3-S): Rewrite `iter_keyspace` → `iter_store` at call sites: scenario_0099_envelope_loader.rs (relocated, verify by grep), scenario_0112_operator_detection.rs (relocated, verify by grep), iter_keyspace.rs (file body + the rename of the file itself to iter_store.rs). Doc-comment refs at loader.rs:288 and loader.rs:371 (verified — the prior revision's claim of 5 sites was wrong; only 2 are actual iter_keyspace refs). Plus loader.rs:747 if it survives the in-source `#[cfg(test)]` relocation in T4.11. Verification: `grep -rn 'iter_keyspace' fmpl-persistence/ fmpl-core/ fmpl-web/src/ fmpl-bootstrap/src/ | wc -l = 0` (scope extended per R3-S).
+
+6. **T5 — AC-5 invariant gate stays in fmpl-core/tests/, upgraded scope.** Existing `fmpl-core/tests/persistence_envelope_invariant.rs` rewritten in place at `fmpl-core/tests/no_fjall_in_core.rs` (rename for clarity). The gate scans `fmpl-core/src/` (resolved via `env!("CARGO_MANIFEST_DIR")/src`) for **ANY `fjall::*` or `use fjall` substring** — strengthened from the AC-5 grep (which only caught `keyspace.insert(`/`partition.insert(`). After T4 lands, fmpl-core/src/ has zero fjall references; the gate passes. The `(AC-5 ratchet)` entry in behavior-corpus.md is replaced by `(no-fjall-in-fmpl-core ratchet)`.
+   *(Note: the original T5 "fmpl-bootstrap minor leanness wins" task was dropped per R2-S14 — claim was unsubstantiated and the leanness win is small. fmpl-bootstrap still benefits indirectly by simply not enabling the renamed `persistence` feature.)*
+
+7. **T6 — AC-6 anti-rot ratchet STAYS in fmpl-core/tests/ (per R3-C3 — earlier R2-C2 resolution was wrong-direction).** `persistence_schema_anti_rot.rs` stays at `fmpl-core/tests/`. Scans `fmpl-core/src/` (where `VM_VERSION_MAJOR/MINOR/PATCH` constants live post-T0.5). **Exemption rule changes from `s.contains("/persistence/")` to `s.ends_with("/vm_version.rs")`** — the new home for the version constants per T0.5. Same form #4 grep, new exemption rule reflecting the post-T0.5 file layout. A SEPARATE schema-format anti-rot gate (different concerns: `ENVELOPE_FORMAT_VERSION`, `PayloadKind` variant numbers, schema versions per kind) lives in `fmpl-persistence/tests/persistence_schema_format_anti_rot.rs` with its own exemption `s.ends_with("/schema.rs")`. **The new fmpl-persistence-side gate's FORBIDDEN_LITERALS list is pinned at task entry:** `["ENVELOPE_FORMAT_VERSION", "PayloadKind::", "current_schema_version"]` — these MUST appear only in schema.rs. behavior-corpus.md gets both entries.
+
+8. **T7 — Sweep dangling cross-references and stale gate text (per R4-C2/R4-C3).** Mechanical cleanup task that previously was conflated into T8's wrap-up:
+   - Sweep all "T7 below" / "T1.3" / "T4.0" / "T9 below" textual references in the resolution maps (R1, R2, R3) and fix them to point at current task numbers.
+   - Fix the stale verification-gate text at the "Relocated `(AC-6 ratchet)`" line — it currently says exemption `s.ends_with("/schema.rs")` but R3-C3 changed it to `s.ends_with("/vm_version.rs")` AND removed "Relocated" (the gate stays put).
+   - Run a final cross-reference audit: `grep -E 'T[0-9](\.[0-9]+)?' docs/superpowers/iterations/roadmap.md` and resolve any references that point at non-existent tasks.
+   - Verification: no dangling task references in this card.
+
+9. **T8 — Wrap artifacts.**
+   - Iteration log entry per `feedback_no_hallucinated_time_estimates.md` (wall-clock from `/tmp/iter-0005a.5-checkpoints/`).
+   - `progress.md` snapshot.
+   - Roadmap status → done.
+   - **Rewrite ITER-0005a.4's card text in place** — every `&fjall::Keyspace` → `&impl Store`, `save_to_fjall`/`load_from_fjall` → `save_to_store`/`load_from_store`. The 0005a.4 caller-update enumeration shifts to account for the relocated test files.
+   - Update EPIC-003 STORY-0099 AC-5 + AC-7 status notes to point at the new module paths.
+   - behavior-corpus.md updated: SCENARIO-0099 + 0099-iter + 0111 + 0112 row entries point at `cargo test -p fmpl-persistence --features fjall-backend --test <name>`; AC-5 ratchet renamed; AC-6 ratchet path updated.
+   - **Doc cascade for `fjall-persistence` → `persistence` rename (per R2-S13):** rewrite `CHANGELOG.md`, `specs/persistence.md`, `specs/grammar-system.md`, `docs/codebase/fjall-persistence-patterns.md` (likely rename the latter file to `persistence-patterns.md`).
+
+**Impacted scenarios:**
+
+- SCENARIO-0099 (decode-pathway + iter sub-test) — relocates to `fmpl-persistence/tests/`. Iter sub-test uses the `Store` trait API; decode-pathway test stays decode-only (no Store dependency).
+- SCENARIO-0111 (writer→loader round-trip) — relocates; constructs `FjallStore`, calls `write(&store, ...)`.
+- SCENARIO-0112 (operator detection + isomorphic aggregates) — relocates; constructs `FjallStore`, calls `iter_store(&store, ...)`.
+- (AC-5 ratchet) — STAYS in fmpl-core/tests/persistence_envelope_invariant.rs; the original writer-bypass-prevention invariant is preserved. The typed `no_fjall_in_core.rs` upgrade was deferred since fmpl-core's dep-graph already enforces no-fjall structurally (fjall is no longer a regular dep).
+- (AC-6 ratchet) — STAYS in fmpl-core/tests/persistence_schema_anti_rot.rs per R3-C3. Scan target stays `fmpl-core/src/`; exemption rule updated to `s.ends_with("/vm_version.rs") || s.ends_with("/lib.rs")` to track the post-T0.5 location of `VM_VERSION_*` constants.
+- (Schema-format anti-rot ratchet, NEW) — lives at fmpl-persistence/tests/persistence_schema_format_anti_rot.rs. Scans fmpl-persistence/src/ for `ENVELOPE_FORMAT_VERSION`, `PayloadKind::`, `current_schema_version`. Exemption: schema.rs, envelope.rs, loader.rs (the legitimate wire-format readers).
+
+**Verification gates:**
+
+- `cargo build -p fmpl-persistence --no-default-features` builds (proves the crate compiles without fjall — load-bearing for the API-seam claim).
+- `cargo build -p fmpl-persistence --features fjall-backend` builds.
+- `cargo build -p fmpl-core --no-default-features` builds with zero references to fjall in the compiled output.
+- `cargo build -p fmpl-core --features persistence` builds (the renamed feature).
+- **`cargo build --workspace --all-features` builds** (per R2-S9 — catches resolver-v2 workspace-wide feature unification issues that per-crate builds miss; load-bearing during the 0005a.5→0005a.6 transition when fjall v2 and v3 coexist).
+- `grep -rn 'fjall::\|use fjall' fmpl-core/src/ | wc -l` = 0. **Hard gate.**
+- `grep -rn 'iter_keyspace' fmpl-persistence/src/ fmpl-persistence/tests/ fmpl-core/src/ | wc -l` = 0 (per R2-S12 / T4.13).
+- `cargo build -p fmpl-bootstrap` builds.
+- `cargo build -p fmpl-web` STILL builds (proves we haven't broken fmpl-web while reshaping fmpl-core — fmpl-web continues using fjall v2 directly until 0005a.6).
+- **Rustdoc broken-link gate (R4-C5 + R5-S1/S2 unified mechanism):** ONE mechanism — diff-based count, no `-D` lint. Step 1, before iteration start: capture baseline `cargo doc -p fmpl-core --no-deps 2>&1 | grep -c 'unresolved link'`. **Measured today 2026-05-13: baseline = 6** (in `ast.rs`, `pattern/mod.rs`, `vm_internal/frame.rs`; recompute at iteration entry — number may shift). Step 2, after T4.12: rerun the same command. **Pass condition:** post-T4.12 count ≤ baseline. Pre-existing broken links are OUT OF SCOPE for 0005a.5. Same approach for `-p fmpl-persistence` (baseline = 0 at iteration start since the crate doesn't exist yet; pass condition = 0 after T0 ships). The earlier R3-C4 wording about `RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links"` is SUPERSEDED — that mechanism aborts at first broken link, incompatible with the non-zero baseline. T4.12's "broken intra-doc link" grep string is also SUPERSEDED — use `unresolved link` per the actual rustdoc output.
+- Full sentinel sweep passes: `cargo test -p fmpl-core --no-fail-fast`; `cargo test -p fmpl-persistence --features fjall-backend --no-fail-fast`. Combined test count ≥ 1352 (the 0005a.3 baseline; tests moved between crates, total preserved).
+- New `no_fjall_in_core` typed gate passes.
+- `(AC-6 ratchet)` passes (stays in fmpl-core/tests/ per R3-C3; new exemption rule `s.ends_with("/vm_version.rs")` per T0.5 + T6).
+- `(schema-format anti-rot ratchet)` passes in fmpl-persistence/tests/ (NEW separate gate; exemption `s.ends_with("/schema.rs")`; FORBIDDEN_LITERALS = ["ENVELOPE_FORMAT_VERSION", "PayloadKind::", "current_schema_version"]).
+- Citation check clean.
+- Clippy clean across all members.
+
+**Out of scope (deferred):**
+
+- **fmpl-web migration to `Store` trait** — entire scope of ITER-0005a.6.
+- **Workspace `fjall = "2"` removal** — happens only after fmpl-web migrates in 0005a.6.
+- **fjall v2 → v3 data migration story for fmpl-web** — 0005a.6's responsibility.
+- **`is_empty()` / `len()` on the `Store` trait** — added in 0005a.6 when fmpl-web is the first real consumer (per ship-infrastructure-with-first-consumer).
+- **Removing `curl`, `tokio = "full"` from fmpl-core** — separately tracked in `ITER-0005a-DEPS-CLEANUP` (new placeholder iteration; would deliver the larger fmpl-bootstrap leanness win).
+- **Dead workspace deps (`async-trait`, `tokio-stream`)** — same separate iteration.
+- **Pattern-match-with-blocking storage primitives** — would belong to a future durable-tuplespace iteration (not in scope; tuplespaces are pure-RAM today).
+- **Rename of `fjall-persistence` feature on fmpl-core to `persistence`** — done in T4.9 of this iteration. Mentioned here to make clear it's the only feature-name change.
+
+**Dependencies / ordering:**
+
+- BLOCKED BY: ITER-0005a.3 (done).
+- BLOCKED BY: **ITER-0005a.0 (rescoped, pending)** — provides `fmpl_types::VmVersion` + `Hash` + `SourceHash` used by T0.5 and T3 signatures.
+- BLOCKS: ITER-0005a.6 (fmpl-web migration depends on the `Store` trait + `FjallStore` shipped here).
+- BLOCKS: ITER-0005a.4 (per-call-site rewires use the new `Store` trait; 0005a.4's card text is rewritten in 0005a.5's T8).
+- BLOCKS: ITER-0005b/c/d/e/f (cleaner extraction substrate).
+
+**Risk callouts:**
+
+- **API-breaking rename (T4 + T3).** Every `save_to_fjall`/`load_from_fjall`/`spill_to_fjall`/`restore_from_fjall` method renames to `*_store`. Public error variants reshape (`EnvelopeWriteError::Keyspace` → `EnvelopeWriteError::Store`; `ParseStateError::Fjall` → `ParseStateError::Store`). Any downstream code naming these will break. The persistence module in fmpl-core remains as a re-export shim (T4.10), but method names on `CompiledCode` / `ObjectDb` / `ParseState` change. This is the intentional API-seam fix.
+- **Trait sizing for fmpl-web.** `is_empty()` is needed by fmpl-web but not by fmpl-core. Per ship-infrastructure-with-first-consumer, we ship the trait sized for fmpl-core only this iteration. 0005a.6 extends the trait (additive — non-breaking) when fmpl-web is the first real consumer that needs `is_empty`.
+- **Test relocation churn.** 7 test files relocate; 1 stays (the AC-5 gate). Atomic commits per jj split workflow.
+- **`#[cfg(feature = "fjall-persistence")]` annotations.** Today's gating is inconsistent: compiler.rs + object.rs are gated; grammar/{incremental,stream_input}.rs are NOT. T4 normalizes: drop all `#[cfg(feature = "fjall-persistence")]` from the methods (the methods take `&impl Store` and are unconditional). The feature on fmpl-core renames to `persistence` and gates only the optional `fmpl-persistence` dep, not specific methods.
+
+**Sources:**
+
+- 2026-05-13 dep audit (this session).
+- 2026-05-13 tuplespace-overlap analysis (this session).
+- 2026-05-13 PAR scope review: 2 reviewers, 7 Critical + 11 Serious findings (this session) — addressed in resolution map above.
+- `feedback_ship_infrastructure_with_first_consumer.md` (trait sizing for fmpl-core only).
+- `feedback_split_iterations_on_reader_writer_asymmetry.md` (precedent — split into 0005a.5 / 0005a.6).
+- `feedback_calibrate_claims_to_evidence.md` (driving-evidence recalibration).
+- `feedback_read_actual_code_before_scope_finalization.md` (T4's per-call-site enumeration).
+- `feedback_prefer_proof_tests.md` (T6's gate-strengthening from grep to typed seal).
+- `specs/tuplespace.md:111-115` (aspirational `durable: true` — design vision, not current state).
+- User constraints (2026-05-13): "we shouldn't be leaking storage information across the API seam"; "Shouldn't the storage abstraction be in its own crate?"
+
+---
+
+#### ITER-0005a.6 — Migrate fmpl-web from fjall v2 direct-use to `fmpl-persistence::Store`
+
+**Stories:** none (architectural — completes the fmpl-web side of the persistence extraction begun in 0005a.5).
+
+**Status:** **DONE 2026-05-14.** See `iteration-log.md` ITER-0005a.6 entry for the full close-out. Pre-iteration spike picked Design A (clean-slate; no production data to migrate); T0.5 SKIPPED. All other T-tasks (T0-T6) landed. Closing PAR pending.
+
+Verification at close: fmpl-core 1293/1293 + fmpl-persistence 72/72 + fmpl-workspace-tests 3/3 all passing; clippy clean; `cargo tree --workspace | grep 'fjall v2' | wc -l` = 0; `grep -rn 'fjall::\|use fjall' fmpl-web/src/ | wc -l` = 0.
+
+**Driving evidence (historical, at iteration entry):**
+
+After 0005a.5 closed, the `fmpl-persistence` crate + `Store` trait + `FjallStore` impl exist; fmpl-core uses them; fmpl-web still used fjall v2 directly. The duplicate fjall v2 + v3 compile (the original 0005a.5 driving-evidence #1) remained until this iteration closed. fmpl-web had TWO fjall-touching files (`continuations.rs`, `image_store.rs`) using fjall v2's `Config::new(path).open()` + `keyspace.open_partition(name, opts)` API, which differs from v3's `Database::builder(path).open()` + `db.keyspace(name, opts)`.
+
+**Scope (build order):**
+
+**Pre-iteration spike (REQUIRED before T0; per R2-S10):** the data-migration story must be pinned BEFORE this iteration starts. Spike: (a) inspect fjall v2 vs v3 wire format compatibility — read upstream fjall CHANGELOG / breaking-changes notes between 2.x and 3.x; (b) survey fmpl-web's actual deployment story — does any deployment carry existing fjall v2 data? Spike outcome MUST be one of two pinned designs:
+- **Design A (clean-slate):** No production data exists; T2-T3 use v3 fresh-database semantics; document in iteration log that v2 stores would be discarded.
+- **Design B (migration writer):** At boot, if v2 store detected, walk it via fjall v2 API, re-insert each (key, value) into a fresh v3 store, atomically replace, delete v2. The migration writer becomes an explicit task in the build order.
+
+If the spike's outcome is neither pinable cheaply, **defer 0005a.6 to a follow-on iteration**; do not enter 0005a.6 with the design unresolved.
+
+1. **T0 — Extend `Store` trait with `is_empty()` (default impl propagates errors per R3-C2).** Add to the trait:
+   ```rust
+   fn is_empty(&self) -> Result<bool, StoreError> {
+       match self.iter().next() {
+           None => Ok(true),
+           Some(Ok(_)) => Ok(false),
+           Some(Err(e)) => Err(e),
+       }
+   }
+   ```
+   Note: the prior revision's default `Ok(self.iter().next().is_none())` silently swallowed iterator errors (per R3-C2 — a real correctness bug). The match form propagates them. Add a `FjallStore::is_empty()` override using fjall's native API if cheaper (verify at task entry whether fjall v3 has a direct-count or only-iterate API; if no native is_empty, the default impl is fine). Add a smoke test in fmpl-persistence/tests/ that exercises the error-propagation path (constructed `Store` impl that returns `Err` from `iter().next()`).
+
+**T0.5 (CONDITIONAL — only if pre-iteration spike picked Design B; per R4-C4) — Implement v2→v3 migration writer.** If the spike's outcome was Design A (clean-slate), SKIP T0.5 entirely. If Design B (production data exists), implement:
+- A standalone `migrate_v2_to_v3(path: &Path) -> Result<MigrationStats, MigrationError>` function in fmpl-web (or fmpl-web's startup module). Probes the path; if a fjall v2 store is detected (presence of v2-specific files / metadata), opens it with the fjall v2 API (`fjall = "2"` is still a workspace dep at T0.5 time), iterates all (key, value) pairs, opens a fresh v3 store at a sibling path, inserts each pair into v3, atomically swaps the directories, deletes the v2 store.
+- Cargo.toml temporarily adds `fjall_v2 = { version = "2", package = "fjall" }` (per R5-C2 fix — Cargo's `package` field names the PUBLISHED crate; the LHS is the local import name) to fmpl-web so v2 and v3 coexist in fmpl-web during T0.5+T1+T2. The renamed import allows the migration writer to call `fjall_v2::Config::new(path).open()` while normal code uses `fmpl_persistence::FjallStore` (which transitively uses fjall v3).
+- Smoke test: write a synthetic v2 store, run `migrate_v2_to_v3`, verify the resulting v3 store has the same records and the v2 directory is gone.
+- T3 below (drop workspace `fjall = "2"`) MUST NOT run until T0.5's deployment is complete (i.e., production has been migrated). If deployment ordering is uncertain, defer T3 to a follow-on iteration after T0.5 has rolled out.
+
+2. **T1 — Rewrite `fmpl-web/src/continuations.rs`.** Replace `fjall::{Config, PartitionCreateOptions, PartitionHandle}` imports with `fmpl_persistence::{FjallStore, Store}`. `ContinuationStore::new(&path)` becomes `FjallStore::open(&path.join("continuations"))?`. Field type `partition: PartitionHandle` becomes `store: FjallStore`. `.insert(key, bytes)?` calls go through the trait. No fjall references in fmpl-web/src/continuations.rs after this task. The pre-iteration spike's pinned migration design has already been applied via T0.5 (if Design B) or is moot (if Design A).
+
+3. **T2 — Rewrite `fmpl-web/src/image_store.rs`.** Same shape as T1. Includes `bootstrap_if_empty` using the new `Store::is_empty` method.
+
+4. **T3 — Drop `fjall = { workspace = true }` from `fmpl-web/Cargo.toml`.** fmpl-web gains `fmpl-persistence = { path = "../fmpl-persistence", features = ["fjall-backend"] }`. No fjall in fmpl-web's direct deps.
+
+5. **T4 — Remove `fjall = "2"` from workspace `Cargo.toml:40`.** No more workspace fjall pin. fmpl-persistence's fjall v3 dep is direct (non-workspace). **Verify with `cargo tree --workspace | grep 'fjall v2' | wc -l = 0`.**
+
+6. **T5 — Strengthen the no-fjall typed gate to cover fmpl-web/src/.** Per R2-S11, prefer the simpler resolution: create a new workspace-level test crate `fmpl-workspace-tests` (no source code, only integration tests against workspace-level structural invariants) that scans both `fmpl-core/src/` and `fmpl-web/src/`. The crate's `tests/no_fjall_in_consumers.rs` uses `env!("CARGO_MANIFEST_DIR").parent()` once and lists the consumer-crate directories explicitly:
+   ```rust
+   const CONSUMER_CRATES: &[&str] = &["fmpl-core/src", "fmpl-web/src"];
+   ```
+   This isolates the cross-crate path resolution to one place, documented and discoverable. The old `no_fjall_in_core` gate at fmpl-core/tests/ can be deleted (the new gate supersedes it). behavior-corpus.md updated.
+
+7. **T6 — Wrap artifacts.** Iteration log, progress, roadmap. Update behavior-corpus.md if fmpl-web's stores have any scenario evidence (they currently don't — flag for future).
+
+**Verification gates:**
+
+- `cargo build -p fmpl-web` builds with zero fjall direct dep.
+- `grep -rn 'fjall::\|use fjall' fmpl-web/src/ | wc -l` = 0. **Hard gate.**
+- Full sentinel sweep passes.
+- fjall v2 no longer compiles anywhere in the workspace: `cargo tree --workspace | grep 'fjall v2' | wc -l` = 0.
+- Duplicate-compile recovery: confirm only fjall v3 (+ one lsm-tree, one dashmap) build now.
+
+**Risk callouts:**
+
+- **Production data loss.** Fmpl-web on-disk format changes v2→v3. T1's discovery step is load-bearing; if production data exists, T1.3 designs migration before T2 lands.
+- **`tower-sessions` is NOT fjall-backed** (uses MemoryStore) — no session-store work here. The risk from the original 0005a.5 PAR review is removed.
+- **fmpl-web has no test coverage of ContinuationStore/ImageStore today.** Adding tests is out of scope; consider a follow-on iteration if regression-detection becomes critical.
+
+**Out of scope (deferred):**
+
+- New backends beyond fjall (in-memory, sqlite).
+- Tower-sessions backend swap.
+- New scenarios for fmpl-web persistence (no existing coverage to extend).
+
+**Sources:**
+
+- 2026-05-13 dep audit + PAR review (same session as 0005a.5).
+- `feedback_split_iterations_on_reader_writer_asymmetry.md` (split rationale).
+
+
+---
+
 #### ITER-0005b — Content-addressed source store
 
 **Stories:** STORY-0100.
 
-**Status:** pending
+**Status:** **DONE 2026-05-14** (partial closure: AC-1 + AC-7-primitive closed; AC-2 + AC-6 re-opened post-audit (routed through ITER-0005b-FIX-B); AC-3/4/5 + AC-7-orchestration explicitly deferred to named follow-up iterations). See `iteration-log.md` ITER-0005b entry for full close-out. Pre-iter PAR R1 returned REVISE with 6 findings; R2 returned APPROVE after revision. Post-iteration PAR audit (Reviewers A + B, 2026-05-14) found Critical sentinel regression (`persistence_schema_format_anti_rot` red) + Serious evidence-seam gaps on AC-2/AC-6 → resolution routed through ITER-0005b-FIX-A (red-gate cleanup) + ITER-0005b-FIX-B (architectural seam decisions).
+
+Deferred to follow-ups:
+- **ITER-0005b-SYNTH** — AC-4 + AC-5 (constructor synthesizer for sourceless artifacts). Blocked by ITER-0005b-AST-SLOT (Lambda holds bytecode, not AST today; synthesizer needs the AST slot or an alternative synthesis story).
+- **ITER-0005b-OBJ** — AC-3 (Grammar source_hash; ObjectDb shape mismatch design call).
+- **ITER-0005b-GC** — AC-7 keyspace-scan orchestration (SourceStore::compact() primitive shipped here).
+- **ITER-0005b-AST-SLOT** — captured in `docs/superpowers/specs/2026-05-14-lambda-ast-slot.md`; user-requested capture-as-design-note during ITER-0005b planning.
 
 **Rationale:** ITER-0005a's envelope carries a `source_hash` field nothing populates yet. This iteration adds the content-addressed store + the constructor-expression synthesizer for sourceless artifacts (anonymous lambdas, runtime grammars, ObjectDb objects without a source file). Constructor synthesis is the hard part — implement and test in isolation before per-payload stories depend on it. Independent of any payload class; depends only on ITER-0005a's envelope.
 
@@ -1544,6 +2090,180 @@ Total: ~20+ caller sites. Each receives `&mut LoaderStats::default()` in the sim
 
 ---
 
+#### ITER-0005b-FIX (DEPRECATED — split into FIX-A, FIX-B, and ITER-PROCESS-TAGS per 2026-05-14 scope-review PAR)
+
+**Status:** **superseded.** Pre-iteration PAR scope review (Reviewers A and B, parallel adversarial) returned REVISE with both reviewers independently recommending a split. Critical finding from Reviewer A: FIX-6's "8+ process-tag sites" was actually **85 sites across 30 files** per `rg`-against-actual-source — most unrelated to STORY-0100 — so a project-wide sweep doesn't belong inside a STORY-0100 fix. Serious finding from both: FIX-2/FIX-3 entangle architectural seam decisions (eval-seam, loader-auto-chain) with red-gate cleanup; each has a "introduce-seam OR correct-AC-wording" branch with different downstream cost.
+
+See the three replacement iterations below: **ITER-0005b-FIX-A**, **ITER-0005b-FIX-B**, **ITER-PROCESS-TAGS**.
+
+The deprecated card text is preserved below this header for traceability; do not work from it.
+
+#### ITER-0005b-FIX-A — Red-gate cleanup for ITER-0005b (CRITICAL: sentinel red; unblocks ITER-0005c)
+
+**Stories:** STORY-0100 (no AC re-closure here; AC-2 and AC-6 remain re-opened — those go to ITER-0005b-FIX-B).
+
+**Status:** **DONE 2026-05-14** (sentinel green via FIX-1 typed re-export laundering; FIX-MECH Option-α sentinel-sweep script shipped at `docs/superpowers/iterations/scripts/run_sentinels.sh`; closing PAR sweep clean: 22 pass / 0 fail / 4 skip on long-standing TBD-command rows). ITER-0005c unblocked. See `iteration-log.md` ITER-0005b-FIX-A entry for full close-out.
+
+**Rationale:** ITER-0005b shipped with `persistence_schema_format_anti_rot` red because `fmpl-persistence/src/recovery.rs:254, 269, 437` (inside `#[cfg(test)] mod tests`) references `PayloadKind::CompiledCode` outside the schema-aware module set. The iteration-log claim "All invariant gates green" (line 1435) is false. This iteration ships the mechanical red-gate fix + cleanup without entangling architectural seam decisions (which go to ITER-0005b-FIX-B). The split rationale tracks `feedback_split_iterations_on_reader_writer_asymmetry.md` — "safe mechanical fix" vs "architectural seam decision" is the same kind of asymmetry that justified ITER-0005a → ITER-0005a.{0,1,2}.
+
+**Pre-commitment per scope-review PAR (Reviewer A + B):**
+
+- **FIX-1 Option choice committed: Option A** (refactor `recovery.rs`'s `#[cfg(test)] mod tests` to route through a typed re-export from a schema-aware module — likely a `pub(crate) fn write_compiled_code_record(...)` helper in `envelope.rs` or `loader.rs`). Rationale: Option A keeps the exemption set minimal (3 files: schema.rs, envelope.rs, loader.rs) and sets the precedent that test helpers in non-schema-aware modules must launder PayloadKind through a typed boundary. Option B (per-module exemption) was rejected because it would let the exemption set grow monotonically over time — every future schema-aware-adjacent module could plead exemption, weakening the ratchet. (Per `feedback_calibrate_claims_to_evidence.md` and `feedback_prefer_proof_tests.md`: typed re-export is stronger than per-file exemption.)
+
+**Acceptance criteria:**
+
+- **FIX-1**: `persistence_schema_format_anti_rot::schema_format_anti_rot_no_literals_outside_schema_aware_modules` is green. **Chosen helper shape**: add kind-specific test helpers — e.g., `pub(crate) fn write_compiled_code_test_record(store: &S, key: &[u8], payload: &impl serde::Serialize, vm: VmVersion, source_hash: Hash) -> Result<()>` — to `envelope.rs` inside a `#[cfg(test)] pub(crate) mod test_helpers` module. The helper's internal body names `PayloadKind::CompiledCode` (legitimate because `envelope.rs` is in the exemption set); `recovery.rs`'s test module calls the helper and removes its `use crate::schema::PayloadKind;` import. Gate: `rg "PayloadKind::" fmpl-persistence/src/recovery.rs` returns no matches AND the sentinel test is green. **Scope note** (per scope re-review B finding): the sentinel scans only `fmpl-persistence/src/`. `fmpl-core`'s production code paths (e.g., `fmpl-core/src/compiler.rs:744` which already names `PayloadKind::CompiledCode`) are not affected and ITER-0005c's design is not constrained by this choice. **Escape valve**: if during T1 the implementer discovers kind-specific helpers would proliferate (e.g., a future iteration's payload-class set forces 6+ helpers and the test-helper module starts dominating envelope.rs), STOP and dispatch a fresh pre-iter PAR pair to re-evaluate. Option B (per-module exemption) remains a legitimate resolution if PAR re-approves it with explicit rationale; the pre-commit forbids only the silent fall-back, not the documented re-decision.
+- **FIX-4**: `behavior-corpus.md:91, 93` rows for SCENARIO-0100 and SCENARIO-0102 get concrete execution commands (`cargo test -p fmpl-persistence --features fjall-backend --test scenario_0100_content_addressed_source` and `cargo test -p fmpl-persistence --features fjall-backend --test scenario_0102_recover_incompatible`). Cadence stays `iteration` — promotion to `sentinel` is reserved for after ITER-0005b-FIX-B closes the seam decisions.
+- **FIX-5**: Delete `recover_incompatible_from_path` (`fmpl-persistence/src/recovery.rs:220-232`). The function has zero callers. Per `feedback_ship_infrastructure_with_first_consumer.md`. If `fmpl-persistence` were a published crate this would need a deprecation cycle; since it isn't, delete outright.
+- **FIX-MECH (NEW per re-review PAR Reviewer A's S2 + Reviewer B's "no mechanical defense" finding)**: Add a mechanical sentinel-sweep gate that prevents the next iteration from shipping a red sentinel under the same trust assumption that just failed. Implementation choices (implementer picks one, PAR-approved at T1.5):
+  - **MECH-Option-α** (preferred, smallest blast radius): a shell script `docs/superpowers/iterations/scripts/run_sentinels.sh` that parses `behavior-corpus.md` for rows with `cadence=sentinel`, extracts each row's execution command, runs them all, fails-loud if any fail. Closing-PAR is required to invoke this script and paste its output (or stderr summary) into the iteration-log entry under a `### Sentinel sweep (closing-PAR)` heading. The mechanical gate is "closing-PAR's iteration-log entry contains a verifiable `Sentinel sweep:` block."
+  - **MECH-Option-β** (heavier): a Rust integration test at `tests/closing_par_sentinel_sweep.rs` (workspace-level or fmpl-persistence-level) that parses `behavior-corpus.md`, runs each sentinel command, asserts all green. Run automatically by CI / by `cargo test`.
+  - **MECH-Option-γ** (lightest): a `.git/hooks/pre-push` (committed at `.githooks/pre-push` and installed via repo setup script) that runs the sentinel sweep and refuses to push if anything is red. This addresses the failure mode but is bypassable; defense in depth, not the primary gate.
+  - **FIX-MECH commitment**: ship at minimum MECH-Option-α (script + closing-PAR template update); MECH-Option-β is the gold standard if the script approach proves brittle (e.g., behavior-corpus.md cadence column is hand-edited and easily desync'd from reality). The acceptance criterion is "next iteration's closing PAR mechanically demonstrates the sentinel sweep was run" — `feedback_prefer_proof_tests.md` form #4 (universally-quantified structural assertion: every closing PAR after FIX-A has sentinel-sweep evidence).
+- **FIX-7**: Correct the historical inaccuracies in ITER-0005b's iteration-log entry + the matching status line in roadmap.md, in a way that preserves chronology (the iteration-log entry records only what was true AT ITER-0005b's close; FIX-A's own iteration-log entry will record its post-fix state). Semantic edits (not literal-string find-and-replace — implementer must read each line and preserve surrounding prose and markdown formatting):
+  - **iteration-log.md around line 1435** ("All invariant gates green: …"): replace the claim that all invariant gates were green with the truth — `persistence_schema_format_anti_rot` was RED at close (the inline `recovery.rs:254/269/437` `PayloadKind::` references inside the test module tripped the gate); the post-iteration PAR audit (Reviewers A + B, 2026-05-14) caught it; resolution is in ITER-0005b-FIX-A FIX-1. Preserve the surrounding list of other gates (AC-5 writer-bypass, AC-6 anti-rot, cross-consumer no-fjall) that genuinely WERE green.
+  - **iteration-log.md around line 1432** (the test-count line): replace the "fmpl-persistence: 101 passing" subline with the correct count at ITER-0005b close: 102 passing + 1 FAILING (`schema_format_anti_rot_no_literals_outside_schema_aware_modules`). Preserve the `(--features fjall-backend):` qualifier and any markdown bold/markup. Do NOT inline FIX-A's post-fix count here — that count belongs in FIX-A's own iteration-log entry to keep the records chronological.
+  - **roadmap.md around line 2065** (the ITER-0005b status line under that iteration's header): replace the "AC-1/2/6 closed; AC-3/4/5/7 explicitly deferred to named follow-up iterations" phrasing with: AC-1 + AC-7-primitive closed; AC-2 + AC-6 re-opened post-audit (routed through ITER-0005b-FIX-B); AC-3/4/5 + AC-7-orchestration explicitly deferred to named follow-up iterations. Preserve the trailing prose "to named follow-up iterations" and any surrounding context.
+
+**Impacted scenarios:** `persistence_schema_format_anti_rot` (sentinel; goes red→green); SCENARIO-0100 + SCENARIO-0102 corpus rows (cadence stays iteration).
+
+**Depends on:** ITER-0005b (cleans up its red gate).
+
+**Build order:**
+
+1. **T1 — FIX-1**: write the typed-re-export (`write_compiled_code_test_record` in `envelope.rs#test_helpers`), update `recovery.rs`'s `#[cfg(test)] mod tests` to call it, run `cargo test -p fmpl-persistence --features fjall-backend --test persistence_schema_format_anti_rot` → green. This is the dominant complexity (~80% of FIX-A's work per scope-review B). If `T1` materially expands beyond expectation, ship T1 alone and defer T2-T5 to a follow-on `ITER-0005b-FIX-A.1` micro-iteration; do NOT bundle a struggling T1 with the mechanical T2-T5.
+2. **T2 — FIX-5**: `git grep recover_incompatible_from_path` to verify zero callers, delete the function and its `pub` visibility entry from `recovery.rs`.
+3. **T3 — FIX-4**: edit `behavior-corpus.md:91, 93` rows (preserve markdown table formatting; FIX-B may re-edit these rows for AC-2/AC-6 evidence updates — FIX-A's commit message should explicitly NOT claim these rows are "final").
+4. **T4 — FIX-7**: semantic edits to `iteration-log.md:1432, 1435` + `roadmap.md:2065` (read each line; preserve surrounding prose and markdown).
+5. **T5 — FIX-MECH**: ship MECH-Option-α (sentinel-sweep script + closing-PAR template update). Capture sentinel-sweep output for THIS iteration as the first use of the script.
+6. **T6 — Wrap**: closing PAR with mandatory sentinel-sweep run (Reviewers; the sweep is now mechanically demonstrable via FIX-MECH); update progress.md. ITER-0005c's `Depends on:` line gets `ITER-0005b-FIX-A` added by this T-task (currently lists only ITER-0005a, ITER-0005b).
+
+**Verification gates:**
+
+- `cargo test -p fmpl-persistence --features fjall-backend` — all tests green INCLUDING `persistence_schema_format_anti_rot`.
+- `cargo build --workspace --all-features` + `cargo clippy --all-targets --all-features -- -D warnings` — clean.
+- `rg -n "PayloadKind::" fmpl-persistence/src/recovery.rs` returns no matches in the test module.
+- `git grep recover_incompatible_from_path` returns no matches.
+- behavior-corpus.md rows 91 + 93 have non-TBD commands.
+- iteration-log.md + roadmap.md historical-text corrections landed (chronologically clean — FIX-A's own state not bleed into ITER-0005b's record).
+- **Sentinel-sweep mechanical gate**: the closing-PAR iteration-log entry contains a verifiable `### Sentinel sweep (closing-PAR)` block listing each `cadence=sentinel` scenario from behavior-corpus.md and its pass/fail status. The sweep is invoked via FIX-MECH's MECH-Option-α script (`docs/superpowers/iterations/scripts/run_sentinels.sh`) and its output captured.
+- ITER-0005c's `Depends on:` line at roadmap.md ~line 2320 (currently "ITER-0005a, ITER-0005b") includes `ITER-0005b-FIX-A`.
+
+**Sources:**
+
+- ITER-0005b post-iteration PAR audit (2026-05-14) — Reviewers A and B.
+- ITER-0005b-FIX scope-review PAR (2026-05-14) — Reviewers A and B (this scope's pre-iter PAR).
+- `feedback_calibrate_claims_to_evidence.md`, `feedback_ship_infrastructure_with_first_consumer.md`, `feedback_no_story_names_in_code_comments.md`, `feedback_prefer_proof_tests.md`, `feedback_split_iterations_on_reader_writer_asymmetry.md`.
+
+---
+
+#### ITER-0005b-FIX-B — AC-2 / AC-6 evidence-seam decisions (architectural)
+
+**Stories:** STORY-0100 (re-closes AC-2 and AC-6 after the seam decisions are made and evidence shipped).
+
+**Status:** pending (requires its own pre-iter PAR; can run in parallel with ITER-0005a.2 once FIX-A is done).
+
+**Rationale:** ITER-0005b's audit found AC-2's `seam:integration impact:journey` evidence missing (no `eval()` → persist path) and AC-6's loader-auto-chain + bind-and-execute observables absent. Each AC has two acceptable resolutions:
+
+- **AC-2 path A — introduce an eval-seam API**: e.g., `eval_and_persist(vm, source, store, source_store) -> Result<Value>` in `fmpl-core`, with an integration test calling it and observing the resulting envelope's `source_hash`. Cost: new public surface; boxes in ITER-0005c's wiring; possibly affects ITER-0005b-OBJ for Grammar.
+- **AC-2 path B — correct AC-2 wording + impact label**: amend STORY-0100 AC-2 to declare the actual evidence seam (`Compiler::compile() + save_to_store(...)`) and downgrade `impact:journey` to `impact:cross-surface` or `impact:local` if the API isn't a user journey today. Cost: requirements-doc edit; defers the eval-seam decision to whichever iteration first needs it (likely ITER-0005c).
+
+- **AC-6 path A — wire recovery into the loader (auto-chain)**: extend `iter_store`'s callback to receive `RecoveryAttempt` events when records decode as `SkippedIncompatible` with non-NONE `source_hash`; consolidate stats into `LoaderStats` with a `recovered_from_source` counter; extend `LoaderStats::check_invariants` to cover the new sub-reason histogram. Add an integration test that exercises the full eval→bind→`Value::Int(3)` path. Cost: invariant work + callback contract change (this reverses ITER-0005b's pre-iter PAR R-I-C-1 decision; needs explicit justification).
+- **AC-6 path B — keep recovery standalone + amend AC-6 + SCENARIO-0102 wording**: update AC-6 to say "the **caller** invokes `recover_incompatible` after the loader; it recompiles via a caller-supplied closure that may call `eval()`; the caller binds the result"; update SCENARIO-0102 expected observables to match `RecoveryStats` shape and to call eval() in the closure. Add a bind-and-execute integration test against `recover_incompatible` directly with a real eval-binding closure. Cost: requirements + scenario-card edit; preserves R-I-C-1 decision; smaller blast radius.
+
+**Pre-iter PAR (when this iteration runs) must decide each AC's path before T1.** Sibling-project study (per `feedback_sibling_project_study_before_scope.md`) before path commitment — what does moor-echo's migration tracer do? What does cairn's pipeline do at an incompatible-decode? A 30-min read of `~/development/moor-echo` and `~/development/cairn` may surface adopted patterns.
+
+**Acceptance criteria:**
+
+- **AC-2-DECIDE**: Per pre-iter PAR's verdict, EITHER:
+  - **2A**: `eval_and_persist` (or equivalent) shipped in `fmpl-core` with an integration test at `fmpl-core/tests/scenario_0100_eval_integration.rs` that calls the new API and observes the persisted `source_hash`. (Test must live in `fmpl-core/tests/` because `fmpl-persistence` does not depend on `fmpl-core` — the dep is reversed; the scope-review PAR caught this structural impossibility in the deprecated FIX-2 location citation.)
+  - **2B**: STORY-0100 AC-2 text amended in `EPIC-003.md` to reflect the actual seam. Reviewer-A finding "AC-2's `impact:journey` label may itself be wrong" is the decision point: if amending wording, also consider amending impact label.
+- **AC-6-DECIDE**: Per pre-iter PAR's verdict, EITHER:
+  - **6A**: `iter_store` callback contract extended; `LoaderStats` gains `recovered_from_source` counter; `LoaderStats::check_invariants` extended; integration test exercises eval→bind→`Value::Int(3)` via auto-chain. AC-6 wording stays. SCENARIO-0099 + SCENARIO-0099-iter rows in behavior-corpus need explicit acknowledgment of contract change.
+  - **6B**: STORY-0100 AC-6 + SCENARIO-0102 amended to describe standalone-pass shape with caller-supplied eval-binding closure; bind-and-execute integration test added against `recover_incompatible` directly.
+- **AC-2-EVIDENCE + AC-6-EVIDENCE**: whichever path is chosen, the AC is genuinely closed (test asserts the AC's actual claim at the chosen seam). The closing PAR explicitly verifies the AC's claim scope matches the test's evidence scope per `feedback_claim_scope_must_match_evidence.md`.
+
+**Impacted scenarios:** SCENARIO-0100, SCENARIO-0102, possibly SCENARIO-0099 + SCENARIO-0099-iter (if 6A chosen), possibly a new SCENARIO-0114 (eval-seam scenario, if 2A chosen).
+
+**Depends on:** ITER-0005b-FIX-A (sentinel green).
+
+**Build order (preliminary; pre-iter PAR will refine):**
+
+1. **T0 — Sibling-project study**: 30-min read of moor-echo + cairn for incompatible-decode patterns. Capture findings in a design note before path commitment.
+2. **T1 — Pre-iter PAR for path commitment**: dispatch paired reviewers to choose 2A vs 2B and 6A vs 6B with documented rationale. Each path's downstream impact on ITER-0005c, ITER-0005d, ITER-0005e, ITER-0005b-OBJ explicit.
+3. **T2 — T5: Implementation per chosen paths.** Specific tasks depend on path; pre-iter PAR will produce the task list.
+4. **T6 — Wrap**: closing PAR; update artifacts.
+
+**Verification gates:**
+
+- AC-2 evidence at the chosen seam: integration test exists and exercises the API/wording that AC-2 actually declares.
+- AC-6 evidence at the chosen seam: integration test exists with bind-and-execute observable `Value::Int(3)` (path A) or amended-card observable (path B).
+- If 6A: `LoaderStats::check_invariants` is extended and passes.
+- All tests green; sentinel sweep clean.
+- Closing PAR runs sentinel sweep and captures output.
+
+**Sources:**
+
+- ITER-0005b post-iteration PAR audit (2026-05-14) — Reviewers A and B.
+- ITER-0005b-FIX scope-review PAR (2026-05-14) — Reviewers A and B (deprecated parent's pre-iter PAR).
+- `feedback_split_iterations_on_reader_writer_asymmetry.md`, `feedback_claim_scope_must_match_evidence.md`, `feedback_sibling_project_study_before_scope.md`.
+
+---
+
+#### ITER-PROCESS-TAGS — Strip process tags from source code (project-wide sweep)
+
+**Stories:** none (housekeeping iteration; enforces `feedback_no_story_names_in_code_comments.md` project-wide).
+
+**Status:** pending (low-priority; non-blocking for ITER-0005c).
+
+**Rationale:** Reviewer A of the ITER-0005b-FIX scope-review found `rg -n "ITER-|STORY-|R-[A-Z]-[CSM]-[0-9]|AC-[0-9]" fmpl-core/src fmpl-persistence/src fmpl-persistence/tests` returns **85 matches across 30 files** — only 8-10 of those were introduced by ITER-0005b. The rest predate. Per `feedback_no_story_names_in_code_comments.md`, this is a project-wide invariant being violated. Bundling it inside a STORY-0100 fix card would have touched files unrelated to STORY-0100 (e.g., `fmpl-core/src/parser_epoch.rs`, `fmpl-core/src/grammar/parser.rs`, `fmpl-core/src/cross_compile.rs`, `fmpl-core/src/builtins/`) — scope creep. Splitting to a dedicated iteration lets ITER-0005b-FIX-A ship fast and lets this housekeeping pass through its own PAR with appropriate context (e.g., "what rationale was load-bearing in these comments? Move to commit messages or iteration-log lessons.").
+
+**Acceptance criteria:**
+
+- **TAG-1**: `rg -n "ITER-[0-9]|STORY-[0-9]|SCENARIO-[0-9]|R-[A-Z]-[CSM]-[0-9]|AC-[0-9]" fmpl-*/src fmpl-*/tests` returns empty (or returns only matches inside scenario card filenames like `scenario_0099_envelope_loader.rs` which are filename references, not process tags — the gate must distinguish these). Refine the regex to exclude filename references in `use` statements and test module names.
+- **TAG-2**: For each removed tag whose surrounding comment was load-bearing (e.g., "added in ITER-0005b to fix R-I-C-1"), the rationale is preserved in the file's existing commit messages OR added to the appropriate `iteration-log.md` lessons entry OR (if absolutely necessary as inline doc) reworded to omit the process tag while preserving the constraint (e.g., "Recovery is a separate pass to avoid extending the loader's per-record invariant equation").
+- **TAG-3**: `fmpl-persistence/Cargo.toml:34` "ITER-0005b:" prefix removed.
+- **TAG-4**: A scenario-format-anti-rot-style proof test added that scans for process-tag identifiers in `*.rs` source and fails if any appear. Per `feedback_prefer_proof_tests.md` form #4 (universally-quantified structural assertion). This is the gate that prevents recurrence — the lesson `feedback_no_story_names_in_code_comments.md` was already memorized, but ITER-0005b violated it 8 times anyway, so the lesson-alone isn't sufficient; a mechanical gate is needed.
+
+**Impacted scenarios:** none directly; TAG-4 adds a new sentinel-cadence proof test.
+
+**Depends on:** none (independent of all STORY-0100 work).
+
+**Build order:**
+
+1. **T1 — Inventory**: run the `rg` query, classify each hit (file-reference-in-`use` vs process-tag-in-comment); produce a worksheet.
+2. **T2 — Sweep**: bulk edit the comment hits; preserve load-bearing rationale via reword or relocate.
+3. **T3 — Proof test (TAG-4)**: add `tests/no_process_tags_in_source.rs` (or similar) at the workspace level or per-crate level.
+4. **T4 — Verify**: `rg` returns empty (modulo agreed exemptions); proof test is green.
+5. **T5 — Wrap**: closing PAR; update artifacts.
+
+**Verification gates:**
+
+- `rg -n "<process-tag-regex>" fmpl-*/src fmpl-*/tests` returns empty (or only exempt matches).
+- New proof test (TAG-4) is green and added to the behavior-corpus index as a sentinel-cadence row.
+- `cargo build --workspace --all-features` + clippy clean.
+
+**Sources:**
+
+- ITER-0005b-FIX scope-review PAR (2026-05-14) — Reviewer A's "85 matches across 30 files" finding.
+- `feedback_no_story_names_in_code_comments.md`, `feedback_prefer_proof_tests.md`.
+
+---
+
+#### ITER-0005b-FIX (DEPRECATED — full text moved to iteration-log audit-trail; see ITER-0005b-FIX-A + FIX-B + ITER-PROCESS-TAGS for active work)
+
+**Status:** **SUPERSEDED** by ITER-0005b-FIX-A + ITER-0005b-FIX-B + ITER-PROCESS-TAGS per scope-review PAR 2026-05-14.
+
+The original card's audit-findings narrative (sentinel regression + AC-2/AC-6 evidence-seam mismatches + corpus-not-promoted + unused-API + process-tags) is captured authoritatively in:
+
+- `progress.md` Post-audit reconciliation section
+- The three active replacement-iteration cards above
+- The ITER-0005b iteration-log entry's audit-trail (to be amended by FIX-A's FIX-7)
+
+Do not work from this deprecated card. Its original Acceptance Criteria framing ("FIX-1 Option A or Option B — pick whichever lands cleaner") is **no longer policy**: FIX-A pre-commits to Option A; FIX-B owns the AC-2/AC-6 seam decisions with their own pre-iter PAR.
+
+---
+
 #### ITER-0005c — Single-payload-class persistence: bytecode (proof case)
 
 **Stories:** STORY-0014.
@@ -1554,7 +2274,7 @@ Total: ~20+ caller sites. Each receives `&mut LoaderStats::default()` in the sim
 
 **Impacted scenarios:** SCENARIO-0007 (or whichever sentinel proves bytecode survives a restart).
 
-**Depends on:** ITER-0005a, ITER-0005b.
+**Depends on:** ITER-0005a, ITER-0005b, ITER-0005b-FIX-A.
 
 **Look-ahead:** ITER-0005d will mirror this pattern across objects, grammar definitions, GrammarRegistry, memo tables.
 

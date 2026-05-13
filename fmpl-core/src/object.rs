@@ -173,28 +173,28 @@ impl ObjectDb {
         }
     }
 
-    /// Save all objects to a Fjall keyspace (AC-1).
+    /// Save all objects to a [`Store`][crate::persistence::Store].
     ///
-    /// Routes through [`persistence::envelope::write`][crate::persistence::envelope::write]
-    /// per STORY-0099 AC-5. Two PayloadKind variants are emitted per save:
+    /// Routes through [`fmpl_persistence::envelope::write`]. Two
+    /// PayloadKind variants are emitted per save:
     /// `PayloadKind::ObjectIndex` (0x02) for the `__object_ids__` index,
-    /// then `PayloadKind::ObjectRecord` (0x01) per object. Source-hash
-    /// population deferred to ITER-0005b; both shapes carry [`NO_SOURCE_HASH`].
-    ///
-    /// [`NO_SOURCE_HASH`]: crate::persistence::envelope::NO_SOURCE_HASH
-    #[cfg(feature = "fjall-persistence")]
-    pub fn save_to_fjall(&self, keyspace: &fjall::Keyspace) -> Result<()> {
-        use crate::persistence::envelope::{NO_SOURCE_HASH, write};
+    /// then `PayloadKind::ObjectRecord` (0x01) per object. Both shapes
+    /// carry [`Hash::NONE`][fmpl_types::Hash::NONE] until the
+    /// content-addressed source store ships.
+    pub fn save_to_store<S: crate::persistence::Store>(&self, store: &S) -> Result<()> {
+        use crate::persistence::envelope::write;
         use crate::persistence::schema::PayloadKind;
+        use fmpl_types::Hash;
 
         // Index record: list of object IDs for efficient loading
         let ids: Vec<u64> = self.objects.keys().copied().collect();
         write(
-            keyspace,
+            store,
             b"__object_ids__",
             &ids,
             PayloadKind::ObjectIndex,
-            NO_SOURCE_HASH,
+            crate::VM_VERSION,
+            Hash::NONE,
         )
         .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
 
@@ -202,11 +202,12 @@ impl ObjectDb {
         for (id, object) in &self.objects {
             let key = format!("obj:{}", id);
             write(
-                keyspace,
+                store,
                 key.as_bytes(),
                 object,
                 PayloadKind::ObjectRecord,
-                NO_SOURCE_HASH,
+                crate::VM_VERSION,
+                Hash::NONE,
             )
             .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
         }
@@ -214,14 +215,12 @@ impl ObjectDb {
         Ok(())
     }
 
-    /// Load all objects from a Fjall keyspace (AC-2, AC-3, AC-4).
+    /// Load all objects from a [`Store`][crate::persistence::Store].
     ///
-    /// **TODO(ITER-0005a.3):** Transitional manual prefix-strip. After
-    /// 0005a.2's writer sweep, on-disk values have a 56-byte envelope header
-    /// followed by the serialized payload. ITER-0005a.3 will replace this
-    /// manual strip with `loader::decode(&bytes)`.
-    #[cfg(feature = "fjall-persistence")]
-    pub fn load_from_fjall(&mut self, keyspace: &fjall::Keyspace) -> Result<()> {
+    /// **TODO(ITER-0005a.4):** Transitional manual prefix-strip. On-disk
+    /// values have a 56-byte envelope header followed by the serialized
+    /// payload; this will be replaced with `loader::decode(&bytes)`.
+    pub fn load_from_store<S: crate::persistence::Store>(&mut self, store: &S) -> Result<()> {
         use crate::persistence::envelope::ENVELOPE_HEADER_SIZE;
 
         fn strip_envelope(bytes: &[u8]) -> Result<&[u8]> {
@@ -235,7 +234,7 @@ impl ObjectDb {
         }
 
         // Load object IDs list (index record)
-        let ids_bytes = keyspace
+        let ids_bytes = store
             .get(b"__object_ids__")
             .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
 
@@ -251,7 +250,7 @@ impl ObjectDb {
         // Load each object record
         for id in ids {
             let key = format!("obj:{}", id);
-            let obj_bytes = keyspace
+            let obj_bytes = store
                 .get(key.as_bytes())
                 .map_err(|e| Error::ObjectPersistenceError(e.to_string()))?;
 

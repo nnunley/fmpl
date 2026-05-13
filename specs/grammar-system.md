@@ -103,7 +103,7 @@ pub struct StreamPosition {
     /// Source reference for pulling more data
     source: Rc<StreamSource>,
     /// Optional Fjall partition for memo persistence
-    #[cfg(feature = "fjall-persistence")]
+    #[cfg(feature = "persistence")]
     memo_fjall: Option<Arc<Mutex<MemoFjall>>>,
 }
 ```
@@ -152,10 +152,10 @@ enum StreamSource {
         /// Cached positions for index lookup
         positions: Mutex<Vec<Rc<StreamPosition>>>,
         /// Fjall overflow for spilled positions
-        #[cfg(feature = "fjall-persistence")]
+        #[cfg(feature = "persistence")]
         fjall: Option<FjallOverflow>,
         /// Memory limit before spilling
-        #[cfg(feature = "fjall-persistence")]
+        #[cfg(feature = "persistence")]
         memory_limit: Option<usize>,
     },
     Static(Vec<Value>),

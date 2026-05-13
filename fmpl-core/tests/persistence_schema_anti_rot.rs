@@ -1,48 +1,45 @@
 //! AC-6 anti-rot ratchet for STORY-0099.
 //!
-//! `persistence::schema` is the single source of truth for VM version
-//! derivation and per-payload-kind schema version constants. This test
-//! scans `fmpl-core/src/` for any file **outside the `persistence/`
-//! module tree** that references the version-derivation literals —
-//! `CARGO_PKG_VERSION`, `VM_VERSION_MAJOR`, `VM_VERSION_MINOR`,
-//! `VM_VERSION_PATCH` — and fails if it finds any. Per
-//! `feedback_prefer_proof_tests.md` form #4: universally-quantified
-//! structural assertion preventing rot.
+//! `fmpl_core::vm_version` is the single source of truth for the VM
+//! version constants stamped into every persisted record. This test
+//! scans `fmpl-core/src/` for any file **outside `vm_version.rs`**
+//! that references the version-derivation literals — `CARGO_PKG_VERSION`,
+//! `VM_VERSION_MAJOR`, `VM_VERSION_MINOR`, `VM_VERSION_PATCH` — and
+//! fails if it finds any. Per `feedback_prefer_proof_tests.md` form #4:
+//! universally-quantified structural assertion preventing rot.
 //!
-//! Scope choice (ITER-0005a.1 audit fix-up): the entire `persistence/`
-//! module tree is exempt, not just `persistence/schema.rs`. The
-//! `persistence::envelope` and `persistence::loader` modules
-//! collaborate with the schema and legitimately read these constants
-//! via qualified paths and `use` statements. Forbidding bare-identifier
-//! reads inside the same module tree would force opaque indirection
-//! for no real benefit. The ratchet's contract is "nothing OUTSIDE the
-//! persistence module redefines or re-derives these"; that's the
-//! invariant the scope card actually meant to enforce.
+//! Scope choice (ITER-0005a.5 T6 update): the VM-version constants
+//! moved from `persistence/schema.rs` to a top-level `vm_version.rs`
+//! module per T0.5, because fmpl-persistence is now its own crate and
+//! must stay version-agnostic. The exemption tracks the constants:
+//! `vm_version.rs` itself (where they are defined) and `lib.rs` (which
+//! `pub use`s them as part of the crate's public surface) are exempt.
+//! Every other consumer must route through the canonical helper paths
+//! exposed by `fmpl_core::VM_VERSION` / `fmpl_persistence::envelope`
+//! rather than re-deriving the constants from
+//! `env!("CARGO_PKG_VERSION")` or re-reading the bare identifiers.
 //!
-//! Future iterations adding persistence consumers (object writers,
-//! grammar writers, etc., during ITER-0005a.2's call-site sweep) must
-//! either (a) live inside `fmpl-core/src/persistence/` (in scope for
-//! the exemption), or (b) reference the constants through helper
-//! functions exposed by `persistence::envelope` (the canonical pattern
-//! — see `EnvelopeHeader::new_for_current_vm`).
+//! Future iterations adding persistence consumers must either (a) live
+//! inside `vm_version.rs` (in scope for the exemption), or (b)
+//! reference the constants through helper functions exposed by
+//! `fmpl_persistence::envelope` (the canonical pattern — see
+//! `EnvelopeHeader::new_for_current_vm`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Identifiers that are forbidden outside the `persistence/` module
-/// tree. If any of these appears in another `src/` file, the ratchet
-/// fails.
+/// Identifiers that are forbidden outside `vm_version.rs`. If any of
+/// these appears in another `fmpl-core/src/` file, the ratchet fails.
 ///
 /// - `CARGO_PKG_VERSION` forbids alternative version-derivation sites
-///   (anyone outside `persistence/` re-deriving the VM version from the
-///   env var directly).
+///   (anyone outside `vm_version.rs` re-deriving the VM version from
+///   the env var directly).
 /// - `VM_VERSION_MAJOR` / `VM_VERSION_MINOR` / `VM_VERSION_PATCH`
-///   forbid bare-identifier reads outside `persistence/`. The intent
-///   is that downstream consumers route through `persistence::envelope`
-///   helpers (e.g., `EnvelopeHeader::new_for_current_vm`) rather than
-///   reading the constants directly. Inside `persistence/` itself,
-///   bare reads via `use` statements and qualified paths are routine
-///   and exempt.
+///   forbid bare-identifier reads outside `vm_version.rs`. Downstream
+///   consumers must route through the `fmpl_core::VM_VERSION` value
+///   (or the `fmpl_persistence::envelope` helpers that take a
+///   `VmVersion` parameter) rather than reading the per-component
+///   constants directly.
 const FORBIDDEN_LITERALS: &[&str] = &[
     "CARGO_PKG_VERSION",
     "VM_VERSION_MAJOR",
@@ -52,17 +49,19 @@ const FORBIDDEN_LITERALS: &[&str] = &[
     // on actual identifiers, not on substrings of unrelated text.
 ];
 
-/// Files exempted from the scan. The whole `persistence/` module tree
-/// is exempt: `persistence::schema` is THE source of truth and the
-/// schema-aware sibling modules (`envelope`, `loader`, `checksum`)
-/// legitimately read the constants via `use` and qualified paths. The
-/// scope-card contract is that nothing OUTSIDE the persistence module
-/// redefines or re-derives these — that's the structural invariant
-/// this scan enforces.
+/// Files exempted from the scan. Two exemptions:
+///
+/// 1. `vm_version.rs` — the source of truth where these constants are
+///    defined.
+/// 2. `lib.rs` — `pub use`s the constants as part of fmpl-core's public
+///    surface so that downstream crates (notably fmpl-persistence
+///    tests) can name `fmpl_core::VM_VERSION_MAJOR`. Without this
+///    re-export the constants would not be reachable from outside
+///    fmpl-core. The exemption is narrow — `lib.rs` only re-exports;
+///    it must not consume or re-derive the constants.
 fn is_exempt(path: &Path) -> bool {
     let s = path.to_string_lossy();
-    // Exempt the entire `persistence/` subtree, not just schema.rs.
-    s.contains("/persistence/") || s.ends_with("/persistence.rs")
+    s.ends_with("/vm_version.rs") || s.ends_with("/lib.rs")
 }
 
 fn fmpl_core_src() -> PathBuf {
@@ -163,9 +162,9 @@ fn ac6_anti_rot_no_version_derivation_outside_schema() {
     assert!(
         violations.is_empty(),
         "AC-6 anti-rot ratchet failed: \
-         the following files outside persistence::schema reference \
-         version-derivation literals (use the schema module's exports \
-         instead):\n{}",
+         the following files outside `vm_version.rs` reference \
+         version-derivation literals (use `fmpl_core::VM_VERSION` or \
+         the `fmpl_persistence::envelope` helpers instead):\n{}",
         violations
             .iter()
             .map(|(p, n)| format!("  {} ← `{n}`", p.display()))

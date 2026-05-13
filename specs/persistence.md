@@ -5,7 +5,7 @@ Fjall-backed durable storage for live image and streaming.
 **Location**: [fmpl-core/](../fmpl-core/), [fmpl-web/](../fmpl-web/)
 
 **Key files**:
-- `fmpl-core/Cargo.toml:29` — `fjall-persistence` feature
+- `fmpl-core/Cargo.toml:29` — `persistence` feature
 - `fmpl-core/src/grammar/incremental.rs:14` — ParseState serialization
 - `fmpl-core/src/grammar/stream_input.rs:42` — StreamPosition with memo
 - `fmpl-core/src/stream.rs:32` — StreamBuffer/StreamSource with rkyv
@@ -58,7 +58,7 @@ Fjall persistence is optional:
 
 ```toml
 [dependencies]
-fmpl-core = { path = "../fmpl-core", features = ["fjall-persistence"] }
+fmpl-core = { path = "../fmpl-core", features = ["persistence"] }
 ```
 
 Without the flag, all storage is in-memory only.
@@ -105,7 +105,7 @@ pub struct StreamPosition {
     memo: RefCell<HashMap<SmolStr, MemoEntry>>,  // Per-position memo
     source: Rc<StreamSource>,
 
-    #[cfg(feature = "fjall-persistence")]
+    #[cfg(feature = "persistence")]
     memo_fjall: Option<Arc<Mutex<MemoFjall>>>,   // Persistent memo
 }
 ```
@@ -118,9 +118,9 @@ enum StreamSource {
         handle: Mutex<StreamHandle>,
         timeout: Option<Duration>,
         positions: Mutex<Vec<Rc<StreamPosition>>>,
-        #[cfg(feature = "fjall-persistence")]
+        #[cfg(feature = "persistence")]
         fjall: Option<FjallOverflow>,        // Overflow storage here
-        #[cfg(feature = "fjall-persistence")]
+        #[cfg(feature = "persistence")]
         memory_limit: Option<usize>,
     },
     Static(Vec<Value>),
@@ -150,7 +150,7 @@ pub struct StreamPosition {
     // ...
     memo: RefCell<HashMap<SmolStr, MemoEntry>>,  // In-memory
 
-    #[cfg(feature = "fjall-persistence")]
+    #[cfg(feature = "persistence")]
     memo_fjall: Option<Arc<Mutex<MemoFjall>>>,   // Persisted
 }
 ```
@@ -187,7 +187,7 @@ pub struct ParseState {
 ### Serialization Methods (`incremental.rs:63-97`)
 
 ```rust
-#[cfg(feature = "fjall-persistence")]
+#[cfg(feature = "persistence")]
 impl ParseState {
     pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(self)  // Uses serde_json, not rkyv

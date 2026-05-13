@@ -7,11 +7,18 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-fmpl-core = { path = "../fmpl-core" }
-ratatui = "0.29"
-crossterm = "0.28"
-chrono = "0.4"
-smol_str = "0.3"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tokio = { version = "1", features = ["sync"] }
+fmpl-core = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+chrono = { workspace = true }
+smol_str = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# fmpl-tui constructs a tokio runtime explicitly via
+# `tokio::runtime::Runtime::new()` (src/main.rs) and uses
+# `tokio::sync::Mutex` on its mpsc channel. `rt-multi-thread` is
+# required by `Runtime::new()`; `sync` is required by the Mutex/mpsc
+# usage. Declared honestly per closing PAR R-F-C-1 — previously this
+# crate compiled only because fmpl-core (a dep) contributed
+# `rt-multi-thread` via Cargo feature unification.
+tokio = { workspace = true, features = ["sync", "rt", "rt-multi-thread"] }
