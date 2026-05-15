@@ -2161,7 +2161,7 @@ The deprecated card text is preserved below this header for traceability; do not
 
 **Stories:** STORY-0100 (re-closes AC-2 and AC-6 after the seam decisions are made and evidence shipped).
 
-**Status:** pending (pre-iter PAR completed 2026-05-14; resolutions captured in `docs/superpowers/specs/2026-05-14-fix-b-seam-paths.md`. **AC-2 = Path 2A (sibling-entry `eval_persistent`)**. **AC-6 = Path 6A (orchestrator `recover_and_rebind` in fmpl-core, no new trait)**. Ready for `running-an-iteration`.)
+**Status:** **DONE 2026-05-15** (closing PAR clean; sentinel sweep 23 pass / 0 fail / 4 skip — same long-standing TBD-row skip set as FIX-A; no new red gates). AC-2 closed via Path 2A (sibling-entry `eval_persistent` shipped in `fmpl-core/src/lib.rs`; SCENARIO-0101-eval-persist evidence). AC-6 closed via Path 6A (orchestrator `recover_and_rebind` shipped in `fmpl-core/src/lib.rs`; reuses existing closure seam, no new trait; SCENARIO-0102 rebuilt as full journey with bind-and-execute observable). T3 (AC-6 logging) decision: chose option (b) — amend AC-6 wording from "logs the recovery attempt" to "the recovery attempt is reflected in `RecoveryStats::recovered_from_source`"; no tracing dep added to fmpl-persistence. See `iteration-log.md` ITER-0005b-FIX-B entry for full close-out.
 
 **Rationale:** ITER-0005b's audit found AC-2's `seam:integration impact:journey` evidence missing (no `eval()` → persist path) and AC-6's loader-auto-chain + bind-and-execute observables absent. Each AC has two acceptable resolutions:
 

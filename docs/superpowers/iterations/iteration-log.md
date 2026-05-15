@@ -1612,3 +1612,197 @@ The four SKIP rows are long-standing TBD-command sentinels that predate FIX-A. T
 - **Closing PAR using FIX-MECH discovered a NEW gap (fmpl-web test failure) that ITER-0005a.6's closing PAR missed.** This is FIX-MECH proving its value on its first use — sort of. The fmpl-web failure isn't IN the sentinel corpus (so the script's narrow scan didn't catch it), but the act of running `cargo test` for full workspace verification during T6 surfaced it. The deeper lesson: the sentinel sweep covers SENTINEL-cadence rows only; "all tests pass" is a separate gate that should also live somewhere. FIX-MECH closes one defense (sentinel rot); a wider "workspace cargo test green" gate would close another. Out of scope for FIX-A — captured for the FIX-MECH design's future evolution.
 - **A small iteration is a healthy iteration.** ITER-0005b-FIX-A scope: 4 effective edits (recovery.rs:×3, roadmap.md:×1) + 1 new script + 1 iteration-log entry. Ran in roughly the time it took to write the card. The split decision from the pre-iter PAR (FIX-A red-gate cleanup vs FIX-B architectural seam vs ITER-PROCESS-TAGS housekeeping) earned its keep — entangling the AC-2/AC-6 architectural decisions with this cleanup would have ballooned the iteration far past its actual mechanical scope.
 
+## ITER-0005b-FIX-B — AC-2 + AC-6 evidence-seam closure (one iteration, two ordered ACs)
+
+**Completed:** 2026-05-15T01:30 EDT
+
+**Stories delivered:** STORY-0100 AC-2 + AC-6 closed (both previously re-opened post-ITER-0005b audit).
+
+**Tasks executed:** T0-IMPL (add `eval_persistent` sibling entry in fmpl-core), T1 (AC-2 wire + SCENARIO-0101-eval-persist), T2 (add `recover_and_rebind` orchestrator in fmpl-core; reuses existing closure seam, no new trait), T3 (AC-6 logging decision — chose option (b), amend wording), T4 (SCENARIO-0102 journey rebuild), T5 (AC-2 + AC-6 text amendment in EPIC-003.md), T6 (wrap with sentinel-sweep capture).
+
+**Scenarios:** SCENARIO-0101-eval-persist added at cadence `sentinel` (new). SCENARIO-0102 rebuilt — same ID, same cadence (`iteration`, per task spec); old 2-test shape replaced by a 2-test journey shape (eval_persistent → simulate VM major bump → recover_and_rebind → assert RecoveryStats.recovered_from_source==1 AND executing the rebound CompiledCode returns Value::Int(3)).
+
+**Summary:** AC-2 closed via Path 2A (sibling-entry `eval_persistent` in `fmpl-core/src/lib.rs` under `#[cfg(feature = "persistence")]`; `eval()` unchanged at all 12 production call sites). AC-6 closed via Path 6A (orchestrator `recover_and_rebind` in fmpl-core; reuses fmpl-persistence's existing closure-shaped IoC seam at `recover_incompatible`; **no new trait** — Reviewer B's pre-iter PAR finding that the project pattern at this layer is closure parameters was honored). Sentinel sweep clean (23 pass, 0 fail, 4 skip on long-standing TBD rows — same skip set as FIX-A).
+
+### What landed
+
+**T0-IMPL — `eval_persistent` sibling entry.** Lands in `fmpl-core/src/lib.rs:160-220` (post-`eval_via_legacy_parser`). Gated `#[cfg(feature = "persistence")]`. Signature:
+
+```rust
+pub fn eval_persistent(
+    vm: &mut Vm,
+    source: &str,
+    bytecode_store: &dyn fmpl_persistence::Store,
+    source_store: &fmpl_persistence::SourceStore,
+    key: &str,
+) -> Result<Value>
+```
+
+**Open decision (T0 dispatch internals):** chose **native-pipeline only** (lexer → legacy parser by default, generated parser if `FMPL_USE_GENERATED_PARSER=1` per the existing parity gate). NOT a wrap of `eval()`. Reasoning: the FMPL pipeline (`eval_via_fmpl_pipeline`) routes user source through `ast_to_ir.fmpl` via `eval_via_legacy_parser` on a derived driver string. Persisting that `CompiledCode` would stamp the driver string's hash, not the user's source — defeating recovery. Native compile is what `source_hash`-based recovery actually needs. Wrap-mode would have required either (a) double-compile to get both Value AND persistable CompiledCode, or (b) accept that the FMPL pipeline path stamps the wrong source. Both worse than just compiling once via the native path.
+
+**Side-fix:** `CompiledCode::save_to_store`'s generic bound relaxed from `S: Store` to `S: Store + ?Sized` so `&dyn fmpl_persistence::Store` works through the new sibling entry. No-op for existing concrete-Store callers.
+
+**T1 — AC-2 wire + SCENARIO-0101-eval-persist.** New scenario file at `fmpl-persistence/tests/scenario_0101_eval_persist.rs`. Two tests:
+1. `scenario_0101_eval_persist_writes_envelope_and_returns_value` — single-call journey: eval_persistent returns `Value::Int(3)`; bytecode store has an envelope at the key with non-NONE source_hash; source_store resolves the hash to the original bytes.
+2. `scenario_0101_eval_persist_dedups_identical_sources_at_eval_seam` — two evals of byte-identical source against independent VMs produce identical source_hash stamps and one source_store record (content-addressing is observable AT THE EVAL SEAM, not just at the lower-level `save_to_store` API).
+
+Scenario card added to `behavior-scenarios.md` under stable ID `SCENARIO-0101-eval-persist`. The bare `SCENARIO-0101` ID is occupied by the deferred "synthesized constructor expression" scenario (AC-4); dash-qualified ID matches the existing `SCENARIO-0099-iter` pattern. Corpus row added at cadence `sentinel`.
+
+**T2 — `recover_and_rebind` orchestrator.** Lands in `fmpl-core/src/lib.rs:222-275`. Signature:
+
+```rust
+pub fn recover_and_rebind(
+    vm: &mut Vm,
+    bytecode_store: &dyn fmpl_persistence::Store,
+    source_store: &fmpl_persistence::SourceStore,
+) -> Result<fmpl_persistence::RecoveryStats>
+```
+
+Internally calls `recover_incompatible(...)` with a closure that:
+- converts `&[u8]` key → `&str` (UTF-8 errors → `RecoveryError::recompile`);
+- converts `&[u8]` source → `&str` (same error path);
+- routes through `eval_persistent`, which writes a fresh envelope at current VM major with the preserved source_hash.
+
+Map-error from outer to `fmpl_core::Error::BytecodePersistenceError`. **No new trait.** Reuses the existing closure-shaped IoC seam at `fmpl-persistence/src/recovery.rs:155` per Reviewer B's pre-iter PAR finding — the project pattern at this layer is closure parameters, and inventing a `SourceCompiler` trait would wrap existing infrastructure in ceremony.
+
+Two unit-style integration tests at `fmpl-persistence/tests/recover_and_rebind_unit.rs`:
+1. `recover_and_rebind_recovers_single_incompatible_record_with_recoverable_source` — single incompatible record, source bytes present → `recovered_from_source == 1`, rebound envelope has current VM major.
+2. `recover_and_rebind_counts_non_utf8_key_as_recompile_failure` — non-UTF-8 key in an incompatible envelope → surfaces through `RecoveryError::recompile`, counts as `recompile_failed` (not a panic, not a propagated Store error).
+
+**T3 — AC-6 logging decision: option (b) amend wording.** AC-6 had the text "logs the recovery attempt." `recover_incompatible` emits no logs today — only `RecoveryStats`. Both pre-iter PAR reviewers said either (a) add tracing or (b) amend AC text is defensible. Chose (b) for these reasons:
+1. Adding `tracing` to `fmpl-persistence` introduces a new dep for a debug-only observable;
+2. The project pattern at this layer is "stats reflect" via typed counters (`LoaderStats`, `RecoveryStats`);
+3. Amending text is reversible — if a future iteration earns a tracing dep for other reasons, AC-6 can re-acquire the "logs" observable then.
+
+Amended AC-6: "logs the recovery attempt, recompiles..." → "the recovery attempt is reflected in `RecoveryStats::recovered_from_source`, recompiles..." Preserved the rest (recompile + bind-under-key wording).
+
+**T4 — SCENARIO-0102 journey rebuild.** Rewrote `fmpl-persistence/tests/scenario_0102_recover_incompatible.rs` from a "drive `recover_incompatible` with a no-op closure" shape to a full journey:
+1. Open `Vm` + `FjallStore` + `SourceStore` in a tempdir.
+2. `eval_persistent(vm, "1 + 2", ..., key="answer")` → `Value::Int(3)`.
+3. Drop stores, simulate VM-major bump: re-open `FjallStore` at the same path, read the envelope at `"answer"`, extract its source_hash, write a placeholder payload at the same key with `vm_version_major = current + 1` and the same source_hash.
+4. Fresh `Vm` + reopen stores.
+5. `recover_and_rebind` → `RecoveryStats.recovered_from_source == 1`, all other counters zero.
+6. `CompiledCode::load_from_store(&store, "answer")` → run on a fresh `Vm` → returns `Value::Int(3)`. AC-6's bind-and-execute observable.
+
+Plus a second test `scenario_0102_composes_with_iter_store_for_full_keyspace_coverage` covering happy + stale records side by side: `iter_store` and `recover_and_rebind` jointly cover the keyspace disjointly; after recovery, a second `iter_store` pass sees BOTH records as `Loaded`.
+
+Scenario card text in `behavior-scenarios.md` updated to match the new shape (cites `recover_and_rebind` as the entry point and `RecoveryStats` as the observable).
+
+**T5 — AC text amendment in EPIC-003.md.** AC-2 text: `eval()` → `eval_persistent()`; scenario ref `SCENARIO-0100` → `SCENARIO-0101-eval-persist`. AC-6 text: `recover_and_rebind()` named explicitly; "logs the recovery attempt" → "the recovery attempt is reflected in `RecoveryStats::recovered_from_source`"; `eval()` → `eval_persistent()`. Status block: AC-2 + AC-6 flipped from "re-opened" to "closed by ITER-0005b-FIX-B" with the path tag (2A / 6A) and evidence path. Status header date bumped 2026-05-14 → 2026-05-15.
+
+**T6 — Wrap.** Sentinel sweep clean (verbatim block below). Iteration-log entry (this entry). Roadmap, progress, EPIC-003 status block updated. Validator green.
+
+### Verification at the closed state
+
+- `cargo build --workspace --all-features` — clean.
+- `cargo clippy --all-targets --all-features -- -D warnings` — clean.
+- `cargo test -p fmpl-core` — 1292 passing, 182 ignored (unchanged from FIX-A close; no fmpl-core test count delta because the new functions are exercised from fmpl-persistence's dev-deps).
+- `cargo test -p fmpl-core --features persistence` — 1292 passing, 182 ignored.
+- `cargo test -p fmpl-persistence --features fjall-backend` — **107 passing** (was 103 at FIX-A close; +4: scenario_0101_eval_persist contributes 2, recover_and_rebind_unit contributes 2; SCENARIO-0102 net-zero — old 2 tests replaced by new 2 tests).
+- Sentinel sweep (via FIX-MECH script): **23 pass, 0 fail, 4 skip** — same 4 long-standing TBD-row skips as FIX-A (SCENARIO-0012/0013/0020/0021); +1 new scenario in the sentinel set (SCENARIO-0101-eval-persist).
+- AC-2 evidence observable at the journey seam: ✓ (`scenario_0101_eval_persist_writes_envelope_and_returns_value` asserts `Value::Int(3)` + envelope source_hash resolution).
+- AC-6 evidence observable at the cross-surface seam: ✓ (`scenario_0102_recover_and_rebind_journey_executes_value_int_3` asserts `RecoveryStats.recovered_from_source == 1` AND executes the rebound CompiledCode to `Value::Int(3)`).
+
+### Test-count delta
+
+- fmpl-persistence: 103 → 107 (+4).
+- fmpl-core: 1292 → 1292 (no delta — the new functions live in `lib.rs` but their evidence lives in fmpl-persistence/tests via the dev-dep route).
+- Workspace total: +4.
+
+### STORY-0100 AC status (per close-out explicit-listing)
+
+- AC-1: closed by ITER-0005b (unchanged).
+- AC-2: **closed by ITER-0005b-FIX-B** (Path 2A — `eval_persistent`; SCENARIO-0101-eval-persist evidence).
+- AC-3: still deferred to ITER-0005b-OBJ.
+- AC-4: still deferred to ITER-0005b-SYNTH.
+- AC-5: still deferred to ITER-0005b-SYNTH.
+- AC-6: **closed by ITER-0005b-FIX-B** (Path 6A — `recover_and_rebind`, no new trait; SCENARIO-0102 evidence; T3 chose option (b) — amend wording rather than add tracing).
+- AC-7: primitive closed by ITER-0005b; orchestration still deferred to ITER-0005b-GC.
+
+### Sentinel sweep (closing-PAR)
+
+Verbatim output of `bash docs/superpowers/iterations/scripts/run_sentinels.sh` (captured at `/tmp/fix_b_sentinel_sweep_verbatim.txt`); the FIX-MECH contract is "iteration-log entry contains the script's verbatim stdout":
+
+```
+Building prerequisites (fmpl-bootstrap → fmpl-core)...
+Prerequisites OK
+
+Sentinel sweep: 27 scenarios at cadence=sentinel
+Corpus: docs/superpowers/iterations/behavior-corpus.md
+---
+SKIP   SCENARIO-0012  [TBD]
+SKIP   SCENARIO-0013  [TBD]
+RUN    SCENARIO-0016  cargo test -p fmpl-core --test ast_to_ir_parity
+PASS   SCENARIO-0016
+SKIP   SCENARIO-0020  [TBD]
+SKIP   SCENARIO-0021  [TBD]
+RUN    SCENARIO-0030  cargo test -p fmpl-core --test ast_to_ir_parity parity_integer
+PASS   SCENARIO-0030
+RUN    SCENARIO-0031  cargo test -p fmpl-core --test ast_to_ir_parity parity_arithmetic
+PASS   SCENARIO-0031
+RUN    SCENARIO-0032  cargo test -p fmpl-core --test ast_to_ir_parity parity_string
+PASS   SCENARIO-0032
+RUN    SCENARIO-0033  cargo test -p fmpl-core --test ast_to_ir_parity parity_let_binding
+PASS   SCENARIO-0033
+RUN    SCENARIO-0034  cargo test -p fmpl-core --test ast_to_ir_parity parity_if_expr
+PASS   SCENARIO-0034
+RUN    SCENARIO-0038  cargo test -p fmpl-core --test ast_to_ir_parity parity_symbol
+PASS   SCENARIO-0038
+RUN    SCENARIO-0103  cargo test -p fmpl-core --test scenario_0103_optimizer_pipeline
+PASS   SCENARIO-0103
+RUN    SCENARIO-0099  cargo test -p fmpl-persistence --features fjall-backend --test scenario_0099_envelope_loader
+PASS   SCENARIO-0099
+RUN    (AC-6 ratchet)  cargo test -p fmpl-core --test persistence_schema_anti_rot
+PASS   (AC-6 ratchet)
+RUN    (AC-5 ratchet)  cargo test -p fmpl-core --test persistence_envelope_invariant
+PASS   (AC-5 ratchet)
+RUN    (AC-6 schema-format ratchet)  cargo test -p fmpl-persistence --features fjall-backend --test persistence_schema_format_anti_rot
+PASS   (AC-6 schema-format ratchet)
+RUN    SCENARIO-0111  cargo test -p fmpl-persistence --features fjall-backend --test scenario_0111_envelope_writer_roundtrip
+PASS   SCENARIO-0111
+RUN    SCENARIO-0099-iter  cargo test -p fmpl-persistence --features fjall-backend --test iter_store
+PASS   SCENARIO-0099-iter
+RUN    SCENARIO-0112  cargo test -p fmpl-persistence --features fjall-backend --test scenario_0112_operator_detection
+PASS   SCENARIO-0112
+RUN    SCENARIO-0113  cargo test -p fmpl-persistence --features fjall-backend --test stream_input_store
+PASS   SCENARIO-0113
+RUN    SCENARIO-0101-eval-persist  cargo test -p fmpl-persistence --features fjall-backend --test scenario_0101_eval_persist
+PASS   SCENARIO-0101-eval-persist
+RUN    SCENARIO-0104  cargo test -p fmpl-core --test scenario_runner scenario_0104
+PASS   SCENARIO-0104
+RUN    SCENARIO-0105  cargo test -p fmpl-core --test scenario_runner scenario_0105
+PASS   SCENARIO-0105
+RUN    SCENARIO-0106  cargo test -p fmpl-core --test scenario_runner scenario_0106
+PASS   SCENARIO-0106
+RUN    SCENARIO-0107  cargo test -p fmpl-core --test opcode_rename_evidence
+PASS   SCENARIO-0107
+RUN    SCENARIO-0108  cargo test -p fmpl-core --test canonical_pipeline_parity
+PASS   SCENARIO-0108
+RUN    (G3)  cargo test -p fmpl-core --test postlude_arm_contract
+PASS   (G3)
+---
+Sentinel sweep summary: 23 pass, 0 fail, 4 skip (missing command)
+Missing commands (sentinel rows with TBD/BLOCKED):
+  - SCENARIO-0012 (TBD)
+  - SCENARIO-0013 (TBD)
+  - SCENARIO-0020 (TBD)
+  - SCENARIO-0021 (TBD)
+```
+
+Script exit code: 0.
+
+### Discovered follow-up gaps (not closed here)
+
+1. **`fmpl-web` test failure** — `test_multi_session_isolation` `Backend(Locked)` — pre-existing from ITER-0005a.6; not in FIX-B's scope. Still on the FIX-A-discovered list.
+2. **Long-standing TBD sentinels** — SCENARIO-0012/0013/0020/0021 — corpus rows with no execution command. Same skip set as FIX-A.
+3. **Process-tag references in `recovery.rs` doc comments** — already on the ITER-PROCESS-TAGS sweep list; not touched here per scope discipline.
+4. **`save_to_store` `?Sized` relaxation** — the change was load-bearing for the new `&dyn Store` consumer. The compiler did not require a corresponding relaxation on the `S: Store` bound at the closure-internal call sites (verified by green build). If a future iteration needs `&dyn Store` through `ObjectDb::save_to_store` or `ParseState::save_to_store`, those bounds may need the same relaxation; not in FIX-B's scope to pre-relax them.
+
+### Lessons
+
+- **Native-pipeline-only for `eval_persistent` was the right call, but only after looking at what FMPL pipeline does to source.** The wrap-mode default in the spec ("does it wrap `eval()` internally") would have produced bytecode whose envelope source_hash points at a *generated driver string* (`r#"let (ast = ast::parse({:?})) ..."#`) rather than the user's `"1 + 2"`. Recovery on that record would re-evaluate the driver string, not the user code. Lesson: when a sibling entry's purpose includes provenance (here: `source_hash`-driven recovery), the wrap question is not just "does composition work" but "does the wrapped path *carry the right identity for this provenance*". The FMPL pipeline carries a different identity (driver string), so wrap-mode is silently wrong even though it compiles. Captured because the spec marked this as an "open decision" the iteration owner picks — and the spec's recommendation was wrap-mode unless concrete blocker. The blocker was concrete; it just required reading the pipeline code.
+- **Closure-seam reuse beat the trait proposal at zero cost.** Pre-iter PAR Reviewer A wanted to lift `recover_incompatible`'s closure to a `SourceCompiler` trait with a blanket impl over `FnMut` + a concrete `VmRecompiler` in fmpl-core. Reviewer B said: the closure IS the IoC seam, and inventing a trait wraps existing infrastructure in ceremony. The PAR resolution took Reviewer B's side on severity-escalation grounds. The implementation here proved Reviewer B right at zero cost — the orchestrator is 12 lines (counting the closure body) and reads top-to-bottom without naming a trait. Lesson: when PAR sees a "shall we introduce an abstraction?" disagreement, the no-abstraction option's cost is usually under-modeled (because abstractions feel like the "right" answer in the abstract). Read the no-abstraction implementation in the smallest plausible form before committing to abstraction.
+- **AC-6's "logs the recovery attempt" wording exposed a quiet AC-text drift problem.** The original AC was authored when "tracing" was assumed to be a generic-good thing every layer should have. The implementation reached close-out without ever adding tracing — and the AC text became un-implementable as-written. Two paths existed: add tracing (closes the gap with new dep), or amend wording (closes the gap by acknowledging that `RecoveryStats` IS the reflection mechanism at this layer). Either way the AC text needed to be honest about what the layer actually produces. Lesson: when an AC has a specific verb ("logs", "emits", "writes") attached to a specific layer, periodically check that the layer actually does that verb. If not, decide deliberately: either add the missing capability OR amend the wording. The silent third option — pretend the AC is closed when it isn't — is the failure mode FIX-B exists to fix.
+- **`?Sized` on `save_to_store` was a deferred constraint that a single new caller surfaced.** The original `save_to_store<S: Store>` was authored when every caller had a concrete `FjallStore`. `eval_persistent`'s `&dyn Store` parameter was the first caller that needed dynamic dispatch — and the bound was tight enough to reject. The fix was mechanical (`+ ?Sized`), no behavior change. Lesson: when authoring a generic bound, ask "does this need to support `&dyn`?". The cost of `+ ?Sized` is essentially nothing; the cost of NOT having it is one downstream caller's blocked migration. Add it preemptively when the bound is on a borrow parameter (the value isn't being moved or sized-stored), not just when an actual `&dyn` caller arrives.
+- **The scenario-ID convention quietly handled a name conflict.** `SCENARIO-0101` was already taken by the deferred "synthesized constructor" AC-4 scenario. The roadmap's task text used `SCENARIO-0101-eval-persist` consistently; the task spec said "stable ID `SCENARIO-0101`" without acknowledging the conflict. The dash-qualified ID (`SCENARIO-0101-eval-persist`) follows the existing `SCENARIO-0099-iter` pattern and disambiguates without colliding. Lesson: when a card text ambiguously cites a scenario ID, check the corpus + scenario doc for a pre-existing entry. If conflict: the dash-qualified suffix is already established as a project convention.
+
