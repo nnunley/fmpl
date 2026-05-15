@@ -1590,7 +1590,7 @@ The `iter_keyspace` helper returns `Result<LoaderStats, fjall::Error>` (no value
 >
 > Signatures shown below are the ORIGINAL pre-0005a.5 shape (`&fjall::Keyspace`, `load_from_fjall`). Read them as the iteration's historical scope, not as a target for new work. Any resumption of 0005a.4 must first reconcile against 0005a.5's actual implementation: methods are now `load_from_store<S: Store>(&S, key, ...)`, fjall is not named in fmpl-core, and the per-call-site rewires are already done.
 
-**Status:** pending (partially superseded — see banner above).
+**Status:** **deferred 2026-05-16** — substantive work absorbed by ITER-0005a.5 per the banner above. What remains is a small `&mut LoaderStats` re-threading + 4 inconsistent-corruption-handling Minor findings, neither of which is on the critical path. Autonomous orchestrators must **SKIP** this iteration: it is not pickable as "next pending" without a deliberate decision to resume it (which would need the scope card itself rewritten against 0005a.5's actual implementation). If you are an orchestrator reading this and looking for the next pending iteration, **skip past this entry to ITER-PROCESS-TAGS or ITER-SWEEP-ASSERTIONS**.
 
 **Rationale:** Split from the original ITER-0005a.3 per the 2026-05-13 pre-iteration PAR review. ITER-0005a.3 ships the public API (`LoaderStats`, `iter_keyspace`) + first consumer (SCENARIO-0099 iter sub-test); 0005a.4 wires every existing point-key `load_from_fjall` call site through the API. Splitting lets 0005a.3's API design pressure-test against one real consumer (the SCENARIO-0099 rebinding) before 4 downstream sites lock in the return-shape decision.
 
@@ -2229,7 +2229,7 @@ T0 (sibling study) and T1 (pre-iter PAR) **already done** before iteration kicko
 
 **Stories:** STORY-0100 AC-6 evidence-cardinality gap (raised by FIX-B closing PAR Reviewer B on 2026-05-15).
 
-**Status:** pending (small; unblocked; independent of GAP-2).
+**Status:** **DONE 2026-05-16.** See `iteration-log.md` ITER-0005b-FIX-B-GAP-1 entry for the full narrative. Outcome: stress tests passed on first run — fjall's `iter()` snapshot-isolates over in-iteration `insert` mutations. T2 (snapshot/collect-then-mutate fix) downgraded to a doc-comment at `fmpl-persistence/src/recovery.rs:158-170` citing the new sentinel tests. SCENARIO-0102 promoted to sentinel cadence; SCENARIO-0102-multi-stress + SCENARIO-0102-multi-mixed added at sentinel cadence.
 
 **Rationale:** FIX-B's SCENARIO-0102 proves AC-6 at cardinality=1 only. The recovery orchestrator iterates the bytecode store and, inside the iteration loop, mutates the same store via `eval_persistent → save_to_store → Store::insert`. The fjall iterator's snapshot/visibility semantics under same-keyspace concurrent insertion are inherited, not asserted. If the iterator re-emits rewritten keys, multi-record runs would inflate `loaded_passthrough` or double-count `recovered_from_source`. AC-6's "cross-surface" impact does not generalize past N=1 without a stress test.
 
@@ -2264,7 +2264,7 @@ T0 (sibling study) and T1 (pre-iter PAR) **already done** before iteration kicko
 
 **Stories:** STORY-0100 AC-6 error-path symmetric gap (raised by FIX-B closing PAR Reviewer B on 2026-05-15).
 
-**Status:** pending (small; unblocked; independent of GAP-1; can bundle with GAP-1 if scheduled together).
+**Status:** **DONE 2026-05-16.** See `iteration-log.md` ITER-0005b-FIX-B-GAP-2 entry. Outcome: TDD-green on first run — the production path at `fmpl-core/src/lib.rs:259-260` already routes both UTF-8 conversions (key + source bytes) through `RecoveryError::recompile` with identical semantics. T2 was a no-op. PAR Stage-1 round 1 found incomplete counter assertions; round 2 (after strengthening to assert all 6 RecoveryStats counters) passed clean.
 
 **Rationale:** `recover_and_rebind`'s closure does `std::str::from_utf8(src_bytes)?` to convert source-store bytes to `&str` for `eval_persistent`. `SourceStore::put(&[u8])` nominally accepts arbitrary bytes — non-UTF-8 source is a reachable input. The existing test `recover_and_rebind_counts_non_utf8_key_as_recompile_failure` covers the symmetric *key* case; the *source* case has no parallel. Closes the error-path symmetry gap.
 
@@ -2342,6 +2342,62 @@ The original card's audit-findings narrative (sentinel regression + AC-2/AC-6 ev
 - The ITER-0005b iteration-log entry's audit-trail (to be amended by FIX-A's FIX-7)
 
 Do not work from this deprecated card. Its original Acceptance Criteria framing ("FIX-1 Option A or Option B — pick whichever lands cleaner") is **no longer policy**: FIX-A pre-commits to Option A; FIX-B owns the AC-2/AC-6 seam decisions with their own pre-iter PAR.
+
+---
+
+#### ITER-SWEEP-ASSERTIONS — Strengthen sibling unit tests to full-counter exhaustion
+
+**Stories:** none new (housekeeping iteration); addresses pre-existing-flagged findings from ITER-0005b-FIX-B-GAP-1 + GAP-2 PAR reviews, plus pre-iteration PAR scope review (2026-05-16) finding S2/B-S-1.
+
+**Status:** done 2026-05-16 (see iteration-log entry for evidence + PAR transcript).
+
+**Rationale:** During GAP-1 and GAP-2 PAR reviews (2026-05-16), both Stage-1 and Stage-2 reviewers independently flagged that the sibling unit tests in `fmpl-persistence/tests/recover_and_rebind_unit.rs` use inconsistent assertion shapes — some assert all six `RecoveryStats` counters explicitly (the GAP-1 and GAP-2 additions), others assert only a subset (`recompile_failed`, `recovered_from_source`, `total()`). The asymmetric shape was correctly flagged out-of-scope for those iterations but creates a real discrimination weakness: a wrong implementation that routes a failure through `unrecoverable_source_missing` or `unrecoverable_no_source` could pass the weaker tests while failing the stronger ones. This iteration brings all the integration-tier tests in `recover_and_rebind_unit.rs` AND the in-module unit tests in `fmpl-persistence/src/recovery.rs::tests` to consistent counter-exhaustion shape — both layers test the same `RecoveryStats` discrimination contract, so leaving one layer asymmetric while strengthening the other repeats the original asymmetry. (The pre-iteration PAR scope review on 2026-05-16 surfaced the in-module-test gap as Serious; this revision incorporates it.)
+
+**Acceptance criteria:**
+
+Integration-tier (`fmpl-persistence/tests/recover_and_rebind_unit.rs`):
+
+- **SWEEP-A1:** `recover_and_rebind_recovers_single_incompatible_record_with_recoverable_source` asserts all six `RecoveryStats` counters explicitly (`loaded_passthrough`, `recovered_from_source`, `recompile_failed`, `unrecoverable_no_source`, `unrecoverable_source_missing`, `skipped_corrupt`) plus `total()`. Currently asserts 5 counters + `total()`; missing only `loaded_passthrough`.
+- **SWEEP-A2:** `recover_and_rebind_counts_non_utf8_key_as_recompile_failure` asserts all six counters explicitly. Currently asserts 3 (`recompile_failed`, `recovered_from_source`, `total()`). Add a rationale comment block adapted for the KEY case (the comment must be self-contained — no GAP/SWEEP/PAR/ITER identifiers per `feedback_no_story_names_in_code_comments`; do NOT invert the existing "mirror of the non-UTF-8 KEY case" reference in the SOURCE variant — the KEY case is the canonical form, the SOURCE case is its mirror).
+- **SWEEP-A3:** All other tests in `recover_and_rebind_unit.rs` already assert all six counters (`recover_and_rebind_multi_incompatible_stress`, `recover_and_rebind_multi_mixed_cardinality`, `recover_and_rebind_counts_non_utf8_source_as_recompile_failure` — verified during pre-iteration PAR by file read). No action needed.
+
+In-module-tier (`fmpl-persistence/src/recovery.rs::tests`):
+
+- **SWEEP-B1:** `loaded_passthrough_counted_recovery_untouched` (`recovery.rs:260`) asserts all six counters explicitly. Currently asserts 1 counter (`loaded_passthrough`) + `total()`. The pinning value is the same as in the integration-tier tests: a wrong implementation that bumped `recovered_from_source` instead of `loaded_passthrough` would still satisfy `total() == 1` and the existing `loaded_passthrough == 1` (only if the bug were a *double-count*, the existing assertion catches it; if the bug *swaps* which counter receives the increment, the existing assertion fails — partial discrimination). Adding the five-zero assertion explicitly closes the swap mode where one of the four undisplayed counters bumps.
+- **SWEEP-B2:** `incompatible_with_source_recovers` (`recovery.rs:282`) asserts all six counters explicitly. Currently asserts 1 (`recovered_from_source`) + `total()`.
+- **SWEEP-B3:** `incompatible_without_source_counted_unrecoverable` (`recovery.rs:307`) asserts all six counters explicitly **plus `total()`**. Currently asserts 2 (`unrecoverable_no_source`, `recovered_from_source`); missing the other four AND `total()`.
+- **SWEEP-B4:** `incompatible_with_missing_source_counted_unrecoverable` (`recovery.rs:321`) asserts all six counters explicitly plus `total()`. Currently asserts 2; missing four + `total()`.
+- **SWEEP-B5:** `recompile_failure_counted` (`recovery.rs:337`) asserts all six counters explicitly plus `total()`. Currently asserts 2; missing four + `total()`.
+- **SWEEP-B6:** `corrupt_records_skipped` (`recovery.rs:356`) asserts all six counters explicitly. Currently asserts 1 (`skipped_corrupt`) + `total()`.
+- **SWEEP-B7:** `mixed_outcomes_aggregate_correctly` (`recovery.rs:371`) — the existing strong test — asserts the **sixth counter** (`recompile_failed == 0`) too, so the assertion shape is fully exhaustive. Currently asserts 5 of 6 + `total()`; missing `recompile_failed`.
+
+**Impacted scenarios:** none directly. SCENARIO-0102 already asserts all six counters at journey tier (`scenario_0102_recover_incompatible.rs`); SCENARIO-0102-multi-stress and SCENARIO-0102-multi-mixed sentinels re-run tests in the file under change but those tests are not modified by this iteration (only SWEEP-A1/A2 modify file contents and those tests are not the sentinel targets). The sentinel sweep gate will run all of them at iteration close regardless.
+
+**Out of scope (deferred, surfaced by pre-iteration PAR):**
+
+- **`scenario_0102_recover_incompatible.rs::scenario_0102_composes_with_iter_store_for_full_keyspace_coverage`** (lines ~167-226) asserts only 2 of 6 counters — weakest shape in the SCENARIO-0102 family. Different seam (full journey test), not a `recover_and_rebind` unit test. Surfaced as carried gap; address in a follow-up housekeeping iteration if it ever motivates real evidence.
+- **Rebind-side-effect assertion on non-UTF-8 recompile-failure paths.** Tests `recover_and_rebind_counts_non_utf8_key_as_recompile_failure` and `recover_and_rebind_counts_non_utf8_source_as_recompile_failure` do not assert "the future-major envelope is still in place at the original key" (the happy-path tests at lines 67-73 and 200-216 do). This is a different invariant (side-effect on failure, not counter discrimination); separate iteration.
+- **Helper-extraction refactor.** Five tests in `recover_and_rebind_unit.rs` share `(tempdir + FjallStore + SourceStore + future_vm + write)` setup. Extracting a shared `setup_orchestrator_fixtures()` helper would reduce repetition but mixes axes (assertion-strengthening vs. setup-deduplication); per `feedback_split_iterations_on_reader_writer_asymmetry`, kept separate. The iteration takes the position that manual per-test exhaustive assertion is correct *given* the existing house style — the right *missing* proof would be a structural invariant ("expected six-tuple equals observed six-tuple") implemented as one helper; `mixed_outcomes_aggregate_correctly` already covers the multi-outcome partition structurally, so per-test helpers are not pulling weight.
+
+**Depends on:** ITER-0005b-FIX-B-GAP-2 (provides the canonical full-exhaustion pattern to mirror).
+
+**Build order:**
+
+1. **T1 — Strengthen `recover_and_rebind_recovers_single_incompatible_record_with_recoverable_source` (SWEEP-A1).** Add the missing `assert_eq!(stats.loaded_passthrough, 0);` assertion. Verify the test still passes.
+2. **T2 — Strengthen `recover_and_rebind_counts_non_utf8_key_as_recompile_failure` (SWEEP-A2).** Add the four missing counter assertions + rationale comment adapted for the KEY case (canonical form; no process tags). Verify the test still passes.
+3. **T3 — Strengthen six in-module tests in `recovery.rs::tests` (SWEEP-B1 through SWEEP-B6).** Each test gets its five missing zero-counter assertions; SWEEP-B3/B4/B5 additionally get the missing `total()` assertion. Verify all tests still pass.
+4. **T4 — Strengthen `mixed_outcomes_aggregate_correctly` (SWEEP-B7).** Add `assert_eq!(stats.recompile_failed, 0)`. Verify the test still passes.
+5. **T5 — Wrap.** Closing PAR. Iteration-log entry. Mark done in roadmap.
+
+**Verification gates:**
+
+- All tests in `recover_and_rebind_unit.rs` pass.
+- All tests in `fmpl-persistence/src/recovery.rs::tests` pass.
+- `cargo test -p fmpl-persistence --features fjall-backend` clean.
+- `cargo build --workspace --features persistence` + clippy clean.
+- Sentinel sweep clean (no regression).
+
+**Sources:** ITER-0005b-FIX-B-GAP-1 Stage-1 PAR Reviewer A finding ("Counter-exhaustion suggestion for symmetry"); ITER-0005b-FIX-B-GAP-2 Stage-1 PAR Reviewer A finding (Serious: missing counter exhaustion), Stage-2 PAR Reviewer B finding ("sibling test still lacks the four discriminating assertions"); pre-iteration PAR scope review 2026-05-16 finding S2/B-S-1 (Serious convergent: in-module unit tests at `recovery.rs:260-368` have the same shape asymmetry and were originally out of scope).
 
 ---
 

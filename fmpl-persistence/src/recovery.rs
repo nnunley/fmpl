@@ -155,6 +155,18 @@ where
     F: FnMut(&[u8], &[u8]) -> Result<(), RecoveryError>,
 {
     let mut stats = RecoveryStats::default();
+    // Iterator-during-mutation safety: the closure can invoke
+    // `Store::insert` (via the source-recompile path) on the same
+    // store this loop is iterating. fjall's `iter()` snapshot-isolates
+    // over in-iteration writes — rewritten records are not re-emitted
+    // and the loop visits each key exactly once. Verified by the
+    // stress tests `recover_and_rebind_multi_incompatible_stress`
+    // (N=10 pure incompatible) and `recover_and_rebind_multi_mixed_
+    // cardinality` (K=5 compatible + N=10 incompatible) in
+    // `fmpl-persistence/tests/recover_and_rebind_unit.rs`. Both
+    // assert exact counter values; either would fail with overcounted
+    // `recovered_from_source` or inflated `loaded_passthrough` if the
+    // snapshot semantics regressed.
     for item in store.iter() {
         let (key, value) = item?;
         let (outcome, decoded) = decode(&value, expected_vm_major);
@@ -260,6 +272,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(stats.loaded_passthrough, 1);
+        assert_eq!(stats.recovered_from_source, 0);
+        assert_eq!(stats.recompile_failed, 0);
+        assert_eq!(stats.unrecoverable_no_source, 0);
+        assert_eq!(stats.unrecoverable_source_missing, 0);
+        assert_eq!(stats.skipped_corrupt, 0);
         assert_eq!(stats.total(), 1);
         assert_eq!(
             recompile_calls, 0,
@@ -287,6 +304,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(stats.recovered_from_source, 1);
+        assert_eq!(stats.loaded_passthrough, 0);
+        assert_eq!(stats.recompile_failed, 0);
+        assert_eq!(stats.unrecoverable_no_source, 0);
+        assert_eq!(stats.unrecoverable_source_missing, 0);
+        assert_eq!(stats.skipped_corrupt, 0);
         assert_eq!(stats.total(), 1);
         assert_eq!(recovered_keys, vec![b"old".to_vec()]);
         assert_eq!(recovered_sources, vec![source_bytes.to_vec()]);
@@ -304,6 +326,11 @@ mod tests {
 
         assert_eq!(stats.unrecoverable_no_source, 1);
         assert_eq!(stats.recovered_from_source, 0);
+        assert_eq!(stats.loaded_passthrough, 0);
+        assert_eq!(stats.recompile_failed, 0);
+        assert_eq!(stats.unrecoverable_source_missing, 0);
+        assert_eq!(stats.skipped_corrupt, 0);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -320,6 +347,11 @@ mod tests {
 
         assert_eq!(stats.unrecoverable_source_missing, 1);
         assert_eq!(stats.recovered_from_source, 0);
+        assert_eq!(stats.loaded_passthrough, 0);
+        assert_eq!(stats.recompile_failed, 0);
+        assert_eq!(stats.unrecoverable_no_source, 0);
+        assert_eq!(stats.skipped_corrupt, 0);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -339,6 +371,11 @@ mod tests {
 
         assert_eq!(stats.recompile_failed, 1);
         assert_eq!(stats.recovered_from_source, 0);
+        assert_eq!(stats.loaded_passthrough, 0);
+        assert_eq!(stats.unrecoverable_no_source, 0);
+        assert_eq!(stats.unrecoverable_source_missing, 0);
+        assert_eq!(stats.skipped_corrupt, 0);
+        assert_eq!(stats.total(), 1);
     }
 
     #[test]
@@ -352,6 +389,11 @@ mod tests {
             recover_incompatible(&store, &source_store, TEST_VM_MAJOR, |_, _| Ok(())).unwrap();
 
         assert_eq!(stats.skipped_corrupt, 1);
+        assert_eq!(stats.loaded_passthrough, 0);
+        assert_eq!(stats.recovered_from_source, 0);
+        assert_eq!(stats.recompile_failed, 0);
+        assert_eq!(stats.unrecoverable_no_source, 0);
+        assert_eq!(stats.unrecoverable_source_missing, 0);
         assert_eq!(stats.total(), 1);
     }
 
@@ -382,6 +424,7 @@ mod tests {
         assert_eq!(stats.unrecoverable_no_source, 1, "c");
         assert_eq!(stats.unrecoverable_source_missing, 1, "d");
         assert_eq!(stats.skipped_corrupt, 1, "e");
+        assert_eq!(stats.recompile_failed, 0);
         assert_eq!(stats.total(), 5);
     }
 

@@ -822,7 +822,10 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "fmpl-core",
+ "fmpl-persistence",
+ "fmpl-types",
  "rustyline",
+ "serde_json",
  "tokio",
 ]
 

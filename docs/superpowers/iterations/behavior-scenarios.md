@@ -2158,6 +2158,61 @@
 - `docs/superpowers/iterations/requirements/EPIC-003.md` (STORY-0100 AC-6)
 - `docs/superpowers/specs/2026-05-14-fix-b-seam-paths.md`
 
+## SCENARIO-0102-multi-stress — Recovery orchestrator handles N=10 pure-incompatible records
+
+**Kind:** failure-recovery
+**Proof seam:** integration
+**Owning stories:** STORY-0100
+
+**Preconditions:**
+- A keyspace contains N=10 distinct `CompiledCode` records, each with a future VM major (incompatible)
+- Each record's envelope `source_hash` resolves to a distinct arithmetic source (`"1 + 2"`, `"3 + 4"`, ..., `"19 + 20"`) in the source store
+
+**Action:**
+- Call `fmpl_core::recover_and_rebind(&mut vm, &store, &source_store)`
+
+**Expected observables:**
+- `RecoveryStats.recovered_from_source == 10` (each record's source recompiled and rebound)
+- `RecoveryStats.loaded_passthrough == 0` (rebound records are not re-emitted by the iterator — critical: this asserts fjall's snapshot semantics over in-iteration mutation)
+- All other counters == 0
+- `RecoveryStats.total() == 10`
+- Each rebound envelope's `vm_version_major` equals the current `VM_VERSION_MAJOR`
+
+**Automation status:** implemented
+**Execution command:** `cargo test -p fmpl-persistence --features fjall-backend --test recover_and_rebind_unit recover_and_rebind_multi_incompatible_stress`
+
+**Sources:**
+- `docs/superpowers/iterations/requirements/EPIC-003.md` (STORY-0100 AC-6 stress evidence)
+- Closing PAR finding R-B-S-1 on ITER-0005b-FIX-B (cardinality > 1 gap)
+
+## SCENARIO-0102-multi-mixed — Recovery orchestrator handles mixed-cardinality keyspace
+
+**Kind:** failure-recovery
+**Proof seam:** integration
+**Owning stories:** STORY-0100
+
+**Preconditions:**
+- A keyspace contains K=5 already-compatible `CompiledCode` records (current VM major, decode cleanly) seeded via `eval_persistent`
+- Same keyspace also contains N=10 incompatible records (future VM major) with distinct recoverable sources
+- Keys are disjoint between the two populations (`clean-NN` vs `stale-NN`)
+
+**Action:**
+- Call `fmpl_core::recover_and_rebind(&mut vm, &store, &source_store)`
+
+**Expected observables:**
+- `RecoveryStats.loaded_passthrough == 5` (compatible records pass through unchanged)
+- `RecoveryStats.recovered_from_source == 10` (incompatible records recompiled and rebound)
+- All other counters == 0
+- `RecoveryStats.total() == 15`
+- This proves the two counters increment independently under in-iteration mutation — the precise failure mode (a re-emitted rebind being decoded as Loaded, inflating `loaded_passthrough`) cannot occur
+
+**Automation status:** implemented
+**Execution command:** `cargo test -p fmpl-persistence --features fjall-backend --test recover_and_rebind_unit recover_and_rebind_multi_mixed_cardinality`
+
+**Sources:**
+- `docs/superpowers/iterations/requirements/EPIC-003.md` (STORY-0100 AC-6 stress evidence)
+- Closing PAR finding R-B-S-1 on ITER-0005b-FIX-B; pre-iter PAR coverage finding on ITER-0005b-FIX-B-GAP-1 (mixed-cardinality dimension)
+
 ## SCENARIO-0077 — Web server POST to /eval uses generated parser
 
 **Kind:** surface

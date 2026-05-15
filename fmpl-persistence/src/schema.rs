@@ -78,6 +78,14 @@ pub enum PayloadKind {
     /// shape differs; sharing a tag would make the two wire-format
     /// ambiguous.
     StreamPosition = 0x09,
+    /// One tuple from a durable [`TupleSpace`]. Payload is a serialized
+    /// `Tuple` (`type_name`, `namespace`, `timestamp`, `seq`, `data`).
+    /// Keyed in the durable space's keyspace by the composite
+    /// `(namespace, type_name, seq)` so insertion-order iteration on
+    /// the backing store reconstructs the in-memory `BTreeMap` shape.
+    ///
+    /// [`TupleSpace`]: fmpl_core::tuplespace::store::TupleSpace
+    Tuple = 0x0A,
 }
 
 impl PayloadKind {
@@ -98,6 +106,7 @@ impl PayloadKind {
             0x07 => Some(Self::MemoTable),
             0x08 => Some(Self::VmSnapshot),
             0x09 => Some(Self::StreamPosition),
+            0x0A => Some(Self::Tuple),
             _ => None,
         }
     }
@@ -125,6 +134,7 @@ impl PayloadKind {
             Self::MemoTable => 1,
             Self::VmSnapshot => 1,
             Self::StreamPosition => 1,
+            Self::Tuple => 1,
         }
     }
 
@@ -138,19 +148,24 @@ impl PayloadKind {
 mod tests {
     use super::*;
 
+    /// Every variant currently shipped. Tests below iterate over this
+    /// to avoid the "add a variant, forget to update the test" trap.
+    const ALL_KINDS: &[PayloadKind] = &[
+        PayloadKind::ObjectRecord,
+        PayloadKind::ObjectIndex,
+        PayloadKind::CompiledCode,
+        PayloadKind::Grammar,
+        PayloadKind::GrammarRegistry,
+        PayloadKind::ParseState,
+        PayloadKind::MemoTable,
+        PayloadKind::VmSnapshot,
+        PayloadKind::StreamPosition,
+        PayloadKind::Tuple,
+    ];
+
     #[test]
     fn payload_kind_roundtrips_through_wire_byte() {
-        for kind in [
-            PayloadKind::ObjectRecord,
-            PayloadKind::ObjectIndex,
-            PayloadKind::CompiledCode,
-            PayloadKind::Grammar,
-            PayloadKind::GrammarRegistry,
-            PayloadKind::ParseState,
-            PayloadKind::MemoTable,
-            PayloadKind::VmSnapshot,
-            PayloadKind::StreamPosition,
-        ] {
+        for &kind in ALL_KINDS {
             assert_eq!(PayloadKind::from_byte(kind.as_byte()), Some(kind));
         }
     }
@@ -158,9 +173,9 @@ mod tests {
     #[test]
     fn unknown_payload_byte_returns_none() {
         // Reserved variants currently unmapped — must round-trip cleanly
-        // through the loader's AC-3 skip path. 0x09 is now StreamPosition
-        // (added in the ITER-0005a.2 audit fix-up G2).
-        for b in [0x00, 0x0A, 0x10, 0x42, 0xFF] {
+        // through the loader's skip path. 0x0A is now Tuple, so it has
+        // been removed from this set.
+        for b in [0x00, 0x0B, 0x10, 0x42, 0xFF] {
             assert!(
                 PayloadKind::from_byte(b).is_none(),
                 "byte {b:#x} should be unknown",
@@ -174,17 +189,7 @@ mod tests {
         // bumping a single kind's schema MUST update this constant for
         // that kind. Failing this test means the contract just got broken
         // (good; that's the point).
-        for kind in [
-            PayloadKind::ObjectRecord,
-            PayloadKind::ObjectIndex,
-            PayloadKind::CompiledCode,
-            PayloadKind::Grammar,
-            PayloadKind::GrammarRegistry,
-            PayloadKind::ParseState,
-            PayloadKind::MemoTable,
-            PayloadKind::VmSnapshot,
-            PayloadKind::StreamPosition,
-        ] {
+        for &kind in ALL_KINDS {
             assert_eq!(kind.current_schema_version(), 1);
         }
     }

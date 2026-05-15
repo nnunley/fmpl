@@ -11,9 +11,12 @@ name = "fmpl"
 path = "src/main.rs"
 
 [dependencies]
-fmpl-core = { workspace = true }
+fmpl-core = { workspace = true, features = ["persistence"] }
+fmpl-persistence = { workspace = true, features = ["fjall-backend"] }
+fmpl-types = { workspace = true }
 rustyline = { workspace = true }
 dirs = { workspace = true }
+serde_json = { workspace = true }
 # tokio: previously `workspace = true` with implicit full features.
 # After Task #21 the workspace pin has NO default features; declare
 # what the CLI's runtime actually needs.

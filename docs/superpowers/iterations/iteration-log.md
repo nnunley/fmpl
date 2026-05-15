@@ -1837,3 +1837,238 @@ Two auditors evaluated FIX-B in parallel against the three-tier discipline (deep
 - **`?Sized` on `save_to_store` was a deferred constraint that a single new caller surfaced.** The original `save_to_store<S: Store>` was authored when every caller had a concrete `FjallStore`. `eval_persistent`'s `&dyn Store` parameter was the first caller that needed dynamic dispatch — and the bound was tight enough to reject. The fix was mechanical (`+ ?Sized`), no behavior change. Lesson: when authoring a generic bound, ask "does this need to support `&dyn`?". The cost of `+ ?Sized` is essentially nothing; the cost of NOT having it is one downstream caller's blocked migration. Add it preemptively when the bound is on a borrow parameter (the value isn't being moved or sized-stored), not just when an actual `&dyn` caller arrives.
 - **The scenario-ID convention quietly handled a name conflict.** `SCENARIO-0101` was already taken by the deferred "synthesized constructor" AC-4 scenario. The roadmap's task text used `SCENARIO-0101-eval-persist` consistently; the task spec said "stable ID `SCENARIO-0101`" without acknowledging the conflict. The dash-qualified ID (`SCENARIO-0101-eval-persist`) follows the existing `SCENARIO-0099-iter` pattern and disambiguates without colliding. Lesson: when a card text ambiguously cites a scenario ID, check the corpus + scenario doc for a pre-existing entry. If conflict: the dash-qualified suffix is already established as a project convention.
 
+## ITER-TUPLE-PERSIST — Durable TupleSpace (STORY-0103)
+
+**Completed:** 2026-05-16T00:04 EDT
+
+**Scope doc:** `docs/superpowers/specs/2026-05-15-iter-tuple-persist.md`
+
+**Naming note:** authored under `ITER-0005c` initially; renamed to
+`ITER-TUPLE-PERSIST` because the roadmap had reserved `ITER-0005c`
+for the planned bytecode-persistence-proof-case (the next step in the
+0005a/b/c/d/e/f numbered Store-substrate payload-class sweep).
+Renumbering my work to a fresh letter would have implied it belongs
+to that sweep; the descriptive suffix makes the orthogonality
+explicit. This is the only label change — the work itself, the test
+counts, the lessons, and the artifacts are unchanged.
+
+**Stories delivered:** STORY-0103 (Durable TupleSpace).
+
+**Tasks executed:** T1 (PayloadKind::Tuple = 0x0A), T2 (Tuple serde + composite store key), T3 (TupleSpace backing store field + open + replay-on-open), T4 (durable flag + out write-through), T5 (in/inp delete-on-consume via FjallStore escape hatch), T6 (FMPL builtin `tuplespace.open(path)`), T7 (round-trip integration test through FMPL surface), T8 (YAML demo scenario).
+
+**Summary:** TupleSpace is now optionally disk-backed via the same `Store` trait that backs SourceStore and fmpl-web's continuations/image stores. Per-tuple `durable: true` flag (honoring `specs/tuplespace.md:111-115`) gates write-through. AC-6 break: `space.out(type, data)` two-arg form replaced by `space.out(%{type:..., data:..., durable:..., namespace:...})` single-map form per spec. 3 surface callsites updated (`demo/tavern.fmpl`, two integration-test files).
+
+### What landed
+
+**T1 — `PayloadKind::Tuple = 0x0A`.** Reserved by ITER-0005a/0005b roadmap commentary; now real. Lands in `fmpl-persistence/src/schema.rs`: variant added with rustdoc citing this iteration; `from_byte` and `current_schema_version` matches extended; tests rewritten to iterate a shared `ALL_KINDS` slice so future variant additions can't slip past the test corpus. The `unknown_payload_byte_returns_none` test's skip list lost `0x0A` and gained `0x0B` (next reserved unmapped value).
+
+**T2 — `Tuple` serde + `store_key()`.** Tuple gains `#[derive(Serialize, Deserialize)]` (Value already had full serde coverage from ITER-0005a; this just rides that). New `durable: bool` field with `#[serde(default)]` so legacy records (if any ever existed) round-trip as non-durable. New `store_key()` method composes `<ns-len:1><ns-bytes><type-len:2-be><type-bytes><seq:8-be>` so byte-wise sort on the keyspace yields FIFO order matching the in-memory BTreeMap. Five new unit tests covering serde + key ordering + namespace/type collision avoidance.
+
+**T3 — `TupleSpace::open(path)` + replay.** New `backing: Option<FjallStore>` field (gated `#[cfg(feature = "persistence")]`). `new()` keeps it `None`. `open(path)` opens fjall, walks every record via `iter_store(&store, VM_VERSION_MAJOR, callback)`, filters to `PayloadKind::Tuple`, deserializes payloads, populates the in-memory `BTreeMap`. `next_seq` is bumped past `max(seen seq)` so new tuples don't collide. Hand-written `Debug` impl (FjallStore doesn't derive Debug).
+
+**Open decision (T3 — callback vs Result):** `iter_store`'s callback `FnMut(&[u8], DecodedRecord<'_>)` can't return Result. Two options: write a lower-level loop using `decode()` directly, or use a closure-captured `Option<String>` to hold the first deserialize error and check after. Chose the closure-captured form — keeps using the loader's already-tested skip semantics for unknown kinds + schema mismatches; only ~5 extra lines for error-capture.
+
+**T4 — `out` write-through.** When `tuple.durable && backing.is_some()`, after the in-memory insert, route through `envelope::write(&store, &tuple.store_key(), &tuple, PayloadKind::Tuple, VM_VERSION, Hash::NONE)`. Source-hash is `Hash::NONE` because tuples aren't content-addressed source artifacts. `durable: true` with no backing is a hard error (would silently drop durability). Critical fix: `tuple.seq = seq` set BEFORE computing `store_key`, otherwise the key derives from seq=0 and every durable tuple collides on the same disk row.
+
+**T5 — `in`/`inp` delete-on-consume.** Match in the in-memory map, clone the tuple, remove the map entry, then if `tuple.durable && backing.is_some()`, route through `backing.keyspace().remove(tuple.store_key())`. Uses the `#[doc(hidden)] FjallStore::keyspace()` escape hatch — same pattern `SourceStore::compact` already uses. Per ITER-0005a.5 R-J-C-1 architecture decision: `remove` deliberately stays off the `Store` trait; the few consumers that need delete reach for the concrete escape hatch.
+
+**T6 — `tuplespace.open` builtin.** New `("__builtin_tuplespace", "open")` arm in `vm.rs`'s builtin dispatch, parallel to the existing `("__builtin_tuplespace", "new")` arm. Takes a `String` path; opens a `TupleSpace::open(path)`; wraps in `Value::TupleSpace(Arc::new(Mutex::new(...)))` like `new()`. Gated `#[cfg(feature = "persistence")]`; without the feature returns a clear runtime error directing the user to rebuild.
+
+**T7 (AC-6 break) — `out` call shape.** VM dispatch on `("out", &[Value::Map(m)])` now reads `type`, `data`, optional `durable`, optional `namespace` from the map. Symbol values for `type`/`namespace` get `:` stripped (matching the prior two-arg form). Two-arg form removed. Callsites updated: `demo/tavern.fmpl` (2 lines), `tuplespace_vm.rs` (5 source strings rewritten), `tuplespace_facet.rs` (1 source string; the facet-bound `out` calls stayed two-arg because facets have separate dispatch and the shape-unification on facets is its own follow-up). Added 3 new VM-level tests covering missing-key errors + durable-without-backing error.
+
+**T7 integration tests** — `fmpl-core/tests/durable_tuplespace_round_trip.rs`. Four tests through the FMPL surface: durable round-trip across fresh `Vm`s pointed at the same path; non-durable doesn't survive restart; `in`-destructive-consume removes from disk across restart; durable-without-backing errors clearly. Same-process test — uses fresh `Vm` instances against shared dir. Cross-process equivalent is the YAML scenario.
+
+**T8 demo scenario** — `demo/scenarios/durable_tuplespace.yaml`. Alice opens `tuplespace.open(tmpdir/tuplespace)`, outs two durable tuples + one ephemeral, captures rd results to harness vars, exits. Bob (fresh `cargo run` process) opens the same path, rd's the durable tuples back, captures into harness vars, verifies the ephemeral tuple is gone (via `expect_error: true` on the rdp). Two `assert_equal` actions audit byte-identical recovery. 34 actions, 0 failures.
+
+### Evidence
+
+- `fmpl-persistence` lib tests: 57/57 passing.
+- `fmpl-core` lib tests with `--features persistence`: 328/328 passing + 1 ignored (was 320; +5 durable-round-trip + 3 store_key/serde tests; tests are net-added, not duplicated).
+- `fmpl-core` integration tests: `tuplespace_vm` 8/8 (was 5, +3 new), `tuplespace_facet` 5/5 (unchanged behavior, 1 source-string update), `tuplespace` 7/7, `durable_tuplespace_round_trip` 4/4 (new).
+- `cargo build -p fmpl-core --features persistence` clean.
+- Demo scenarios:
+  - `three_hashes.yaml`: 34/34, 0 failures (regression check).
+  - `tavern.yaml`: 38/38, 0 failures (after AC-6 callsite update).
+  - `durable_tuplespace.yaml`: 34/34, 0 failures (new).
+- All four `assert_equal` audits in the YAML scenarios passed.
+
+### Lessons captured
+
+- **The roadmap reserving a PayloadKind variant ahead of its consumer was a 30-second win at consumption time.** `PayloadKind::Tuple = 0x0A` was reserved in roadmap commentary when 0005a.5 closed; the test `unknown_payload_byte_returns_none` already had `0x0A` in its skip set. Both were 1-line documents at reservation time and saved an argument about "which byte should it be?" at consumption time. Lesson: when a future iteration is anticipated AND the wire-format reservation is cheap, reserve eagerly. The reservation is text + a test-corpus entry; it doesn't lock in semantics, just protects the byte from accidental reuse.
+- **Cross-checking spec text against shipped surface caught a 2-axis API mismatch, not just one.** I started thinking the gap was "spec says `durable: true`, impl doesn't have it." Reading `out`'s VM dispatch revealed the deeper mismatch: the spec's call shape (`space.out(%{type:..., data:...})`) didn't match impl's call shape (`space.out(type, data)`) even ignoring durability. Both gaps had to be closed together — closing only durability would have left the call shape diverged. Lesson: when reconciling a spec/impl gap, walk the WHOLE surface mentioned by both sides, not just the focal field. A "small" gap often anchors to a deeper shape divergence.
+- **Setting `tuple.seq = seq` before deriving `store_key()` was the one tricky bit.** Default `seq: 0` was carried in from `Tuple::new` — `out` previously didn't need to stamp the assigned seq onto the tuple because the in-memory key (a separate tuple `(ns, type, seq)` projected at insert time) had it. Once the store_key derived from `&self`, the tuple itself needed the assigned seq. Caught by the integration test on the first run; would have been silent corruption if the test had only `out`'d one tuple. Lesson: when adding a derived key based on `&self`, audit every field used by the derivation for "is this set at the right point in the construction sequence?".
+- **The `Debug` derive on FjallStore was a known-unknown that surfaced predictably.** fmpl-persistence's `FjallStore` wraps a `fjall::Keyspace` which doesn't impl Debug (OS handles). Adding it as a field on `TupleSpace` (which DID derive Debug) failed the derive. Hand-writing the Debug impl was the right call — `dbg!(space)` should print observable shape (tuple count, durability) without dumping or panicking on the backing handle. Lesson: when adding a field to a derived-Debug struct, check the field's own Debug impl before relying on the derive. The cost of writing 8 lines of `impl Debug` once is lower than the cost of a downstream test failure or panic at observation time.
+- **Pre-existing `rdp` discrepancy (claims `-> map | null`, actually errors on no-match) surfaced via the integration test.** The VM comment is wrong, but fixing it is its own iteration — `rdp`'s intended-Null behavior would change behavior at every existing call site. ITER-TUPLE-PERSIST's tests were rewritten to expect the actual error, with a comment naming the discrepancy. Lesson: when adding a test that exercises a documented surface, run it against the actual surface first; if there's a mismatch, decide whether to fix the surface or amend the test, and document the choice. Silently writing the test to match the doc would have left a false-pass when the surface later got fixed.
+
+## ITER-0005b-FIX-B-GAP-1 — Multi-incompatible-record stress for `recover_and_rebind`
+
+**Completed:** 2026-05-16
+
+**Stories delivered:** STORY-0100 AC-6 cardinality stress evidence (NOT re-closing AC-6; adding higher-cardinality evidence at the sentinel cadence so cardinality-regression is caught mechanically).
+
+**Tasks executed:** T1 (TDD-red stress tests — landed green), T2 (downgraded: doc comment in `recovery.rs` instead of code fix), T3 (corpus updates: promote SCENARIO-0102 to sentinel, add SCENARIO-0102-multi-stress + SCENARIO-0102-multi-mixed), T4 (this entry + roadmap status update).
+
+**Scenarios:** SCENARIO-0102 promoted from `iteration` → `sentinel` cadence; SCENARIO-0102-multi-stress added at `sentinel` cadence (N=10 pure-incompatible stress); SCENARIO-0102-multi-mixed added at `sentinel` cadence (K=5 compatible + N=10 incompatible mixed-cardinality stress). Cards in `behavior-scenarios.md`; corpus rows in `behavior-corpus.md`.
+
+**Summary:** Closing PAR finding R-B-S-1 on ITER-0005b-FIX-B (cardinality > 1 gap) addressed via two new sentinel-cadence stress tests proving `recover_and_rebind` correctly counts and rebinds under iterator-during-mutation at both pure-incompatible (N=10) and mixed (K=5 + N=10) cardinalities. Tests passed TDD-green on first run — fjall's `iter()` already snapshot-isolates over in-iteration `insert` mutations. Planned snapshot/collect-then-mutate code fix (T2) was downgraded to a 10-line doc comment at `recovery.rs:158-170` citing the new tests as the proof. Pre-iter PAR scope review aggregated REVISE (Reviewer A Serious, Reviewer B Minor) — both flagged the mixed-cardinality dimension that the original single-shape scope card would have missed. Pre-iter sentinel baseline surfaced an unrelated regression from the previous iteration (ITER-TUPLE-PERSIST direct reference to `VM_VERSION_MAJOR` tripping the anti-rot ratchet); fixed before GAP-1's substantive work began.
+
+**Pre-iter PAR scope review:** REVISE (severity aggregation rule: Reviewer A Serious, Reviewer B Minor → take worst). Both reviewers independently identified the mixed-cardinality case (`loaded_passthrough > 0 AND recovered_from_source > 1` simultaneously) as a coverage gap not addressed by the pure-incompatible stress shape alone. Scope amended: GAP-1-A1 now requires TWO tests covering both shapes. GAP-1-A3 expanded to include both new tests as sentinel rows.
+
+**Pre-iter sentinel baseline:** initially had one failure (`canonical_pipeline_must_be_active`, fmpl-bootstrap not built) and one introduced regression (`ac6_anti_rot_no_version_derivation_outside_schema`, ITER-TUPLE-PERSIST's `crate::VM_VERSION_MAJOR` reference in `tuplespace/store.rs`). Both resolved before GAP-1's substantive work began: built fmpl-bootstrap; replaced `crate::VM_VERSION_MAJOR` with `crate::VM_VERSION.major`. Post-fix baseline: 164 passed, 0 failed.
+
+### What landed
+
+**T1 — Stress tests (TDD-green on first run).** Two tests added to `fmpl-persistence/tests/recover_and_rebind_unit.rs`:
+
+- `recover_and_rebind_multi_incompatible_stress` (~50 lines): seeds N=10 incompatible records with distinct sources (`"1 + 2"`, `"3 + 4"`, …, `"19 + 20"`) and distinct keys (`key-01` … `key-10`); calls `recover_and_rebind`; asserts `recovered_from_source == 10`, all other counters == 0, `total() == 10`; per-key check that each rebound envelope's `vm_version_major == VM_VERSION_MAJOR`.
+- `recover_and_rebind_multi_mixed_cardinality` (~45 lines): seeds K=5 compatible records via `eval_persistent` (production write path) with `clean-NN` keys + N=10 incompatible records with `stale-NN` keys; asserts `loaded_passthrough == 5`, `recovered_from_source == 10`, `total() == 15`, all other counters == 0.
+
+Both passed on first run.
+
+**Open decision (T1 — seeding path for compatible records):** chose `eval_persistent` over raw `envelope::write(...)` so the compatible-half population exercises the full production encoder + checksum + schema_version pipeline that `decode` validates. Matches how `scenario_0101_eval_persist.rs` and `scenario_0102_recover_incompatible.rs` already seed Loaded records. Raw `envelope::write(...)` would have been mechanically equivalent but semantically weaker — the test would prove "the loader counts X records as `loaded_passthrough`" without proving "the production write path produces records the loader counts as `loaded_passthrough`."
+
+**T2 (downgraded) — Doc comment in `recovery.rs`.** Originally planned as a snapshot/collect-then-mutate code fix. T1 ran TDD-green, proving the fix wasn't needed — fjall's `iter()` already snapshot-isolates over in-iteration `insert` mutations. Both T1 PAR reviewers (Quality stage) independently confirmed. Downgraded to a 10-line block comment at the iteration loop in `recovery.rs:158` explaining the snapshot semantics and citing both new tests as the proof. No process tags in the comment (`feedback_no_story_names_in_code_comments.md`): the comment references the test names (stable identifiers) only.
+
+**T3 — Corpus updates.**
+- `behavior-corpus.md`: SCENARIO-0102 promoted from `iteration` → `sentinel` cadence. Two new rows added at `sentinel` cadence: SCENARIO-0102-multi-stress and SCENARIO-0102-multi-mixed, each pointing at its specific test name via `cargo test ... --test recover_and_rebind_unit <test_name>`.
+- `behavior-scenarios.md`: Two new scenario cards added after SCENARIO-0102, following the existing card format (Preconditions / Action / Expected observables / Automation status / Execution command / Sources). Both cite STORY-0100 AC-6 as the owning story.
+
+### Evidence
+
+- fmpl-persistence tests: 4/4 in `recover_and_rebind_unit` (was 2; +2 from GAP-1).
+- Post-iter sentinel sweep: 168 passed, 3 ignored, 0 failed. Verbatim per-suite counts (verified 2026-05-16 post-iter, via `cargo test`):
+
+  ```
+  fmpl-core batch (7 suites):                            118 passed, 3 ignored
+    ast_to_ir_parity                                      57 passed, 2 ignored
+    canonical_pipeline_parity                              8 passed
+    opcode_rename_evidence                                15 passed
+    persistence_envelope_invariant                         3 passed
+    persistence_schema_anti_rot                            2 passed
+    postlude_arm_contract                                  1 passed
+    scenario_0103_optimizer_pipeline                      32 passed, 1 ignored
+
+  fmpl-core scenario_runner (filtered to 0104/0105/0106): 22 passed
+
+  fmpl-persistence (9 suites):                            28 passed
+    iter_store                                             4 passed
+    persistence_schema_format_anti_rot                     2 passed
+    recover_and_rebind_unit (NEW at sentinel this iter)    4 passed   ← 2 pre-existing + 2 new test fns added in T1
+    scenario_0099_envelope_loader                          2 passed
+    scenario_0101_eval_persist                             2 passed
+    scenario_0102_recover_incompatible                     2 passed
+    scenario_0111_envelope_writer_roundtrip                7 passed
+    scenario_0112_operator_detection                       2 passed
+    stream_input_store                                     3 passed
+
+  Grand total: 118 + 22 + 28 = 168 passed, 3 ignored, 0 failed.
+  ```
+
+  Delta from pre-iter baseline (164 passed): the sentinel-set added one suite — `recover_and_rebind_unit.rs` with 4 tests (2 pre-existing + 2 new fns added in T1). Pre-iter persistence count was 24 (8 suites, already including `scenario_0102_recover_incompatible` at the time the baseline was captured immediately before this iteration's promotion was committed); post-iter persistence is 28 (9 suites). Delta = +4. fmpl-core counts unchanged.
+- `cargo build --workspace --features persistence` clean.
+- All three GAP-1 sentinel execution commands run cleanly via `cargo test`.
+
+### Lessons captured
+
+- **Sentinel baseline caught my OWN regression from the previous iteration.** ITER-TUPLE-PERSIST's `crate::VM_VERSION_MAJOR` direct reference in `tuplespace/store.rs` violated the anti-rot ratchet at `persistence_schema_anti_rot.rs:140-173`. The ratchet test only scans `fmpl-core/src/`, not test files — it caught my production-code introduction at the next iteration's sentinel run. Lesson: the anti-rot ratchet earns its keep most when iterations are run by different drivers; a single driver who hand-tests their own iteration is the failure mode it catches at iteration N+1. The fix was mechanical (`crate::VM_VERSION.major` instead of `crate::VM_VERSION_MAJOR`) but the principle — never directly reference per-component version literals outside `vm_version.rs` + `lib.rs` re-exports — is durable.
+- **TDD-red expectation, TDD-green reality, is informative.** GAP-1's scope card said "if the test fails, fix via snapshot/collect-then-mutate." It didn't fail. Fjall already does the right thing. The temptation in this case is to ratify silently and move on; instead, the downgrade to a doc comment **bakes the proof in** so a future reader doesn't re-raise the R-B-S-1 concern. Cost: 10 lines of comment. Value: the next maintainer wondering "is iterator-during-mutation safe here?" gets the answer (yes, by these specific tests) without re-deriving it. Lesson: when a feared failure mode turns out to be non-existent, document the proof in the code at the load-bearing site, not just in the iteration log. The iteration log rots out of working memory; the code comment doesn't.
+- **PAR scope review's "REVISE" caught a real gap that I missed.** I'd planned GAP-1 with one test (pure incompatible). Both reviewers independently identified that the mixed-cardinality case (`loaded_passthrough > 0 AND recovered_from_source > 1`) is the realistic production stress that the pure shape can't exercise. Adding the second test cost ~45 lines; it now provides discriminating evidence the first test alone can't. Lesson: when PAR aggregates to REVISE, take the revision seriously — even if Reviewer B's confidence was "minor," Reviewer A's "serious" framing was load-bearing. The aggregation rule (take worst severity) saved me from a coverage hole that would have been caught at the next audit anyway, but more expensively.
+
+## ITER-0005b-FIX-B-GAP-2 — Non-UTF-8 source bytes counted as recompile failure
+
+**Completed:** 2026-05-16
+
+**Stories delivered:** STORY-0100 AC-6 error-path symmetric evidence (NOT re-closing AC-6; closing the symmetric-with-key-test error-path gap raised by FIX-B closing PAR Reviewer B finding R-B-M-1).
+
+**Tasks executed:** T1 (TDD test — landed green), T2 (no-op: scope card permitted conditional fix; not needed), T3 (this entry + EPIC-003 status + roadmap update).
+
+**Scenarios:** none added (unit-test seam per scope card). The new test `recover_and_rebind_counts_non_utf8_source_as_recompile_failure` lives in `fmpl-persistence/tests/recover_and_rebind_unit.rs` as the symmetric companion to the existing `recover_and_rebind_counts_non_utf8_key_as_recompile_failure`.
+
+**Summary:** Closes STORY-0100 AC-6 error-path symmetric gap. One test added (~30 lines). TDD-green on first run — production path at `fmpl-core/src/lib.rs:259-260` already routes both UTF-8 conversions through `RecoveryError::recompile`. PAR Stage-1 round 1 found incomplete counter assertions (Reviewer A Serious + Minor, Reviewer B clean); round 2 (after strengthening to assert all 6 RecoveryStats counters per A's finding) passed clean from both reviewers. PAR Stage-2 both reviewers approved unanimously. Post-iter sentinel sweep: `recover_and_rebind_unit` now reports 5 passed (was 4); grand total 169 passed, 0 failed, 3 ignored.
+
+### What landed
+
+**T1 — Single test added.** `fmpl-persistence/tests/recover_and_rebind_unit.rs` lines ~106-148: appends `recover_and_rebind_counts_non_utf8_source_as_recompile_failure` after the existing non-UTF-8 KEY test, before the multi-record stress tests. Setup: valid UTF-8 key `"some-key"`, source_store seeded with `&[0xFF, 0xFE]` (invalid UTF-8) under hash `h`, envelope written with `future_vm()` and `source_hash = h`. Asserts ALL six `RecoveryStats` counters explicitly: `recompile_failed == 1`, `recovered_from_source == 0`, `loaded_passthrough == 0`, `unrecoverable_no_source == 0`, `unrecoverable_source_missing == 0`, `skipped_corrupt == 0`, `total() == 1`. The exhaustive assertion set was added in PAR round 2 in response to Reviewer A's Serious finding that the original 3-assertion set could pass under a wrong implementation that routed the failure through `unrecoverable_source_missing` or `unrecoverable_no_source`.
+
+**Open decision (T2 — was a fix needed):** chose **no-op**. T1 ran TDD-green on first run. Per the scope card's conditional (`T2: if failing: investigate and fix`), no investigation was needed. The implementation at `lib.rs:259-260` already routes both UTF-8 conversions through the same `RecoveryError::recompile` path. The new test now proves the previously-untested source-side branch is exercised correctly.
+
+### Evidence
+
+- `recover_and_rebind_unit`: 5 passed (was 4, +1 from this iteration).
+- Post-iter sentinel sweep: 169 passed, 3 ignored, 0 failed.
+- `cargo build -p fmpl-persistence --features fjall-backend` clean.
+- Both PAR stages (spec round 1 → round 2, quality) reviewed and approved by paired reviewers.
+
+### Lessons captured
+
+- **Symmetric error-path tests are cheap and pay off at audit time.** Reviewer B of FIX-B's closing PAR raised the non-UTF-8 source case as a Minor symmetric gap with the non-UTF-8 key case. It took ~30 lines of test + 2 hours of orchestrator ceremony to close. The cost was small; the benefit is the symmetric-companion pattern is now a documented project pattern (key error path → source error path → corpus mirror), making future symmetric error-path gaps cheaper to surface and close.
+- **PAR Stage-1 round 1 worth running even on mechanical tasks.** I almost skipped the full PAR pair on this iteration because the task was "obviously trivial" — one test mirroring another. Reviewer A's round-1 Serious finding (incomplete counter assertions could pass under wrong impl) was the kind of thing my own pre-flight missed because of confirmation bias from the sibling test's existing 3-assertion shape. The discipline catches what attention drifts past. Lesson: even when a task feels mechanically trivial, run the PAR pair. The 2-3 minutes of cost is bounded; the missed finding cost is unbounded.
+- **"Pre-existing" findings should be flagged, not silently swept.** Both Stage-1 round 2 and Stage-2 reviewers noted (out of scope) that the sibling KEY-test has the weaker 3-assertion shape. They correctly didn't action it within GAP-2's scope, but they did surface it. That's the right discipline: pre-existing inconsistencies become visible at PAR time and can be picked up by a future sweep iteration. Lesson: when a reviewer flags "X is pre-existing, not in our scope," the right action is to log it (here) rather than discard it. Future sweep iteration can pick from the iteration-log's pre-existing-flagged list.
+
+## ITER-SWEEP-ASSERTIONS — Strengthen sibling unit tests to full-counter exhaustion
+
+**Completed:** 2026-05-16
+
+**Stories delivered:** none new (housekeeping iteration); addresses pre-existing-flagged findings from ITER-0005b-FIX-B-GAP-1, GAP-2, and the pre-iteration PAR scope review (S2/B-S-1 convergent Serious).
+
+**Tasks executed:** T1 (SWEEP-A1, single assertion), T2 (SWEEP-A2, four assertions + rationale comment), T3 (SWEEP-B1..B6, six in-module tests in `recovery.rs::tests`), T4 (SWEEP-B7, single assertion on `mixed_outcomes_aggregate_correctly`), T5 (wrap — this entry + roadmap status + progress).
+
+**Scenarios:** none added (unit-test seam per scope card). The sentinel scenarios that re-run the modified files (SCENARIO-0102, SCENARIO-0102-multi-stress, SCENARIO-0102-multi-mixed) continue to pass byte-identically — their assertions were already at the strong shape.
+
+**Summary:** Brings all `RecoveryStats`-discrimination unit tests across both integration tier (`fmpl-persistence/tests/recover_and_rebind_unit.rs`) and in-module tier (`fmpl-persistence/src/recovery.rs::tests`) to consistent full-counter-exhaustion shape. 9 test bodies modified: 2 in the integration file (SWEEP-A1, SWEEP-A2), 7 in the in-module file (SWEEP-B1..B7). Each strengthened test now asserts all six `RecoveryStats` counters plus `total()`, closing the discrimination weakness where a wrong implementation routing a failure through the wrong counter could pass a 3-counter-asserting test while failing a 6-counter-asserting one. Pre-iteration PAR round 1 returned REVISE (both reviewers convergent-Serious on the in-module asymmetry originally out of scope); scope was revised to add SWEEP-B1..B7, pre-iteration PAR round 2 returned APPROVE.
+
+### What landed
+
+**T1 — SWEEP-A1.** `recover_and_rebind_unit.rs:65` (`recover_and_rebind_recovers_single_incompatible_record_with_recoverable_source`) gains `assert_eq!(stats.loaded_passthrough, 0)`. Single line, trivially-zero given setup (only one incompatible record written).
+
+**T2 — SWEEP-A2.** `recover_and_rebind_unit.rs:104-115` (`recover_and_rebind_counts_non_utf8_key_as_recompile_failure`) gains four zero-counter assertions + a 6-line rationale comment adapted from the SOURCE-variant. The KEY case is the canonical form per scope discipline; the SOURCE case's "mirror of the non-UTF-8 KEY case above" reference (lines 117-118) remains accurate and was NOT inverted.
+
+**T3 — SWEEP-B1..B6.** Six tests in `recovery.rs::tests` each gained their missing zero-counter assertions (5 each for B1, B2, B6 which had only 1 counter; 4 each for B3, B4, B5 which had 2 counters). B3/B4/B5 additionally gained `total()` assertions. Total: 28 assertions across 6 tests.
+
+**T4 — SWEEP-B7.** `recovery.rs:425` (`mixed_outcomes_aggregate_correctly`) gains `assert_eq!(stats.recompile_failed, 0)`. The previously-strongest test now also discriminates the sixth counter (the prior version covered 5 of 6 because the setup has no recompile-failure fixture).
+
+### Open decisions
+
+1. **Scope revision after PAR round 1: fold in or defer the in-module tests?** Chose **fold in.** Both reviewers (A's S2, B's B-S-1) independently called out the asymmetry in `recovery.rs::tests` as Serious — silently leaving them out would have created exactly the asymmetry the iteration claims to fix. The iteration grew from 2 file edits to 9, but stayed within housekeeping scope: no production code touched, no new abstractions, no new dependencies. The decision was correct: pre-iteration PAR round 2 unanimously APPROVED the revised scope, and the implementation took ~10 more minutes.
+
+2. **Helper-extraction position.** Both reviewers raised whether a structural-invariant helper (`assert_recovery_stats_match(...)`) should replace per-test exhaustive assertion. Chose **no.** Manual per-test assertions produce legible failure messages; the structural-invariant style already lives at `mixed_outcomes_aggregate_correctly` (multi-outcome partition) where it pulls its weight. Per-test helpers would mix axes (assertion-strengthening vs. setup-deduplication) — out of scope per `feedback_split_iterations_on_reader_writer_asymmetry`. Recorded as an explicit position in the revised scope card, not silent omission.
+
+3. **Deferred follow-ups (recorded as carried gaps, NOT included in this iteration):**
+   - `scenario_0102_recover_incompatible.rs::scenario_0102_composes_with_iter_store_for_full_keyspace_coverage` (~167-226) asserts only 2 of 6 — different seam (journey test composing iter_store), separate iteration.
+   - Rebind-side-effect assertion on the two non-UTF-8 recompile-failure paths in `recover_and_rebind_unit.rs` (the happy-path tests pin envelope-VM-major-after; the recompile-failure tests should pin envelope-NOT-rewritten). Different invariant axis.
+   - Helper-extraction refactor: setup-deduplication across the 5 tests in `recover_and_rebind_unit.rs`. Different axis.
+
+### Evidence
+
+- `cargo test -p fmpl-persistence --features fjall-backend`: 110 passed, 17 suites, 5.76s. (Includes the 5 tests in `recover_and_rebind_unit.rs` and the 8 tests in `recovery.rs::tests`.)
+- Post-iter sentinel sweep: 26 pass, 0 fail, 4 skip (long-standing TBD: SCENARIO-0012, 0013, 0020, 0021). Byte-identical to pre-iter baseline.
+- `cargo clippy -p fmpl-persistence --lib --features fjall-backend -- -D warnings`: No issues found.
+- `cargo clippy -p fmpl-persistence --tests --features fjall-backend -- -D warnings`: surfaces a pre-existing `clippy::collapsible_if` at `fmpl-core/src/tuplespace/store.rs:325` — unrelated to this iteration (introduced by ITER-TUPLE-PERSIST, in the working tree as uncommitted change). Recorded as carried gap; not a SWEEP regression.
+- Pre-iteration PAR (round 1): both reviewers REVISE; convergent Serious on in-module tests. Round 2: APPROVE.
+
+### Pre-iteration PAR transcript summary
+
+**Round 1 — Reviewer A (verdict: REVISE):**
+- Critical: none.
+- Serious: S1 (SWEEP-A1 wording "asserts 5" — cosmetic), S2 (`recovery.rs::tests` has same asymmetry, out of scope), S3 (impacted scenarios miscalled).
+- Minor: M1 (SWEEP-A2 comment under-specified), M3 (`scenario_0102_composes_with_iter_store` weakest in family).
+
+**Round 1 — Reviewer B (verdict: REVISE):**
+- Critical: none.
+- Serious: B-S-1 (same as A's S2 — `recovery.rs::tests` asymmetric), B-S-2 (no helper-extraction position taken).
+- Minor: B-M-1 (no process tags in adapted comment), B-M-3 (don't invert mirror), B-M-4 (rebind-side-effect deferred).
+
+**Aggregation:** Convergent Serious (S2 ↔ B-S-1) → in-module tests folded into scope as SWEEP-B1..B7. Severity-disagreement on S3 (A serious, B confirmed sound) → take worst, but on inspection B was right: the sentinel scenarios re-run the tests, they aren't impacted by strengthening assertions that already pass. Adjudicated to B's reading; scope card states "none directly" with rationale. Non-convergent Serious (B-S-2 helper-extraction) addressed in scope card by taking an explicit position. Minor findings absorbed into scope text (comment guidance) or deferred-list (rebind-side-effect, scenario_0102_composes).
+
+**Round 2 — single confirmation re-reviewer (verdict: APPROVE):**
+- All SWEEP-A1/A2/B1-B7 ACs verified against actual file content with file:line citations.
+- All new zero-counter assertions semantically valid given test setups (walked `recover_incompatible` flow at `recovery.rs:170-203`).
+- Out-of-scope list principled (rationale per item).
+- Build order coherent.
+
+### Lessons captured
+
+- **Pre-iteration PAR caught a real scope hole that the prior-iteration close-out's "pre-existing-flagged" pattern missed.** GAP-1 and GAP-2 reviewers flagged the asymmetry in `recover_and_rebind_unit.rs` and deferred it correctly. The SWEEP scope card initially mirrored that flag and scoped only the integration file. But the in-module tests at `recovery.rs::tests` — at the layer *below* `recover_and_rebind` — have the same asymmetry and weren't on the carried-gap list because no prior iteration had touched them. **Pre-iteration PAR is the safety net that catches such "below-the-radar" sibling weaknesses.** Without it, the SWEEP iteration would have closed with a scope-card claim ("brings ALL recover_and_rebind unit tests to consistent shape") that was false against the in-module siblings.
+- **Convergent reviewer findings are the strongest signal.** Reviewers A and B explored different probing dimensions (A: scope-correctness + missing-sites; B: proof-strength + corpus-completeness) but independently surfaced the SAME Serious finding (in-module asymmetry). Per PAR aggregation rules, convergence = high confidence. The lesson: even on small housekeeping iterations, the convergent-or-divergent shape of PAR findings tells you whether to trust or question the iteration's framing.
+- **Calibrate claim scope to evidence scope (validated 2026-05-16).** Pre-revision scope card said "all the recover_and_rebind unit tests" — a claim that's true if "unit tests" means only `recover_and_rebind_unit.rs`, false if it includes `recovery.rs::tests`. Reviewer B's B-S-1 finding is exactly the `feedback_claim_scope_must_match_evidence` discipline at work: the prose claim drifted broader than the evidence's actual scope. Resolution: either narrow the claim (would have left the iteration scope-correct but the asymmetry uncovered) or broaden the evidence (chose this — folded in SWEEP-B). Either is valid; what's NOT valid is leaving them asymmetric.
+

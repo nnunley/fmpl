@@ -1,0 +1,154 @@
+
+════════════════════════════════════════════════════════════════════════
+  FMPL — durable TupleSpace (ITER-0005c)
+════════════════════════════════════════════════════════════════════════
+
+# Two `fmpl-cli` REPL processes, sequenced through the same on-disk
+fjall-backed TupleSpace. Alice opens the space, `out`s durable
+tuples, exits. Bob — a fresh process spawned after Alice exits —
+opens the same path, `rd`s the same tuples back. Byte-identical
+recovery across the process boundary.
+
+This closes the seam that the `three_hashes.yaml` demo named: the
+coordination primitive itself is now persistent. Same fjall
+single-writer constraint as the SourceStore demo — Alice and Bob
+sequence, not overlap.
+
+Per the ITER-0005c scope doc:
+`docs/superpowers/specs/2026-05-15-iter-0005c-tuplespace-persistence.md`
+
+# scenario: demo/scenarios/durable_tuplespace.yaml
+# transcript: /Users/ndn/development/fmpl/demo/transcript-durable_tuplespace-20260516-000338.txt
+# tmpdir: /tmp/fmpl-harness.7i9x9x
+# echo: on
+# default sleep_after: 0.0s
+# started: 2026-05-16T00:03:38
+
+────────────────────────────────────────────────────────────────────────
+Reading guide
+────────────────────────────────────────────────────────────────────────
+
+# The shape is the same as `three_hashes.yaml`:
+# - Alice opens a tuplespace, writes a few tuples, exits.
+# - Bob opens the same path, reads them back.
+# - The harness asserts what Bob recovered equals what Alice
+# stored.
+
+# The new piece is the `durable: true` flag on each `out`. Tuples
+# without it stay in memory and don't survive Alice's exit. The
+# demo proves both: durable tuples come back; non-durable ones
+# don't.
+
+════════════════════════════════════════════════════════════════════════
+  Setup — Alice opens a durable tuplespace
+════════════════════════════════════════════════════════════════════════
+
+# spawning REPL session: alice
+[alice] fmpl> let world = tuplespace.open("/tmp/fmpl-harness.7i9x9x/tuplespace")
+=> <tuplespace>
+
+════════════════════════════════════════════════════════════════════════
+  Alice writes — two durable tuples, one ephemeral
+════════════════════════════════════════════════════════════════════════
+
+# source: Alice's three out() calls
+```fmpl
+world.out(%{type: :room, data: %{name: "Rusty Flagon"}, durable: true})
+world.out(%{type: :menu, data: %{ale: 3, mead: 5}, durable: true})
+world.out(%{type: :note, data: "scratch — should NOT survive"})
+```
+# Two durable tuples (`:room`, `:menu`) and one ephemeral note. The `durable: true` flag opts each tuple into write-through to the backing fjall keyspace; without it, the tuple lives only in memory.
+[alice] fmpl> world.out(%{type: :room, data: %{name: "Rusty Flagon"}, durable: true})
+=> null
+[alice] fmpl> world.out(%{type: :menu, data: %{ale: 3, mead: 5}, durable: true})
+=> null
+[alice] fmpl> world.out(%{type: :note, data: "scratch — should NOT survive"})
+=> null
+
+────────────────────────────────────────────────────────────────────────
+Alice confirms in-memory state before exit
+────────────────────────────────────────────────────────────────────────
+
+# All three tuples are visible in Alice's session — the durable flag affects what hits disk, not what's queryable in memory.
+[alice] fmpl> world.rd(:room).data.name
+=> "Rusty Flagon"
+@captured alice_room_name = "Rusty Flagon"
+[alice] fmpl> world.rd(:menu).data.ale
+=> 3
+@captured alice_ale_price = 3
+[alice] fmpl> world.rd(:note).data
+=> "scratch — should NOT survive"
+@captured alice_note = "scratch — should NOT survive"
+
+════════════════════════════════════════════════════════════════════════
+  Alice exits — fjall flushes, lock releases
+════════════════════════════════════════════════════════════════════════
+
+# Closing Alice's process drops the TupleSpace value, which drops the FjallStore, which closes the keyspace cleanly. Bob (or anyone) can now open the same path.
+# closing REPL session: alice
+
+════════════════════════════════════════════════════════════════════════
+  Bob — fresh process, reopen the same path
+════════════════════════════════════════════════════════════════════════
+
+# spawning REPL session: bob
+[bob] fmpl> let world = tuplespace.open("/tmp/fmpl-harness.7i9x9x/tuplespace")
+=> <tuplespace>
+
+────────────────────────────────────────────────────────────────────────
+Bob recovers the durable tuples
+────────────────────────────────────────────────────────────────────────
+
+# `tuplespace.open` replays every `PayloadKind::Tuple` record from the keyspace into the in-memory BTreeMap, in FIFO order (big-endian seq encoding + fjall byte-ordered iter). Bob's `rd` goes through the same in-memory query path as always — the durable layer is write-through, not read-through.
+[bob] fmpl> world.rd(:room).data.name
+=> "Rusty Flagon"
+@captured bob_room_name = "Rusty Flagon"
+[bob] fmpl> world.rd(:menu).data.ale
+=> 3
+@captured bob_ale_price = 3
+
+────────────────────────────────────────────────────────────────────────
+Ephemeral tuple did NOT survive
+────────────────────────────────────────────────────────────────────────
+
+# The `:note` tuple was out'd without `durable: true`, so it lived only in Alice's in-memory BTreeMap. Bob's process has no knowledge of it — `rdp` errors with "no matching tuple found".
+[bob] fmpl> world.rdp(:note)
+Error: Runtime error: no matching tuple found
+
+════════════════════════════════════════════════════════════════════════
+  Audit — Bob's recovered values equal Alice's stored values
+════════════════════════════════════════════════════════════════════════
+
+# Different processes, sequenced through one on-disk fjall keyspace, byte-identical recovery for the durable tuples, principled absence for the ephemeral one.
+PASS: room name round-trips  ('"Rusty Flagon"' == '"Rusty Flagon"')
+PASS: menu.ale price round-trips  ('3' == '3')
+
+────────────────────────────────────────────────────────────────────────
+Wrap
+────────────────────────────────────────────────────────────────────────
+
+# ITER-0005c lands: the TupleSpace, FMPL's coordination primitive,
+# is now disk-backed via the same `Store` trait that backs the
+# SourceStore demo (`three_hashes.yaml`) and fmpl-web's
+# continuations + image stores.
+
+# The design invariant from `specs/tuplespace.md:111-115` —
+# `durable: true` opt-in per tuple — is now real, not aspirational.
+# Spec/impl gap closed.
+
+# What's deferred (in scope doc):
+# - persistent subscriptions
+# - pattern-match via storage (queries still go through memory)
+# - GC for orphaned tuples after partial-failure
+# - cross-process simultaneous access (fjall single-writer)
+# closing REPL session: bob
+
+════════════════════════════════════════════════════════════════════════
+  Summary
+════════════════════════════════════════════════════════════════════════
+
+Actions run: 34
+Failures:    0
+Sessions:    []
+Captured:    ['alice_ale_price', 'alice_note', 'alice_room_name', 'bob_ale_price', 'bob_room_name', 'tmpdir']
+Transcript:  /Users/ndn/development/fmpl/demo/transcript-durable_tuplespace-20260516-000338.txt

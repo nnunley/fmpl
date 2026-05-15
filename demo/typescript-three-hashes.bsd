@@ -1,0 +1,156 @@
+^D
+[1;33m════════════════════════════════════════════════════════════════════════
+  FMPL — three-hash audit + cross-process source handoff
+════════════════════════════════════════════════════════════════════════[0m
+
+[2;37m# Two `fmpl-cli` REPL processes, sequenced through the same on-disk
+content-addressed SourceStore. Alice defines a value, stores it under
+THREE hashes (source text, runtime Value, compiled bytecode), closes
+her process. Bob — a fresh process spawned after Alice exits — fetches
+each hash and recovers the bytes. The harness asserts byte-identical
+recovery across the process boundary.
+
+Sequencing is required because fjall (the v3 LSM backend) takes a
+single-writer file lock on the keyspace directory: two processes
+cannot hold it open at the same time. Alice writes, closes (releases
+the lock), Bob opens. This honest constraint is itself a finding —
+the design invariant "transparent persistence" doesn't yet imply
+"concurrent multi-process access," and the demo shows where that
+seam will land.
+[0m
+[2;37m# scenario: demo/scenarios/three_hashes.yaml[0m
+[2;37m# transcript: /Users/ndn/development/fmpl/demo/transcript-three_hashes-20260515-121225.txt[0m
+[2;37m# tmpdir: /tmp/fmpl-harness.knjydF[0m
+[2;37m# echo: on[0m
+[2;37m# default sleep_after: 0.0s[0m
+[2;37m# started: 2026-05-15T12:12:25[0m
+
+[1;36m────────────────────────────────────────────────────────────────────────
+Reading guide
+────────────────────────────────────────────────────────────────────────[0m
+
+[2;37m# Three artifacts derive from one FMPL binding:[0m
+[2;37m# 1. SOURCE  — the exact bytes the user typed (`\x x * x`).[0m
+[2;37m# 2. VALUE   — the serialized runtime Value enum (JSON).[0m
+[2;37m# 3. BYTECODE — the Lambda's CompiledCode (instructions + nested).[0m
+
+[2;37m# Each goes into the same content-addressed SourceStore under its[0m
+[2;37m# blake3 hash. The store doesn't know the kind — that lives only in[0m
+[2;37m# the metadata `.store-*` prints.[0m
+
+[2;37m# Two REPL processes (Alice, Bob) sequence through one store.[0m
+[2;37m# Bob's recovery is byte-identical to Alice's input — that's the[0m
+[2;37m# audit at the end.[0m
+
+[1;33m════════════════════════════════════════════════════════════════════════
+  Setup — Alice spawns and opens a shared store
+════════════════════════════════════════════════════════════════════════[0m
+
+[2;37m# Alice starts as an independent `cargo run -p fmpl-cli` process and opens an on-disk SourceStore at a fresh tmpdir.[0m
+[2;37m# spawning REPL session: alice[0m
+[0;36m[alice][0m [0;32mfmpl> [0m.open-store /tmp/fmpl-harness.knjydF
+[2;37mstore: opened at /tmp/fmpl-harness.knjydF[0m
+
+[1;33m════════════════════════════════════════════════════════════════════════
+  Alice — define a lambda, store under THREE hashes
+════════════════════════════════════════════════════════════════════════[0m
+
+[2;37m# Alice defines `square = \x x * x`. Three distinct artifacts derive from this single binding: the source text the user typed, the runtime Value (a Lambda), and the compiled CompiledCode. Each gets a different content hash because they're different bytes.[0m
+[0;36m[alice][0m [0;32mfmpl> [0mlet square = \x x * x
+[1;35m=> <lambda>[0m
+
+[1;36m────────────────────────────────────────────────────────────────────────
+1. Hash the SOURCE TEXT
+────────────────────────────────────────────────────────────────────────[0m
+
+[2;37m# `.store-source` reaches into the REPL's binding→source map (captured at let-bind time) and hashes the exact bytes the user typed.[0m
+[0;36m[alice][0m [0;32mfmpl> [0m.store-source square
+[1;35mhash: a0b5d8594d6c9926547ba031053ac6097a7d0512cab0d220b8357dc7c0d75d30[0m
+[2;37mkind: source[0m
+[2;37mbytes: 8[0m
+[0;33m@captured[0m [1;33msource_hash[0m = [0;33ma0b5d8594d6c9926547ba031053ac6097a7d0512cab0d220b8357dc7c0d75d30[0m
+
+[1;36m────────────────────────────────────────────────────────────────────────
+2. Hash the runtime VALUE
+────────────────────────────────────────────────────────────────────────[0m
+
+[2;37m# `.store-value` serializes the Value enum via serde_json. The Value enum derives `Serialize`/`Deserialize` — that work landed early in ITER-0005, with explicit `#[serde]` handling for every variant (live handles serialize to suspended-reconnect tokens; capability handles are `#[serde(skip)]`).[0m
+[0;36m[alice][0m [0;32mfmpl> [0m.store-value square
+[1;35mhash: 4f7edca83c719fec16ac9a4a79441d9dc8b3e4436d047106509dabe34a184c36[0m
+[2;37mkind: value[0m
+[2;37mbytes: 217[0m
+[2;37mtype: lambda[0m
+[0;33m@captured[0m [1;33mvalue_hash[0m = [0;33m4f7edca83c719fec16ac9a4a79441d9dc8b3e4436d047106509dabe34a184c36[0m
+
+[1;36m────────────────────────────────────────────────────────────────────────
+3. Hash the compiled BYTECODE
+────────────────────────────────────────────────────────────────────────[0m
+
+[2;37m# `.store-bytecode` extracts `Lambda.code: Arc<CompiledCode>` and serializes that. Just instructions + nested code + constants — no Value-level metadata.[0m
+[0;36m[alice][0m [0;32mfmpl> [0m.store-bytecode square
+[1;35mhash: d0fe32e2a3d25191568b92ba9254d9588c4daa698f466ee411d306bdf6514e2d[0m
+[2;37mkind: bytecode[0m
+[2;37mbytes: 168[0m
+[2;37minstructions: 4[0m
+[0;33m@captured[0m [1;33mbytecode_hash[0m = [0;33md0fe32e2a3d25191568b92ba9254d9588c4daa698f466ee411d306bdf6514e2d[0m
+
+[1;33m════════════════════════════════════════════════════════════════════════
+  Alice exits — releases the fjall write lock
+════════════════════════════════════════════════════════════════════════[0m
+
+[2;37m# Closing Alice's process flushes any pending fjall writes and releases the directory's file lock. The store on disk is now consistent and Bob (or anyone else) can open it.[0m
+[2;37m# closing REPL session: alice[0m
+
+[1;33m════════════════════════════════════════════════════════════════════════
+  Bob — fresh process, fetch all three hashes
+════════════════════════════════════════════════════════════════════════[0m
+
+[2;37m# Bob is a different `cargo run -p fmpl-cli` invocation. He shares no memory with Alice — only the on-disk fjall store. He opens the same directory and fetches each hash. The store doesn't know which hash means what; the kind annotation lives only in the metadata `.store-*` prints, not in the stored record itself.[0m
+[2;37m# spawning REPL session: bob[0m
+[0;36m[bob][0m [0;32mfmpl> [0m.open-store /tmp/fmpl-harness.knjydF
+[2;37mstore: opened at /tmp/fmpl-harness.knjydF[0m
+
+[1;36m────────────────────────────────────────────────────────────────────────
+Fetch the source-text hash
+────────────────────────────────────────────────────────────────────────[0m
+
+[0;36m[bob][0m [0;32mfmpl> [0m.fetch a0b5d8594d6c9926547ba031053ac6097a7d0512cab0d220b8357dc7c0d75d30
+[1;35mloaded 8 bytes for hash a0b5d8594d6c9926547ba031053ac6097a7d0512cab0d220b8357dc7c0d75d30[0m
+[1;35msource: "\\x x * x"[0m
+[0;33m@captured[0m [1;33mbob_source[0m = [0;33m\\x x * x[0m
+
+[1;36m────────────────────────────────────────────────────────────────────────
+Fetch the value hash
+────────────────────────────────────────────────────────────────────────[0m
+
+[0;36m[bob][0m [0;32mfmpl> [0m.fetch 4f7edca83c719fec16ac9a4a79441d9dc8b3e4436d047106509dabe34a184c36
+[1;35mloaded 217 bytes for hash 4f7edca83c719fec16ac9a4a79441d9dc8b3e4436d047106509dabe34a184c36[0m
+[1;35msource: "{\"Lambda\":{\"params\":[\"x\"],\"code\":{\"instructions\":[{\"LoadVar\":\"x\"},{\"LoadVar\":\"x\"},{\"Mul\":{\"lhs\":0,\"rhs\":1}},{\"Return\":{\"value\":2}}],\"nested\":[],\"source\":\"(x * x)\",\"constants\":[],\"rule_entry_points\":{}},\"captures\":{}}}"[0m
+[0;33m@captured[0m [1;33mbob_value_json[0m = [0;33m{\"Lambda\":{\"params\":[\"x\"],\"code\":{\"instructions\":[{\"Load…[0m
+
+[1;36m────────────────────────────────────────────────────────────────────────
+Fetch the bytecode hash
+────────────────────────────────────────────────────────────────────────[0m
+
+[0;36m[bob][0m [0;32mfmpl> [0m.fetch d0fe32e2a3d25191568b92ba9254d9588c4daa698f466ee411d306bdf6514e2d
+[1;35mloaded 168 bytes for hash d0fe32e2a3d25191568b92ba9254d9588c4daa698f466ee411d306bdf6514e2d[0m
+[1;35msource: "{\"instructions\":[{\"LoadVar\":\"x\"},{\"LoadVar\":\"x\"},{\"Mul\":{\"lhs\":0,\"rhs\":1}},{\"Return\":{\"value\":2}}],\"nested\":[],\"source\":\"(x * x)\",\"constants\":[],\"rule_entry_points\":{}}"[0m
+[0;33m@captured[0m [1;33mbob_bytecode_json[0m = [0;33m{\"instructions\":[{\"LoadVar\":\"x\"},{\"LoadVar\":\"x\"},{\"Mul\"…[0m
+
+[1;33m════════════════════════════════════════════════════════════════════════
+  Audit — what Bob recovered must match what Alice stored
+════════════════════════════════════════════════════════════════════════[0m
+
+[2;37m# The strongest evidence the substrate works: Bob's recovered source text must equal the exact bytes Alice typed. Different processes, sequenced through one shared on-disk store, byte-identical recovery.[0m
+[1;35mPASS: Bob's recovered source == Alice's typed source  ('\\\\x x * x' == '\\\\x x * x')[0m
+[2;37m# All three round-trips succeeded across process boundaries. This is the FMPL persistence substrate working end-to-end through the shipped REPL. The fjall single-writer constraint is the real limitation today — the next iteration wires this same `Store` trait through the in-memory tuplespace, AND addresses the multi-writer story (broker process or read-replica path).[0m
+
+[1;33m════════════════════════════════════════════════════════════════════════
+  Summary
+════════════════════════════════════════════════════════════════════════[0m
+
+[2;37mActions run: 34[0m
+[2;37mFailures:    0[0m
+[2;37mSessions:    ['bob'][0m
+[2;37mCaptured:    ['bob_bytecode_json', 'bob_source', 'bob_value_json', 'bytecode_hash', 'source_hash', 'tmpdir', 'value_hash'][0m
+[2;37mTranscript:  /Users/ndn/development/fmpl/demo/transcript-three_hashes-20260515-121225.txt[0m
