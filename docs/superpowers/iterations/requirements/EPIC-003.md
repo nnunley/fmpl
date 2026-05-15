@@ -255,24 +255,24 @@
 
 **Acceptance criteria:**
 - AC-1: A `sources` Fjall partition stores source bytes keyed by their blake3 hash; envelope records reference source via the hash, not inline bytes, so duplicate sources (e.g., shared prelude code) are stored once · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0100`
-- AC-2: When `eval()` compiles user source, the resulting `CompiledCode` is persisted with a `source_hash` pointing to the original source bytes in the source store · impact:`journey` · seam:`integration` · scenario:`SCENARIO-0100`
+- AC-2: When `eval_persistent()` compiles user source, the resulting `CompiledCode` is persisted with a `source_hash` pointing to the original source bytes in the source store · impact:`journey` · seam:`integration` · scenario:`SCENARIO-0101-eval-persist`
 - AC-3: When a `Grammar` is registered from a source string, its persisted record carries the `source_hash` for the defining source · impact:`local` · seam:`integration` · scenario:`SCENARIO-0100`
 - AC-4: For artifacts created at runtime without an originating source — spawned objects, anonymous lambdas without a syntactic anchor, grammars built programmatically — the persistence layer synthesizes a constructor expression (e.g., `spawn(facets: [...], properties: %{...})` for an object, `λ(x) { ... }` text for an anonymous lambda) and stores that synthesized text in the source store · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0101`
 - AC-5: The synthesized constructor expression is round-trippable: evaluating it via `eval()` produces a value structurally equivalent to the original artifact (same facets, same properties, same lambda body up to alpha-equivalence) · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0101`
-- AC-6: When the loader encounters a payload it cannot decode (incompatible schema per STORY-0099) but the envelope's `source_hash` resolves in the source store, it logs the recovery attempt, recompiles the source via the current `eval()` path, and binds the resulting value under the original key · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0102`
+- AC-6: When `recover_and_rebind()` encounters a payload it cannot decode (incompatible schema per STORY-0099) but the envelope's `source_hash` resolves in the source store, the recovery attempt is reflected in `RecoveryStats::recovered_from_source`, the source is recompiled via the current `eval_persistent()` path, and the resulting value is bound under the original key · impact:`cross-surface` · seam:`integration` · scenario:`SCENARIO-0102`
 - AC-7: The source store is garbage-collected on demand (e.g., via a `compact()` API) — sources unreferenced by any envelope are removed; reference counting is via a full scan of envelope records, not a separate refcount table · impact:`local` · seam:`integration`
 
 **Sources:**
 - This conversation: design discussion 2026-05-08
 - `Cargo.toml:42` (blake3 already a workspace dependency)
 
-**Status:** partial (2026-05-14)
+**Status:** partial (2026-05-15)
 
 **AC status:**
 - AC-1: closed by ITER-0005b (SCENARIO-0100 integration evidence at `fmpl-persistence/tests/scenario_0100_content_addressed_source.rs`).
-- AC-2: **re-opened** — ITER-0005b shipped the `save_to_store` API surface but no `eval()`→persist integration. The declared `seam:integration` for a `journey`-impact AC is not met. Re-routed through **ITER-0005b-FIX-B** AC-2-DECIDE (post-scope-review split: pick eval-seam-API path OR AC-wording-amendment path with pre-iter PAR; possible impact-label amendment also in scope).
+- AC-2: closed by **ITER-0005b-FIX-B** (Path 2A — sibling-entry `eval_persistent` shipped in `fmpl-core/src/lib.rs`; journey evidence at `fmpl-persistence/tests/scenario_0101_eval_persist.rs` via SCENARIO-0101-eval-persist).
 - AC-3: deferred to **ITER-0005b-OBJ** (Grammar source_hash; ObjectDb shape mismatch design).
 - AC-4: deferred to **ITER-0005b-SYNTH** (blocked by ITER-0005b-AST-SLOT — Lambda holds bytecode not AST).
 - AC-5: deferred to **ITER-0005b-SYNTH** (cascades from AC-4).
-- AC-6: **re-opened** — ITER-0005b shipped `recover_incompatible` as a standalone pass with a no-op test closure. AC-6's required observables (loader-auto-chain, eval-recompile, bind-under-key, `Value::Int(3)` execution) have zero evidence. Re-routed through **ITER-0005b-FIX-B** AC-6-DECIDE (post-scope-review split: pick loader-auto-chain path OR standalone-pass+AC-wording-amendment path with pre-iter PAR).
+- AC-6: closed by **ITER-0005b-FIX-B** (Path 6A — orchestrator `recover_and_rebind` shipped in `fmpl-core/src/lib.rs`; reuses existing `recover_incompatible` closure seam, no new trait. AC text amended per T3 option (b): "logs the recovery attempt" → "the recovery attempt is reflected in `RecoveryStats::recovered_from_source`". Bind-and-execute journey evidence at `fmpl-persistence/tests/scenario_0102_recover_incompatible.rs`).
 - AC-7: primitive `SourceStore::compact()` closed by ITER-0005b; keyspace-scan orchestration deferred to **ITER-0005b-GC**.
