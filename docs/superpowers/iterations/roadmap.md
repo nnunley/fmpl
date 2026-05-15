@@ -2161,7 +2161,7 @@ The deprecated card text is preserved below this header for traceability; do not
 
 **Stories:** STORY-0100 (re-closes AC-2 and AC-6 after the seam decisions are made and evidence shipped).
 
-**Status:** pending (requires its own pre-iter PAR; can run in parallel with ITER-0005a.2 once FIX-A is done).
+**Status:** pending (pre-iter PAR completed 2026-05-14; resolutions captured in `docs/superpowers/specs/2026-05-14-fix-b-seam-paths.md`. **AC-2 = Path 2A (sibling-entry `eval_persistent`)**. **AC-6 = Path 6A (orchestrator `recover_and_rebind` in fmpl-core, no new trait)**. Ready for `running-an-iteration`.)
 
 **Rationale:** ITER-0005b's audit found AC-2's `seam:integration impact:journey` evidence missing (no `eval()` → persist path) and AC-6's loader-auto-chain + bind-and-execute observables absent. Each AC has two acceptable resolutions:
 
@@ -2187,12 +2187,27 @@ The deprecated card text is preserved below this header for traceability; do not
 
 **Depends on:** ITER-0005b-FIX-A (sentinel green).
 
-**Build order (preliminary; pre-iter PAR will refine):**
+**Build order (resolved by 2026-05-14 pre-iter PAR; full rationale at `docs/superpowers/specs/2026-05-14-fix-b-seam-paths.md`):**
 
-1. **T0 — Sibling-project study**: 30-min read of moor-echo + cairn for incompatible-decode patterns. Capture findings in a design note before path commitment.
-2. **T1 — Pre-iter PAR for path commitment**: dispatch paired reviewers to choose 2A vs 2B and 6A vs 6B with documented rationale. Each path's downstream impact on ITER-0005c, ITER-0005d, ITER-0005e, ITER-0005b-OBJ explicit.
-3. **T2 — T5: Implementation per chosen paths.** Specific tasks depend on path; pre-iter PAR will produce the task list.
-4. **T6 — Wrap**: closing PAR; update artifacts.
+T0 (sibling study) and T1 (pre-iter PAR) **already done** before iteration kickoff. Implementation tasks:
+
+1. **T0-IMPL — Add `eval_persistent` sibling entry.** New function in `fmpl-core/src/lib.rs` (or `fmpl-core/src/persistence/`) under `#[cfg(feature = "persistence")]`:
+   ```rust
+   pub fn eval_persistent(
+       vm: &mut Vm,
+       source: &str,
+       bytecode_store: &dyn fmpl_persistence::Store,
+       source_store: &fmpl_persistence::SourceStore,
+       key: &str,
+   ) -> Result<Value>;
+   ```
+   `eval()` stays unchanged. **Open decision (iteration owner picks):** does it wrap `eval()` internally or duplicate the `eval_via_*` dispatch.
+2. **T1 (AC-2) — Wire `eval_persistent` to persist.** After compile, call `code.save_to_store(bytecode_store, source_store, key, Some(source.as_bytes()))`. Author **SCENARIO-0101-eval-persist** driving `eval_persistent(vm, "1 + 2", ..., "answer")` end-to-end, asserting `source_store.get(envelope.source_hash) == Some(b"1 + 2".to_vec())`.
+3. **T2 — Add `recover_and_rebind` orchestrator in fmpl-core.** Closes over `&mut Vm`, calls `recover_incompatible(...)` with a closure that does `std::str::from_utf8(key)` → `eval_persistent(...)`. **No new trait.** Maps errors through `RecoveryError::recompile(...)`.
+4. **T3 (AC-6 logging) — Decision point.** Either (a) add a tracing hook in `recover_incompatible` for per-record log emission (adds `tracing` dep at -persistence), OR (b) amend AC-6 wording from "logs the recovery attempt" to "RecoveryStats reflect the recovery attempt." Both defensible; iteration owner picks.
+5. **T4 (AC-6 scenario rebuild) — Rebuild SCENARIO-0102.** Drive setup through `eval_persistent`, bump VM major, reopen, call `recover_and_rebind`, assert `recovered_from_source == 1` AND the rebound value at the original fjall key produces `Value::Int(3)` when executed (per AC-6 text).
+6. **T5 — Update AC text.** In `docs/superpowers/iterations/requirements/EPIC-003.md`, amend STORY-0100 AC-2 + AC-6 to name `eval_persistent` / `recover_and_rebind` as the contract entry points. Seam stays `integration`; impacts stay `journey`/`cross-surface`.
+7. **T6 — Wrap.** Sentinel sweep (must now include SCENARIO-0101 + rebuilt SCENARIO-0102 at cadence `sentinel`), closing PAR with verbatim sentinel-sweep output, update artifacts.
 
 **Verification gates:**
 
