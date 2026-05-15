@@ -28,7 +28,7 @@
     "2026-05-13T05:58:00.248587+00:00"
   ],
   "cluster_size": 10,
-  "canonical_salience": 13.095,
+  "canonical_salience": 12.690000000000001,
   "staged_at": "2026-05-13T02:33:51.356281+00:00",
   "status": "staged",
   "decisions": [
@@ -594,6 +594,36 @@
     },
     {
       "ts": "2026-05-15T00:08:15.881911+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-15T00:12:18.393842+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-15T00:47:50.668761+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-15T00:50:51.859934+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-15T01:15:46.985024+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-15T01:57:08.653659+00:00",
+      "action": "staged",
+      "reviewer": "auto_dream"
+    },
+    {
+      "ts": "2026-05-15T02:57:27.822480+00:00",
       "action": "staged",
       "reviewer": "auto_dream"
     }
