@@ -90,6 +90,7 @@
 | SCENARIO-0113 | Stream-input store integration: overflow spills + restores positions, memo persists across store reopen, bit-flipped memo record is cache-miss (envelope CRC catches corruption) | integration | sentinel | `cargo test -p fmpl-persistence --features fjall-backend --test stream_input_store` | STORY-0099, STORY-0068 |
 | SCENARIO-0100 | Bytecode persists with content-addressed source reference | integration | iteration | `cargo test -p fmpl-persistence --features fjall-backend --test scenario_0100_content_addressed_source` | STORY-0100 |
 | SCENARIO-0101 | Sourceless artifact gets synthesized constructor expression | integration | iteration | TBD | STORY-0100 |
+| SCENARIO-0101-eval-persist | `eval_persistent` drives compile+execute+persist end-to-end through the evaluator's persistence-aware sibling entry | integration | sentinel | `cargo test -p fmpl-persistence --features fjall-backend --test scenario_0101_eval_persist` | STORY-0100 |
 | SCENARIO-0102 | Loader recovers from incompatible payload via source recompilation | integration | iteration | `cargo test -p fmpl-persistence --features fjall-backend --test scenario_0102_recover_incompatible` | STORY-0100 |
 | SCENARIO-0104 | Parser rejects `:Tag(args)` value-constructor syntax | unit | sentinel | `cargo test -p fmpl-core --test scenario_runner scenario_0104` | STORY-0010, STORY-0095 |
 | SCENARIO-0105 | Parser rejects `:Tag(p1, p2)` pattern-position syntax | unit | sentinel | `cargo test -p fmpl-core --test scenario_runner scenario_0105` | STORY-0010, STORY-0095 |

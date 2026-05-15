@@ -2103,6 +2103,35 @@
 **Sources:**
 - `docs/superpowers/iterations/requirements/EPIC-003.md` (STORY-0100)
 
+## SCENARIO-0101-eval-persist — `eval_persistent` drives compile+execute+persist end-to-end
+
+**Kind:** surface
+**Proof seam:** integration
+**Impact:** journey
+**Owning stories:** STORY-0100 (AC-2)
+
+**Note:** A separate scenario ID `SCENARIO-0101-eval-persist` is used because the bare `SCENARIO-0101` ID is occupied by the deferred "synthesized constructor expression" scenario (AC-4). The dash-qualified ID convention matches the existing pattern (`SCENARIO-0099-iter`).
+
+**Preconditions:**
+- FjallStore-backed bytecode keyspace available via tempdir
+- SourceStore initialized at a sibling subdir
+- A fresh `Vm`
+
+**Action:**
+- Call `fmpl_core::eval_persistent(&mut vm, "1 + 2", &store, &source_store, "answer")`
+
+**Expected observables:**
+- Return value equals `Value::Int(3)` (the journey actually executes)
+- The bytecode store holds an envelope at key `"answer"`
+- The envelope's `source_hash` is non-`NONE` and resolves in the source store to the original source bytes (`b"1 + 2"`)
+
+**Automation status:** implemented
+**Execution command:** `cargo test -p fmpl-persistence --features fjall-backend --test scenario_0101_eval_persist`
+
+**Sources:**
+- `docs/superpowers/iterations/requirements/EPIC-003.md` (STORY-0100 AC-2)
+- `docs/superpowers/specs/2026-05-14-fix-b-seam-paths.md`
+
 ## SCENARIO-0102 — Loader recovers from incompatible payload via source recompilation
 
 **Kind:** failure-recovery
@@ -2110,25 +2139,24 @@
 **Owning stories:** STORY-0100
 
 **Preconditions:**
-- A keyspace contains a `CompiledCode` record whose envelope has a known magic but a `schema_version` the current loader does not understand
+- A keyspace contains a `CompiledCode` record whose envelope has a known magic but a VM major version the current loader does not understand
 - The envelope's `source_hash` resolves to `"1 + 2"` in the source store
 
 **Action:**
-- Load the keyspace via the envelope-aware loader
+- Call `fmpl_core::recover_and_rebind(&mut vm, &store, &source_store)`
 
 **Expected observables:**
-- The payload decode fails (incompatible schema)
-- The loader detects the present `source_hash` and attempts recovery
-- The recovery path resolves the hash, fetches `"1 + 2"`, recompiles via current `eval()`
-- A new `CompiledCode` is bound under the original record's key
-- Loader stats report `loaded=0`, `recovered_from_source=1`
-- Executing the recovered code returns `Value::Int(3)`
+- The incompatible record is detected at decode time
+- The recovery orchestrator resolves the hash, fetches `"1 + 2"`, recompiles via `eval_persistent` and rebinds at the original key
+- `RecoveryStats.recovered_from_source == 1`; all other counters zero
+- Reading the rebound record back and executing it on the VM returns `Value::Int(3)`
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** implemented
+**Execution command:** `cargo test -p fmpl-persistence --features fjall-backend --test scenario_0102_recover_incompatible`
 
 **Sources:**
-- `docs/superpowers/iterations/requirements/EPIC-003.md` (STORY-0100)
+- `docs/superpowers/iterations/requirements/EPIC-003.md` (STORY-0100 AC-6)
+- `docs/superpowers/specs/2026-05-14-fix-b-seam-paths.md`
 
 ## SCENARIO-0077 — Web server POST to /eval uses generated parser
 

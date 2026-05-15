@@ -719,7 +719,7 @@ impl CompiledCode {
     /// is only available when fmpl-persistence's `fjall-backend`
     /// feature is on. fmpl-core's `persistence` feature activates it.
     #[cfg(feature = "persistence")]
-    pub fn save_to_store<S: crate::persistence::Store>(
+    pub fn save_to_store<S: crate::persistence::Store + ?Sized>(
         &self,
         store: &S,
         source_store: &fmpl_persistence::SourceStore,
