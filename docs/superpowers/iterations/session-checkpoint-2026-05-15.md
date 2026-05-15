@@ -28,17 +28,23 @@
 
 Six commits ahead of main, on an unnamed branch (`@` is divergent from `main`).
 
+## Closing PAR — COMPLETE (2026-05-15)
+
+Both auditors returned. PAR aggregation done. Verdict: **GAPS-FOUND** (1 Serious, 1 actionable Minor → 2 gap iterations spawned).
+
+- **Reviewer A:** CLEAN (1 non-blocking Minor on env-var asymmetry).
+- **Reviewer B:** GAPS-FOUND (1 Serious on iterator-during-mutation aliasing at cardinality > 1; 2 Minor including the non-UTF-8 source path).
+
+**PAR aggregation rule applied:** take worst severity → GAPS-FOUND. Two gap iterations created in roadmap:
+
+- **ITER-0005b-FIX-B-GAP-1** — multi-incompatible-record stress (closes Serious).
+- **ITER-0005b-FIX-B-GAP-2** — non-UTF-8 source bytes test (closes symmetric Minor).
+
+Closing-PAR aggregation block appended to FIX-B iteration-log entry (under `### Closing PAR (Reviewers A + B, parallel adversarial — 2026-05-15)`). FIX-B roadmap status flipped from "DONE clean" to "DONE 2026-05-15 with follow-up gap iterations." Progress.md fully reflects the new state.
+
 ## Pending at session end
 
-1. **FIX-B closing PAR auditors still running** (two parallel subagents).
-   - Auditor A ID: `aea16dccb1367119c`
-   - Auditor B ID: `a43c3f448a2ee6c66`
-   - When they complete, the harness fires `<task-notification>` with summaries embedded. Do NOT Read the .output JSONL files — they overflow context.
-   - **Preliminary findings observed mid-stream (Auditor A):**
-     - **Native-pipeline-only decision** in `eval_persistent` (lib.rs:171-182) is **defensible and documented**. Implementer's doc comment is explicit. Not Critical. Possible Minor: `eval_persistent` silently ignores `FMPL_USE_FMPL_COMPILER` env var while honoring `FMPL_USE_GENERATED_PARSER`. A caller running with both set would see `eval()` and `eval_persistent()` diverge.
-     - **Sentinel sweep iteration-log block** verified verbatim against fresh script run — FIX-MECH discipline upheld.
-     - **Process tags in scenario test files** (STORY-/AC-/SCENARIO- references in `tests/scenario_*.rs`): pre-existing convention (every scenario_0099/0100/0111/0112 test has them); FIX-B's additions are consistent with that pattern. Per `feedback_no_story_names_in_code_comments.md`, this technically violates the rule, but it's pre-existing convention and not a FIX-B-specific finding. Treat as Minor or roll into ITER-PROCESS-TAGS.
-2. **Closing-PAR aggregation block** for the iteration-log: when both auditors complete, append the audit-aggregation summary to the FIX-B iteration-log entry (under a new `## Closing PAR (Reviewers A + B)` section) following the FIX-A precedent. Use the auditor's returned summaries — NOT the JSONL transcripts.
+**Top-priority next-session action (unchanged):** Discord-bot demo. The auditor outcome doesn't change this — Discord-bot priority precedes resuming fmpl iterations.
 
 ## Discord-bot priority (carried from FIX-A)
 

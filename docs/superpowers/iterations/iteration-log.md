@@ -1798,6 +1798,37 @@ Script exit code: 0.
 3. **Process-tag references in `recovery.rs` doc comments** — already on the ITER-PROCESS-TAGS sweep list; not touched here per scope discipline.
 4. **`save_to_store` `?Sized` relaxation** — the change was load-bearing for the new `&dyn Store` consumer. The compiler did not require a corresponding relaxation on the `S: Store` bound at the closure-internal call sites (verified by green build). If a future iteration needs `&dyn Store` through `ObjectDb::save_to_store` or `ParseState::save_to_store`, those bounds may need the same relaxation; not in FIX-B's scope to pre-relax them.
 
+### Closing PAR (Reviewers A + B, parallel adversarial — 2026-05-15)
+
+Two auditors evaluated FIX-B in parallel against the three-tier discipline (deep evidence + impacted behavior + sentinel corpus). Aggregated verdict: **GAPS-FOUND** (Reviewer B raised a Serious finding Reviewer A did not). Severity-disagreement rule: take the worst.
+
+**Critical:** none from either reviewer.
+
+**Serious (Reviewer B unique):**
+
+- **Iterator-during-mutation aliasing in `recover_and_rebind` not stress-tested at cardinality > 1.** `fmpl-persistence/src/recovery.rs:158` runs `for item in store.iter()`; the closure body (recover_and_rebind's call back into `eval_persistent`) invokes `store.insert(...)` on the same backing store. SCENARIO-0102 covers only single-incompatible-record cases (and the 2-record composability test, where only 1 is incompatible). The FjallStore iterator's snapshot/visibility semantics under same-keyspace insertion during iteration are inherited from fjall and unproven. If the iterator re-emits rewritten keys, multi-incompatible-record runs would produce inflated `loaded_passthrough` or double-counted `recovered_from_source`. AC-6's "cross-surface" claim does not generalize past N=1 without evidence. Reviewer A's audit did not probe this dimension.
+
+**Minor (both reviewers, with overlap):**
+
+- **`eval_persistent` silently ignores `FMPL_USE_FMPL_COMPILER=1`** while honoring `FMPL_USE_GENERATED_PARSER`. Documented in the function's doc comment (lib.rs:171-182). A caller running with both env vars set would see `eval()` route through the FMPL pipeline while `eval_persistent` always uses native. Defensible per the native-pipeline-only rationale (driver-string hash would be the wrong identity for source_hash), but no warning or debug-assertion surfaces this to the caller. Reviewer A flagged as a non-blocking observation; Reviewer B noted the same asymmetry as part of the native-pipeline interrogation.
+- **Non-UTF-8 source bytes path uncovered (Reviewer B unique).** `recover_and_rebind`'s closure does `std::str::from_utf8(src_bytes)?` — `source_store.put(&[u8])` nominally accepts arbitrary bytes, so this path is reachable. The existing test `recover_and_rebind_counts_non_utf8_key_as_recompile_failure` covers the symmetric *key* case; the *source* case has no parallel. Closes by adding the mirror test.
+- **Process tags in scenario test files** (`STORY-0100 (AC-2)`, `AC-6`, `SCENARIO-0102` in module docs across the three new/rebuilt test files). Per `feedback_no_story_names_in_code_comments.md`, this violates the rule. But the pre-existing convention (every `scenario_00NN_*.rs` file has them) makes this a project-wide pattern, not a FIX-B-specific introduction. Both reviewers agreed: roll into `ITER-PROCESS-TAGS` rather than treat as a FIX-B finding.
+- **Pre-existing inconsistency in SCENARIO-0100 card (Reviewer B unique):** `behavior-scenarios.md:2074` lists `Execution command: TBD` while `behavior-corpus.md:91` lists a real command. Pre-existing; not introduced by FIX-B.
+
+**Aggregation rule applied:** Reviewer A's verdict was CLEAN; Reviewer B's was GAPS-FOUND. PAR rule = take the worst → **GAPS-FOUND.** Two gap stories created:
+
+1. **ITER-0005b-FIX-B-GAP-1 — multi-incompatible-record stress for `recover_and_rebind`** (closes the Serious finding). Add a test that seeds N≥10 incompatible records, each with its own valid source_hash + source_store bytes, runs `recover_and_rebind`, and asserts `recovered_from_source == N`, `loaded_passthrough == 0`, `recompile_failed == 0`, `total() == N`. If fjall's iterator re-emits rewritten keys, this gate fails and forces a snapshot-iter or collect-then-mutate fix.
+2. **ITER-0005b-FIX-B-GAP-2 — non-UTF-8 source bytes counted as recompile failure** (closes the Minor symmetric-path gap). Mirror of the existing non-UTF-8 *key* test in `recover_and_rebind_unit.rs:72-101`, but with `source_store.put(&[0xFF, 0xFE])` and a valid UTF-8 key. Asserts `recompile_failed == 1`, no panic.
+
+**Verifications both reviewers confirmed (no findings):**
+
+- AC-2 evidence: `eval_persistent` performs real parse → real `Compiler::new().compile(...)` → `save_to_store` with source bytes → `vm.run`. End-to-end at the journey seam. Strong.
+- AC-6 evidence: `recover_and_rebind` reuses the existing closure seam, recursively calls `eval_persistent`. SCENARIO-0102 drives the full journey including the rebound-CompiledCode execute-to-`Value::Int(3)` observable. Faithful, not easier-to-pass.
+- Native-pipeline-only decision is sound and documented (FMPL pipeline's driver-string would stamp the wrong identity for source_hash recovery).
+- `?Sized` relaxation on `save_to_store` is load-bearing for `&dyn Store` callers and sound (Store trait is object-safe; `envelope::write` already had `?Sized`).
+- Sentinel sweep verbatim block in iteration-log:1726-1790 is byte-equal to fresh script run.
+- Test counts: fmpl-persistence 107 (+4), fmpl-core 1292 (unchanged) — matches close-out claims.
+
 ### Lessons
 
 - **Native-pipeline-only for `eval_persistent` was the right call, but only after looking at what FMPL pipeline does to source.** The wrap-mode default in the spec ("does it wrap `eval()` internally") would have produced bytecode whose envelope source_hash points at a *generated driver string* (`r#"let (ast = ast::parse({:?})) ..."#`) rather than the user's `"1 + 2"`. Recovery on that record would re-evaluate the driver string, not the user code. Lesson: when a sibling entry's purpose includes provenance (here: `source_hash`-driven recovery), the wrap question is not just "does composition work" but "does the wrapped path *carry the right identity for this provenance*". The FMPL pipeline carries a different identity (driver string), so wrap-mode is silently wrong even though it compiles. Captured because the spec marked this as an "open decision" the iteration owner picks — and the spec's recommendation was wrap-mode unless concrete blocker. The blocker was concrete; it just required reading the pipeline code.

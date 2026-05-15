@@ -2161,7 +2161,7 @@ The deprecated card text is preserved below this header for traceability; do not
 
 **Stories:** STORY-0100 (re-closes AC-2 and AC-6 after the seam decisions are made and evidence shipped).
 
-**Status:** **DONE 2026-05-15** (closing PAR clean; sentinel sweep 23 pass / 0 fail / 4 skip — same long-standing TBD-row skip set as FIX-A; no new red gates). AC-2 closed via Path 2A (sibling-entry `eval_persistent` shipped in `fmpl-core/src/lib.rs`; SCENARIO-0101-eval-persist evidence). AC-6 closed via Path 6A (orchestrator `recover_and_rebind` shipped in `fmpl-core/src/lib.rs`; reuses existing closure seam, no new trait; SCENARIO-0102 rebuilt as full journey with bind-and-execute observable). T3 (AC-6 logging) decision: chose option (b) — amend AC-6 wording from "logs the recovery attempt" to "the recovery attempt is reflected in `RecoveryStats::recovered_from_source`"; no tracing dep added to fmpl-persistence. See `iteration-log.md` ITER-0005b-FIX-B entry for full close-out.
+**Status:** **DONE 2026-05-15 with follow-up gap iterations** (closing PAR found 1 Serious + 1 actionable Minor; per PAR aggregation rule "take worst severity," verdict is GAPS-FOUND; gap stories spawned as **ITER-0005b-FIX-B-GAP-1** and **ITER-0005b-FIX-B-GAP-2** — see below). Core deliverables landed: sentinel sweep 23 pass / 0 fail / 4 skip (same long-standing TBD-row skip set as FIX-A; no new red gates). AC-2 closed via Path 2A (sibling-entry `eval_persistent` shipped in `fmpl-core/src/lib.rs`; SCENARIO-0101-eval-persist evidence). AC-6 closed via Path 6A (orchestrator `recover_and_rebind` shipped in `fmpl-core/src/lib.rs`; reuses existing closure seam, no new trait; SCENARIO-0102 rebuilt as full journey with bind-and-execute observable). T3 (AC-6 logging) decision: chose option (b) — amend AC-6 wording from "logs the recovery attempt" to "the recovery attempt is reflected in `RecoveryStats::recovered_from_source`"; no tracing dep added to fmpl-persistence. **Closing-PAR gap:** AC-6 evidence proves cardinality=1 only; iterator-during-mutation aliasing at N≥2 is untested (Reviewer B raised this; Reviewer A's audit was CLEAN). See `iteration-log.md` ITER-0005b-FIX-B entry — Closing PAR (Reviewers A + B) section — for full audit aggregation.
 
 **Rationale:** ITER-0005b's audit found AC-2's `seam:integration impact:journey` evidence missing (no `eval()` → persist path) and AC-6's loader-auto-chain + bind-and-execute observables absent. Each AC has two acceptable resolutions:
 
@@ -2222,6 +2222,72 @@ T0 (sibling study) and T1 (pre-iter PAR) **already done** before iteration kicko
 - ITER-0005b post-iteration PAR audit (2026-05-14) — Reviewers A and B.
 - ITER-0005b-FIX scope-review PAR (2026-05-14) — Reviewers A and B (deprecated parent's pre-iter PAR).
 - `feedback_split_iterations_on_reader_writer_asymmetry.md`, `feedback_claim_scope_must_match_evidence.md`, `feedback_sibling_project_study_before_scope.md`.
+
+---
+
+#### ITER-0005b-FIX-B-GAP-1 — Multi-incompatible-record stress for `recover_and_rebind`
+
+**Stories:** STORY-0100 AC-6 evidence-cardinality gap (raised by FIX-B closing PAR Reviewer B on 2026-05-15).
+
+**Status:** pending (small; unblocked; independent of GAP-2).
+
+**Rationale:** FIX-B's SCENARIO-0102 proves AC-6 at cardinality=1 only. The recovery orchestrator iterates the bytecode store and, inside the iteration loop, mutates the same store via `eval_persistent → save_to_store → Store::insert`. The fjall iterator's snapshot/visibility semantics under same-keyspace concurrent insertion are inherited, not asserted. If the iterator re-emits rewritten keys, multi-record runs would inflate `loaded_passthrough` or double-count `recovered_from_source`. AC-6's "cross-surface" impact does not generalize past N=1 without a stress test.
+
+**Acceptance criteria:**
+
+- **GAP-1-A1**: New test `recover_and_rebind_multi_incompatible_stress` in `fmpl-persistence/tests/recover_and_rebind_unit.rs` (or a dedicated file). Seeds N≥10 incompatible records, each with its own valid source_hash + source_store bytes (use distinct sources like `"1 + 2"`, `"3 + 4"`, ...). Calls `recover_and_rebind`. Asserts `RecoveryStats { recovered_from_source: N, loaded_passthrough: 0, recompile_failed: 0, unrecoverable_no_source: 0, unrecoverable_source_missing: 0, skipped_corrupt: 0 }` (total == N).
+- **GAP-1-A2**: If GAP-1-A1 fails because fjall re-emits rewritten keys, fix via either (a) collect-then-mutate (snapshot keys before iteration, recover each key without holding the iterator open), or (b) explicit snapshot semantics if fjall exposes them. The fix MUST preserve `iter_store`'s public API contract (the wider `Loaded → callback` semantics that 10+ existing callers depend on per ITER-0005b pre-iter PAR R-I-C-1).
+- **GAP-1-A3**: Promote SCENARIO-0102 to cadence `sentinel` (currently `iteration`); add the new multi-record stress as a separate row at cadence `sentinel`. The stress test joins the sentinel corpus so cardinality-regression is caught mechanically.
+
+**Impacted scenarios:** SCENARIO-0102 (cadence change), new SCENARIO-0102-multi (or similar; ID per project convention).
+
+**Depends on:** ITER-0005b-FIX-B (the orchestrator under test).
+
+**Build order:**
+
+1. **T1 — Write the failing N=10 stress test.** Confirm it fails before fixing (TDD red). Document the failure mode in the iteration-log.
+2. **T2 — If failing: fix via snapshot/collect-then-mutate.** Re-run. Verify green.
+3. **T3 — Promote SCENARIO-0102 to sentinel cadence.** Add the new scenario row. Update behavior-corpus.md.
+4. **T4 — Wrap.** Sentinel sweep clean. Iteration-log entry. Closing PAR.
+
+**Verification gates:**
+
+- N=10 stress test passes.
+- `cargo build --workspace --all-features` + clippy clean.
+- Sentinel sweep clean (now includes the new stress row).
+
+**Sources:** ITER-0005b-FIX-B closing PAR Reviewer B finding R-B-S-1 (2026-05-15).
+
+---
+
+#### ITER-0005b-FIX-B-GAP-2 — Non-UTF-8 source bytes counted as recompile failure
+
+**Stories:** STORY-0100 AC-6 error-path symmetric gap (raised by FIX-B closing PAR Reviewer B on 2026-05-15).
+
+**Status:** pending (small; unblocked; independent of GAP-1; can bundle with GAP-1 if scheduled together).
+
+**Rationale:** `recover_and_rebind`'s closure does `std::str::from_utf8(src_bytes)?` to convert source-store bytes to `&str` for `eval_persistent`. `SourceStore::put(&[u8])` nominally accepts arbitrary bytes — non-UTF-8 source is a reachable input. The existing test `recover_and_rebind_counts_non_utf8_key_as_recompile_failure` covers the symmetric *key* case; the *source* case has no parallel. Closes the error-path symmetry gap.
+
+**Acceptance criteria:**
+
+- **GAP-2-A1**: New test `recover_and_rebind_counts_non_utf8_source_as_recompile_failure` in `fmpl-persistence/tests/recover_and_rebind_unit.rs`. Setup: valid UTF-8 key, source_store contains `&[0xFF, 0xFE]` at the source_hash referenced by the incompatible envelope. Run `recover_and_rebind`. Assert `RecoveryStats { recompile_failed: 1, recovered_from_source: 0, .. }`. No panic.
+
+**Impacted scenarios:** none directly; the test lives at the unit-test seam.
+
+**Depends on:** ITER-0005b-FIX-B.
+
+**Build order:**
+
+1. **T1 — Write the failing test.** TDD red.
+2. **T2 — If failing: investigate the existing closure (`fmpl-core/src/lib.rs:260`) and fix the error mapping if it doesn't already surface as `RecoveryError::recompile`.** Per the implementer's claim, both UTF-8 conversions (key + source) already go through `?` with the same error path, so this test should pass without code changes — but verifying via TDD ensures the path is actually exercised.
+3. **T3 — Wrap.** Closing PAR.
+
+**Verification gates:**
+
+- New test passes.
+- `cargo build --workspace --all-features` + clippy clean.
+
+**Sources:** ITER-0005b-FIX-B closing PAR Reviewer B finding R-B-M-1 (2026-05-15).
 
 ---
 
