@@ -3,7 +3,7 @@
 **Summary:** Image Persistence
 **Stories:** STORY-0013, STORY-0014, STORY-0015, STORY-0016, STORY-0017, STORY-0018, STORY-0019, STORY-0020, STORY-0021, STORY-0099, STORY-0100
 **Primary sources:** `docs/plans/2026-03-03-self-hosting-bootstrap-design.md`, `docs/plans/2026-03-03-self-hosting-bootstrap-implementation.md`
-**Status:** 0/11 done
+**Status:** 2/11 done
 
 ## STORY-0013
 
@@ -34,14 +34,16 @@
 **So that** previously compiled code does not need recompilation after restart
 
 **Acceptance criteria:**
-- AC-1: Compiled bytecode is stored in Fjall and can be loaded on process restart without recompilation · impact:`journey` · seam:`integration` · scenario:`SCENARIO-0004`
+- AC-1: Compiled bytecode is stored in Fjall under a key; after the store handle is closed and a fresh handle is opened at the same path in the same process, the bytecode can be loaded by key (without invoking the compiler — verified by the current implementation of `CompiledCode::load_from_store`, which neither imports nor calls `Compiler`/`Lexer`/`Parser`) and executed in a fresh VM. · impact:`integration` · seam:`integration` · scenario:`SCENARIO-0018`
+
+**Carried gap:** cross-process bytecode load (the "session-to-session restart" semantics implied by the design sources at `bootstrap-design.md:223-235`) is NOT proven by ITER-0005c — only same-process drop+reopen of FjallStore handles. A future subprocess-sentinel iteration owns the cross-process evidence.
 
 **Sources:**
 - `docs/plans/2026-03-03-self-hosting-bootstrap-design.md:227-228`
 - `docs/plans/2026-03-03-self-hosting-bootstrap-design.md:56-57`
 - `docs/plans/2026-03-03-self-hosting-bootstrap-implementation.md:259-297`
 
-**Status:** pending
+**Status:** done:ITER-0005c
 
 ## STORY-0015
 

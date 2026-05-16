@@ -2072,3 +2072,94 @@ Both passed on first run.
 - **Convergent reviewer findings are the strongest signal.** Reviewers A and B explored different probing dimensions (A: scope-correctness + missing-sites; B: proof-strength + corpus-completeness) but independently surfaced the SAME Serious finding (in-module asymmetry). Per PAR aggregation rules, convergence = high confidence. The lesson: even on small housekeeping iterations, the convergent-or-divergent shape of PAR findings tells you whether to trust or question the iteration's framing.
 - **Calibrate claim scope to evidence scope (validated 2026-05-16).** Pre-revision scope card said "all the recover_and_rebind unit tests" — a claim that's true if "unit tests" means only `recover_and_rebind_unit.rs`, false if it includes `recovery.rs::tests`. Reviewer B's B-S-1 finding is exactly the `feedback_claim_scope_must_match_evidence` discipline at work: the prose claim drifted broader than the evidence's actual scope. Resolution: either narrow the claim (would have left the iteration scope-correct but the asymmetry uncovered) or broaden the evidence (chose this — folded in SWEEP-B). Either is valid; what's NOT valid is leaving them asymmetric.
 
+
+---
+
+## ITER-0005c — Single-payload-class persistence: bytecode (proof case) — 2026-05-16
+
+**Status:** done (2026-05-16, late evening EDT)
+**Stories delivered:** STORY-0014 (Persist compiled bytecode to Fjall, AC-1 revised).
+**Scenarios added/updated:** SCENARIO-0018 (Action + Expected augmented; Title revised; Automation status: pending → automated; Command: TBD → concrete).
+
+### What landed
+
+**T0 — Documentation fixes (4 files).**
+- `requirements/EPIC-003.md:37` — STORY-0014 AC-1 wording: calibrated from "loaded on process restart without recompilation · impact:`journey` · scenario:`SCENARIO-0004`" to drop+reopen-shaped wording with `impact:integration · scenario:SCENARIO-0018`, plus an explicit Carried Gap line naming cross-process bytecode load as deferred.
+- `roadmap.md` — ITER-0005c's "Impacted scenarios" line: SCENARIO-0007 (wrong; that's self-compile fixpoint, owns STORY-0022) → SCENARIO-0018 (the dedicated bytecode round-trip, owns STORY-0014). SCENARIO-0004 cited as referenced surface but not closed by this iteration.
+- `behavior-scenarios.md:506-533` — SCENARIO-0018: Title gains "— drop+reopen"; Preconditions adds fjall-Drop-releases-lock note; Action enumerated 7 explicit steps including drop+reopen + `&dyn Store` load; Expected observables now require result == Int(3) AND envelope `source_hash` survives drop+reopen AND resolves in source_store2; second sub-scenario for nested-bearing program named.
+- `behavior-corpus.md:22` — Title populated; Command populated (`cargo test -p fmpl-persistence --features fjall-backend --test bytecode_persistence drop_and_reopen`).
+
+**T1 — `?Sized` relaxation on `CompiledCode::load_from_store` only.**
+- `fmpl-core/src/compiler.rs:760` — `<S: crate::persistence::Store>` → `<S: crate::persistence::Store + ?Sized>`. First-consumer: T2's drop+reopen test calls `CompiledCode::load_from_store(&store2 as &dyn Store, "k")` — concrete dyn-Store path through the relaxed bound. ObjectDb / ParseState peer `load_from_store` deliberately left un-relaxed (no real consumer in scope; per `feedback_ship_infrastructure_with_first_consumer.md`).
+
+**T2 — Two new drop+reopen tests.**
+- `fmpl-persistence/tests/bytecode_persistence.rs::bytecode_survives_drop_and_reopen` — flat program `"1 + 2"`. Asserts Int(3) plus envelope source_hash survives drop+reopen and resolves in `source_store2.get(...)` back to original bytes.
+- `fmpl-persistence/tests/bytecode_persistence.rs::nested_code_survives_drop_and_reopen` — lambda-bearing program `"let f = \\x x + 1; f(41)"`. Asserts Int(42) post-drop+reopen. Closes the `nested: Vec<CompiledCode>` gap surfaced by pre-iteration PAR Round 2.
+
+**T3 — Wrap artifacts.** EPIC-003.md STORY-0014 status `pending → done:ITER-0005c`. SCENARIO-0018 Automation status → automated. Roadmap ITER-0005c status → done.
+
+### Open decisions
+
+1. **Pre-iteration PAR ran 4 rounds (R1 + R2 + R3 each returned REVISE).** Convergent findings between rounds:
+   - R1: citation errors + iteration overstates novel work + missing drop+reopen evidence.
+   - R2: T3 compiler-free ratchet is structurally vacuous (load_from_store can't reach Compiler — no ratchet target); `?Sized` asymmetry left on siblings.
+   - R3: `?Sized` over-sweep would manufacture consumers; AC narrowing from `journey` to `integration` loses session-to-session value without acknowledgement.
+
+   **Decision: R4 applied all convergent R3 findings and proceeded.** Per `feedback_par_scope_revision_loop`: REVISE loops are bounded by convergence. R3 → R4 findings were all textual/scope-clarity, not structural. Further PAR rounds would have surfaced increasingly small textual concerns, not new architectural ones.
+
+2. **AC-1 calibrated from `impact:journey` to `impact:integration`.** Per `feedback_calibrate_claims_to_evidence`: the actual evidence is same-process drop+reopen, not cross-process subprocess testing. Rather than over-claim, calibrated the AC to the evidence and surfaced cross-process proof as an explicit **carried gap with named owner** (a future subprocess-sentinel iteration) — NOT silently dropped. Per R3 Reviewer B's S-2 finding: AC-narrowing is legitimate only when the lost user value is named, not papered over.
+
+3. **`?Sized` relaxation narrowed to bytecode only.** R3 PAR surfaced that relaxing ObjectDb/ParseState `load_from_store` peers would violate `feedback_ship_infrastructure_with_first_consumer` — the only "consumer" would be a manufactured mirror compile-only test. When ITER-0005d wires a real `&dyn Store` consumer through ObjectDb or ParseState, that iteration owns the relaxation **with its first consumer**.
+
+4. **REVIEW_QUEUE.md drained as a precondition (commit `deccf27`).** R2 Reviewer B raised that the queue was at 35 pending (CLAUDE.md threshold 10) and 6 days old. User chose "step back and review" via AskUserQuestion. Audit of all 35 candidates found 100% were auto_dream-clustered telemetry (tool-failure noise, subagent-completion events, file-write events) — none met the bar for LESSONS.md graduation. All 35 rejected with specific rationales. Queue now empty.
+
+### Evidence
+
+- `cargo test -p fmpl-persistence --features fjall-backend --test bytecode_persistence`: 9 passed (7 prior + 2 new).
+- `cargo test -p fmpl-persistence --features fjall-backend`: 112 passed (was 110; +2 from this iteration).
+- `cargo test -p fmpl-core --features persistence --lib`: 328 passed, 1 ignored (unchanged from baseline).
+- `cargo clippy --workspace --all-features -- -D warnings`: No issues found.
+- Sentinel sweep: 26 pass / 0 fail / 4 skip — byte-identical to pre-iteration baseline. (Drop+reopen tests are `iteration`-cadence, so they do not enter the sentinel sweep; the sweep result is unchanged.)
+
+### Carried gaps (named, with owners)
+
+1. **Cross-process bytecode load** ("session-to-session restart" from STORY-0014's design source `bootstrap-design.md:223-235`) — not proven by drop+reopen. Owner: a future subprocess-sentinel iteration (likely co-scoped with ITER-0005f or as a sibling of ITER-0005e VM-snapshot tests).
+2. **`TODO(ITER-0005a.4)` manual prefix-strip** at `compiler.rs:755-759` — unchanged. Owner: ITER-0005a.4.
+3. **ITER-0005e snapshot template question** (drop+reopen vs multi-keyspace atomic rename) — ITER-0005c made NO walk-forward commitment. Owner: ITER-0005e.
+4. **ObjectDb / ParseState `?Sized` relaxation** — relax when a real consumer arrives. Owner: ITER-0005d (its scope card revisits drop+reopen vs subprocess per-payload-class).
+5. **Save-side `?Sized` asymmetry** in `ObjectDb` / `ParseState` `impl` blocks — CompiledCode's save is `?Sized`, the other two peers' saves are not. Acceptable today (no save-side `&dyn Store` consumer). Owner: ITER-0005d.
+
+### Lessons captured
+
+- **PAR loops converge.** R1 → R2 → R3 → R4 each found smaller, more textual issues than the previous round. The signal is: the iteration is well-scoped IF the deltas between rounds are textual rather than architectural. R3 → R4 was the convergence point — R3 surfaced no new structural concerns, only refinements of R2-flagged issues. Per `feedback_par_scope_revision_loop` (validated 2026-05-16): REVISE loops have a natural bound at convergence; multiple rounds is the discipline working, not failing.
+
+- **Honest re-baseline is more valuable than scope inflation.** Pre-iteration PAR R1 surfaced that most of ITER-0005c's stated scope was already done. The honest move (R3 scope) was to acknowledge this in an explicit "what's done vs not" table and shrink the iteration to its genuine delta (one type-bound change + two new tests + four textual fixes). The alternative — inflating the scope to "justify" the iteration — would have produced exactly the over-claim that `feedback_calibrate_claims_to_evidence` warns against.
+
+- **AC-narrowing is legitimate when the lost evidence is named.** The original STORY-0014 AC-1 wording ("on process restart") implied cross-process semantics. ITER-0005c's evidence (drop+reopen) doesn't fully cover that. Two legitimate moves: (a) broaden the evidence (subprocess), or (b) narrow the AC + record the gap. R4 chose (b) explicitly — the AC is calibrated to integration-seam evidence, and the cross-process gap is named in the AC's Carried Gap line plus the iteration-log carried-gaps section, with a proposed owner. Silently shrinking the AC without naming the loss would have been the failure mode.
+
+- **The `?Sized` first-consumer principle protects against ratchet-by-mirror-test.** Relaxing a type bound creates a contract that future iterations must honor. If the only "consumer" of the relaxation is a test written specifically to ratchet it, the cost (locked-in surface area) exceeds the gain (no real journey uses it). Validated by deferring ObjectDb/ParseState relaxations until their real consumer arrives in ITER-0005d.
+
+### Closing PAR (auditing-progress, 2026-05-16)
+
+**Verdict:** GAPS FOUND on documentation traceability. Code, evidence, structural property, sentinel sweep all CLEAN.
+
+**Convergent serious findings (both auditors):**
+1. **Receiving scope cards (ITER-0005d, ITER-0005e) did not acknowledge inherited carried gaps from ITER-0005c.** Per the "deferring work must reschedule it" lesson, unilateral `Owner:` claims in the donor iteration's log don't constitute scheduling — the recipient's scope card must own the inheritance. Addressed: ITER-0005d's roadmap card now lists 3 inherited carried gaps (per-payload-class testing-seam decision, load-side `?Sized` peers, save-side `?Sized` peers); ITER-0005e's card now lists 1 inherited carried gap (snapshot template question with explicit decision options at PAR time).
+2. **Two of five carried gaps were missing from `progress.md`'s "Discovered follow-up gaps (carried)" list** (gaps #2 `TODO(ITER-0005a.4)` and #3 ITER-0005e snapshot template question). Addressed: both appended to the list as items 14 and 15.
+
+**Auditor A additional finding:**
+- **ITER-0005c roadmap card body retained pre-R4 Build order.** A reader of just the card body would have misread what shipped. Addressed: card body rewritten with the actual T0/T1/T2/T3 shipped; original Build order preserved in a "pre-R4" note for context.
+
+**Auditor B minor findings (acknowledged, not closed in this audit pass):**
+- **Process tags in test doc comments** at `fmpl-persistence/tests/bytecode_persistence.rs:204-207, 213-215, 277-280` (process tags rot per `feedback_no_story_names_in_code_comments`). Addressed in ITER-PROCESS-TAGS' inventory; not a closing-PAR blocker.
+- **EPIC-003 "Status: 0/11 done" stale counter** — pre-existing (already on the carried-gap list as item 3); not introduced by ITER-0005c. Worth closing in a separate housekeeping pass but not a blocker.
+- **AC-1 wording pins implementation detail** ("verified by the current implementation"). Trade-off documented: a scenario-level structural assertion would be more durable than implementation-pinning, but the structural property's enforcement is currently "the function body happens not to call Compiler". The alternative (a typed-invariant test) was deemed structurally vacuous in PAR Round 2. The AC's wording is honest about its enforcement scope; acknowledged as a trade-off, not a finding requiring action.
+
+**Verification of closing-PAR addresses:**
+- ITER-0005d roadmap card now has "Inherited carried gaps from ITER-0005c" section listing 3 items.
+- ITER-0005e roadmap card now has "Inherited carried gaps from ITER-0005c" section listing 1 item with explicit decision options.
+- progress.md "Discovered follow-up gaps (carried)" now lists items 11-15 covering all 5 of ITER-0005c's carried gaps.
+- ITER-0005c roadmap card body rewritten to match shipped T0/T1/T2/T3.
+
+**ITER-0005c is now AUDIT-CLEAN.** Closing-PAR findings were documentation reconciliation only; no follow-up iteration spawned.
+

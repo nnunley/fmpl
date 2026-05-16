@@ -19,7 +19,7 @@
 | SCENARIO-0015 |  | app-level | iteration | TBD | STORY-0038 |
 | SCENARIO-0016 | Parity contract: FMPL pipeline vs Rust compiler | integration | sentinel | `cargo test -p fmpl-core --test ast_to_ir_parity` | STORY-0007, STORY-0008 |
 | SCENARIO-0017 |  | integration | iteration | TBD | STORY-0013 |
-| SCENARIO-0018 |  | integration | iteration | TBD | STORY-0014 |
+| SCENARIO-0018 | Bytecode round-trip across drop+reopen of FjallStore (proves STORY-0014 AC-1 same-process integration seam) | integration | iteration | `cargo test -p fmpl-persistence --features fjall-backend --test bytecode_persistence drop_and_reopen` | STORY-0014 |
 | SCENARIO-0019 |  | integration | iteration | TBD | STORY-0020 |
 | SCENARIO-0020 |  | e2e | sentinel | TBD | STORY-0025 |
 | SCENARIO-0021 |  | e2e | sentinel | TBD | STORY-0026 |

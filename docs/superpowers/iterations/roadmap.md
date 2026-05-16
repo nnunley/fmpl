@@ -2291,6 +2291,84 @@ T0 (sibling study) and T1 (pre-iter PAR) **already done** before iteration kicko
 
 ---
 
+#### ITER-0005b-OBJ — STORY-0100 AC-3 (Grammar source_hash) + ObjectDb shape mismatch design
+
+**Stories:** STORY-0100 (closes AC-3 only; AC-4/AC-5 remain deferred to ITER-0005b-SYNTH; AC-7-orchestration remains deferred to ITER-0005b-GC).
+
+**Status:** pending (scope card authored 2026-05-17; pre-iteration PAR not yet run).
+
+**Rationale:** STORY-0100 AC-3 requires that "when a `Grammar` is registered from a source string, its persisted record carries the `source_hash` for the defining source." ITER-0005b's R-J-S-2 finding deferred ObjectDb source-threading because ObjectDb's `save_to_store` writes **two** PayloadKind variants per call (`ObjectIndex` + per-object `ObjectRecord`), unlike `CompiledCode`'s single-record shape. The "shape mismatch" naming captures this: any per-payload-class source-threading decision is downstream of resolving where source ownership lives in multi-record payload writers. This iteration closes AC-3 (the smaller, well-bounded half — Grammar is single-record) and **separately decides** the ObjectDb design call (recommendation: defer ObjectDb source-threading to ITER-0005d, which already owns full ObjectDb persistence and has the natural seam to wire source). The split rationale tracks `feedback_split_iterations_on_reader_writer_asymmetry.md` — Grammar (well-bounded, single-record, no live source seam yet) and ObjectDb (multi-record, no caller-supplied source available at save time) sit on different sides of an asymmetry boundary.
+
+**Inherited carried gaps from ITER-0005c (closing PAR) + ITER-0005b (R-J-S-2):**
+1. **ObjectDb shape mismatch is NOT closed here.** This iteration's primary deliverable is AC-3 (Grammar single-record source_hash) plus a written design decision documenting that ObjectDb source-threading is owned by ITER-0005d. The design call MUST appear as a written commitment in this iteration's iteration-log entry + as an explicit "Inherited carried gaps" entry on ITER-0005d's scope card. The design call must answer: "Where does the source string live at ObjectDb::save_to_store time, given that no caller supplies one today?" The pre-iteration PAR for ITER-0005d must accept or revise this decision before ITER-0005d's T1 lands.
+2. **Per-payload-class testing seam decision.** ITER-0005c set drop+reopen-on-same-path as its precedent for bytecode. AC-3's Grammar single-record write follows that precedent unless this iteration's pre-iter PAR raises a Grammar-specific reason (e.g., GrammarRegistry's `Arc<Grammar>` shape would need same-process testing for reference identity; cross-process would not preserve `Arc` identity, so drop+reopen is plausibly the right choice for Grammar too).
+3. **`?Sized` relaxation deferred.** Grammar today has NO `save_to_store`/`load_from_store` surface in fmpl-core (verified 2026-05-17 via `grep -n "save_to_store\|load_from_store" fmpl-core/src/grammar/mod.rs` → empty; only `ParseState` in `grammar/incremental.rs` has those methods). AC-3 requires adding a save-side surface to Grammar — but no `&dyn Store` consumer exists yet for Grammar. Per `feedback_ship_infrastructure_with_first_consumer.md`, the new `Grammar::save_to_store` ships with a concrete `S: Store` generic bound (NOT `+ ?Sized`); relaxation waits for the first `&dyn Store` consumer in a later iteration.
+
+**Acceptance criteria:**
+
+- **OBJ-1 (AC-3 closure)**: A `Grammar::save_to_store<S: Store>(&self, store: &S, key: &[u8], source_store: &SourceStore, source: Option<&[u8]>) -> Result<(), GrammarPersistenceError>` method is added at `fmpl-core/src/grammar/mod.rs`. Mirrors `CompiledCode::save_to_store`'s signature shape (per ITER-0005b T3's seam C precedent). `Some(bytes)` → put to source store + stamp envelope's `source_hash`; `None` → stamp `Hash::NONE` (synthesis deferred per ITER-0005b-SYNTH). The method uses `PayloadKind::Grammar` (already reserved at schema.rs:131,157). Test seam: `fmpl-persistence/tests/grammar_persistence.rs` (NEW) with at least: round-trip with `Some(source)` proving envelope's `source_hash` equals `blake3(source)` and the source is dedup'd into `SourceStore`; round-trip with `None` proving `source_hash == Hash::NONE`; drop+reopen round-trip proving Grammar survives a process-boundary-equivalent restart (precedent from ITER-0005c).
+- **OBJ-2 (companion `Grammar::load_from_store`)**: A `Grammar::load_from_store<S: Store>(store: &S, key: &[u8]) -> Result<Option<Self>, GrammarPersistenceError>` method that mirrors `ParseState::load_from_store`'s shape (returns `Ok(None)` for missing key; `Err(Deserialize)` for corrupt payload). Strips envelope header via `loader::decode` if available, else the transitional manual prefix-strip pattern (with a `TODO(ITER-0005a.4)` matching the pattern at object.rs:220-234 and compiler.rs:755-759, per ITER-0005c carried gap #2).
+- **OBJ-3 (ObjectDb design decision documented)**: A written decision recorded in TWO places: (a) this iteration's iteration-log entry under a heading "ObjectDb source-threading design call", and (b) an explicit "Inherited carried gaps" entry added to ITER-0005d's scope card (roadmap.md ~line 2443) noting that ObjectDb source-threading is owned by ITER-0005d's per-payload-class scope review. The decision must address: (i) does ObjectDb get a single source_hash on the index record, per-object source_hashes on each ObjectRecord, or no source threading at all? (ii) where does the source come from at save time given no caller supplies one today? (iii) is the synthesizer (ITER-0005b-SYNTH) a prerequisite or can ObjectDb ship with `Hash::NONE` source until SYNTH lands? Recommendation to encode (subject to pre-iter PAR): both `ObjectIndex` and `ObjectRecord` ship with `Hash::NONE` source_hash in ITER-0005d (matching today's stance); proper source threading lands in ITER-0005b-SYNTH when constructor synthesis is available, NOT in ITER-0005d. The "ship with `Hash::NONE` until first consumer demands otherwise" stance follows `feedback_ship_infrastructure_with_first_consumer.md`.
+- **OBJ-4 (`GrammarPersistenceError` type)**: New error type at `fmpl-core/src/grammar/mod.rs` mirroring `ParseStateError`'s structure (variants for `Serialize`, `Deserialize`, `Store`, and `SourceStorePut` for the source-write failure mode). Wrapped through `crate::Error` if the existing error hierarchy demands it; check at T1.
+- **OBJ-5 (SCENARIO-0100 evidence extension)**: SCENARIO-0100's behavior corpus row is extended with a Grammar-bearing test case OR a new sub-scenario (SCENARIO-0100-grammar) is added that proves "identical Grammar source dedupes in source store" — same shape as SCENARIO-0100's CompiledCode-bearing test. Cadence: `iteration` (sentinel promotion reserved for after the orchestrator path lands a real Grammar source consumer).
+- **OBJ-6 (no regressions)**: All existing sentinel scenarios pass byte-identical to the pre-iteration baseline. Specifically: `cargo test -p fmpl-persistence --features fjall-backend` continues to pass at its post-ITER-0005c count (112) plus the new tests added by OBJ-1/OBJ-2. `cargo test -p fmpl-core --features persistence --lib` continues to pass at 328+1ignored. The sentinel-sweep script at `docs/superpowers/iterations/scripts/run_sentinels.sh` returns 26/0/4 (same skip set).
+
+**Impacted scenarios:** SCENARIO-0100 (extended for Grammar source-threading; cadence stays `iteration`). No sentinel scenarios touched on the regression side; OBJ-6 is the gate.
+
+**Depends on:** ITER-0005b (SourceStore + envelope's source_hash field exist), ITER-0005c (drop+reopen testing precedent + `?Sized` first-consumer discipline established).
+
+**Look-ahead:**
+- ITER-0005d picks up the ObjectDb source-threading design decision (encoded as an inherited carried gap on its scope card by OBJ-3).
+- ITER-0005b-SYNTH (still blocked by ITER-0005b-AST-SLOT) eventually closes AC-4/AC-5 (synthesizer for sourceless artifacts) — at which point ObjectDb's source-threading can move from `Hash::NONE` to synthesized constructor expressions if the design decision in OBJ-3 chose that path.
+
+**Build order:**
+
+1. **T1 — `Grammar::save_to_store` + `GrammarPersistenceError`** (OBJ-1 + OBJ-4). Mirror `CompiledCode::save_to_store`'s seam C precedent. Add the error type. Concrete generic `S: Store` bound (NOT `+ ?Sized` per inherited gap #3). Unit tests in-source: empty grammar round-trip, grammar-with-rules round-trip, source_hash matches `blake3(source)` for `Some`, source_hash equals `Hash::NONE` for `None`.
+2. **T2 — `Grammar::load_from_store`** (OBJ-2). Mirror `ParseState::load_from_store`'s shape. Transitional manual prefix-strip with `TODO(ITER-0005a.4)` comment (per ITER-0005c carried gap #2's pattern). Unit test in-source: round-trip survives strip; missing key returns `Ok(None)`; corrupt payload returns `Err(Deserialize)`.
+3. **T3 — Integration test `fmpl-persistence/tests/grammar_persistence.rs`** (OBJ-1 evidence at integration seam). Tests:
+   - `grammar_round_trip_with_source_dedups_in_source_store` — two grammars with the same source bytes share a single `SourceStore` entry, both envelopes carry identical `source_hash`.
+   - `grammar_round_trip_without_source_stamps_hash_none` — `None` source → `source_hash == Hash::NONE`, no entry written to source store.
+   - `grammar_survives_drop_and_reopen` — Grammar saved in one `FjallStore` session, store dropped, store reopened at the same path, Grammar loads byte-identical (modulo `Arc<Grammar>` identity — that doesn't survive cross-session).
+4. **T4 — SCENARIO-0100 corpus extension** (OBJ-5). Edit `docs/superpowers/iterations/behavior-corpus.md` to add either a new row for SCENARIO-0100-grammar OR extend the existing SCENARIO-0100 row's execution command set. Cadence: `iteration`.
+5. **T5 — Write the ObjectDb design decision** (OBJ-3). Two-place commit: this iteration's iteration-log entry has a "ObjectDb source-threading design call" heading with the decision narrative; ITER-0005d's scope card at roadmap.md ~line 2443 gains a new "Inherited carried gaps" entry pointing back at OBJ-3.
+6. **T6 — Wrap artifacts.** progress.md + WORKSPACE.md updated; STORY-0100 AC-3 status flipped from "deferred to ITER-0005b-OBJ" to "closed by ITER-0005b-OBJ"; roadmap.md status line on this card flipped from "pending" to "DONE YYYY-MM-DD".
+
+**Verification gates:**
+
+- `cargo build --workspace --all-features` clean.
+- `cargo clippy --all-targets --all-features -- -D warnings` clean.
+- `cargo test -p fmpl-persistence --features fjall-backend` — 112 + new tests, all passing.
+- `cargo test -p fmpl-core --features persistence --lib` — 328 + new in-source Grammar tests, all passing.
+- Sentinel sweep via `docs/superpowers/iterations/scripts/run_sentinels.sh` returns same 26/0/4 baseline.
+- `grep -n "save_to_store\|load_from_store" fmpl-core/src/grammar/mod.rs` returns the new methods (sanity check).
+- iteration-log + roadmap text updated per T5/T6.
+
+**PAR scope review focus (at iteration entry):**
+
+1. **Does OBJ-3's ObjectDb design call belong inside ITER-0005b-OBJ, or does it belong inside ITER-0005d's pre-iteration PAR?** Recommendation as drafted: write it here, validate it at ITER-0005d's PAR. An alternative: defer the entire ObjectDb design call to ITER-0005d's pre-PAR and shrink ITER-0005b-OBJ to AC-3 only.
+2. **Is the `S: Store` (no `?Sized`) bound on the new Grammar methods correct given that future iterations may need `&dyn Store`?** The first-consumer rule says yes — ship the concrete bound; relax when a real consumer appears. PAR should probe whether any in-flight iteration (ITER-0005d, ITER-0005e) is the first consumer and therefore the relaxation should land here as a forward-looking move. (Expected answer: no, ship concrete; relax later.)
+3. **Is the drop+reopen testing precedent the right choice for Grammar?** Probe whether GrammarRegistry's `Arc<Grammar>` reference-identity invariants are tested somewhere that drop+reopen would violate. (If yes, OBJ-5's `grammar_survives_drop_and_reopen` test needs adjustment.)
+4. **Is the "ship with `Hash::NONE` until first consumer demands otherwise" stance on ObjectDb correct?** PAR's two reviewers should disagree on this if there's genuine ambiguity — that disagreement is signal that the ObjectDb design call needs ITER-0005d-level depth, NOT a one-paragraph commitment in OBJ-3.
+
+**Out of scope:**
+
+- ObjectDb source-threading implementation (deferred to ITER-0005d; the design decision is in scope but implementation is not).
+- `Grammar::save_to_store` with a `&dyn Store` consumer (no consumer exists yet; relaxation waits for first consumer per `feedback_ship_infrastructure_with_first_consumer.md`).
+- Synthesizer for sourceless Grammar (built programmatically, not from source) — deferred to ITER-0005b-SYNTH (still blocked by ITER-0005b-AST-SLOT).
+- GrammarRegistry persistence (whole-registry save/load) — owned by ITER-0005d STORY-0019.
+
+**Sources:**
+
+- STORY-0100 AC-3 (`docs/superpowers/iterations/requirements/EPIC-003.md:261`).
+- ITER-0005b R-J-S-2 (ObjectDb shape mismatch deferral): `iteration-log.md:1405`.
+- ITER-0005b plan deferral note: `docs/superpowers/specs/2026-05-14-iter-0005b-plan.md:287` (AC-3 deferred).
+- ITER-0005c precedent: drop+reopen testing seam + `?Sized` first-consumer discipline (`iteration-log.md` ITER-0005c entry).
+- `feedback_ship_infrastructure_with_first_consumer.md` (motivates the `S: Store` concrete bound + `Hash::NONE` until first consumer).
+- `feedback_split_iterations_on_reader_writer_asymmetry.md` (motivates splitting AC-3 from ObjectDb work).
+- `feedback_calibrate_claims_to_evidence.md` (motivates the explicit "iteration cadence not sentinel" choice in OBJ-5).
+
+---
+
 #### ITER-PROCESS-TAGS — Strip process tags from source code (project-wide sweep)
 
 **Stories:** none (housekeeping iteration; enforces `feedback_no_story_names_in_code_comments.md` project-wide).
@@ -2405,24 +2483,28 @@ In-module-tier (`fmpl-persistence/src/recovery.rs::tests`):
 
 **Stories:** STORY-0014.
 
-**Status:** pending
+**Status:** done (2026-05-16). Pre-iteration PAR ran 4 rounds (R1+R2+R3 each returned REVISE with progressively smaller findings; R4 scope converged on textual fixes only and proceeded). Delivered: (a) STORY-0014 AC-1 calibrated from `journey` to `integration` impact with cross-process proof named as a carried gap; (b) SCENARIO-0018 binding and Action/Expected augmented to require drop+reopen + envelope source_hash recovery; (c) `CompiledCode::load_from_store` relaxed to `S: Store + ?Sized` with the drop+reopen test as its first consumer through `&dyn Store`; (d) two new tests `bytecode_survives_drop_and_reopen` (flat program) and `nested_code_survives_drop_and_reopen` (lambda-bearing). Scope details: `docs/superpowers/specs/2026-05-16-iter-0005c-scope-revision.md`.
 
 **Rationale:** Bytecode is the smallest, best-understood payload class (`CompiledCode` already has rkyv support per the original scope card). Use it as the **proof case** for the envelope + source-store + payload-writer pattern. If something breaks, debug it on a small target before scaling to the other four payload classes. This iteration validates that ITER-0005a's envelope and ITER-0005b's source-store compose cleanly through a real round-trip.
 
-**Impacted scenarios:** SCENARIO-0007 (or whichever sentinel proves bytecode survives a restart).
+**Impacted scenarios:** SCENARIO-0018 (the dedicated bytecode-Fjall round-trip scenario; integration seam, owns STORY-0014). SCENARIO-0004 references this work as part of its cross-cutting surface but is not closed by ITER-0005c.
 
 **Depends on:** ITER-0005a, ITER-0005b, ITER-0005b-FIX-A.
 
 **Look-ahead:** ITER-0005d will mirror this pattern across objects, grammar definitions, GrammarRegistry, memo tables.
 
-**Build order:**
+**Build order (as shipped 2026-05-16 — reconciled with the R4 scope at `docs/superpowers/specs/2026-05-16-iter-0005c-scope-revision.md`):**
 
-1. **T1 — Wire `CompiledCode` through the envelope writer.** Use ITER-0005a.2's `persistence::envelope::write` helper. Populate `source_hash` from ITER-0005b's content-addressed source store. Loader uses ITER-0005a.1's keyspace iterator + skip-on-incompatible logic. (Note: pre-2026-05-12 wording referenced `MigrationEngine::migrate` here; that engine was deferred per ITER-0005a.0's deferral rationale and will be revived as `MigrationVisitor` on ITER-0005e's tracer substrate when the first real schema change arrives.)
-2. **T2 — Process-restart round-trip test.** Spawn a subprocess (or simulate restart via a Vm wipe + reload), compile a simple expression, persist, restart, reload, verify result. Probably the integration boundary that proves the stack.
-3. **T3 — Scenario evidence** (the existing or new SCENARIO covering bytecode-persistence).
-4. **T4 — Wrap artifacts.**
+Pre-iteration PAR ran 4 rounds (R1+R2+R3 each REVISE). The original Build order below was rewritten in R4 because the pre-iteration audit revealed that T1/T2/T3 of the original card's plan were substantially already done in prior iterations. The shipped Build order:
 
-**Verification gates:** bytecode persistence round-trip passes, sentinel sweep green, clippy clean.
+1. **T0 — Documentation calibration.** Fixed citation errors in roadmap.md (this card's "Impacted scenarios" line), `requirements/EPIC-003.md` (STORY-0014 AC-1 wording and scenario binding), `behavior-scenarios.md` (SCENARIO-0018 Action + Expected augmentation), `behavior-corpus.md` (corpus row Title + Command).
+2. **T1 — `?Sized` relaxation on `CompiledCode::load_from_store` only.** `fmpl-core/src/compiler.rs:760` — added `+ ?Sized` to the type-bound. ObjectDb / ParseState peer `load_from_store` deliberately left un-relaxed per `feedback_ship_infrastructure_with_first_consumer`; their relaxation is a carried gap owned by ITER-0005d (see ITER-0005d card).
+3. **T2 — Two new drop+reopen integration tests** at `fmpl-persistence/tests/bytecode_persistence.rs`: `bytecode_survives_drop_and_reopen` (flat program "1+2") and `nested_code_survives_drop_and_reopen` (lambda-bearing program). Both exercise `CompiledCode::load_from_store(&store2 as &dyn Store, ...)` as the first consumer of T1's relaxation.
+4. **T3 — Artifact wrap-up.** STORY-0014 marked `done:ITER-0005c`; SCENARIO-0018 Automation status → automated; iteration-log entry appended with carried gaps and lessons; progress.md updated.
+
+**Original pre-R4 Build order (preserved for context):** T1: wire CompiledCode through envelope writer; T2: process-restart subprocess test; T3: scenario evidence; T4: wrap. Pre-iteration PAR R1 surfaced that T1's wiring was already done at `fmpl-core/src/compiler.rs:721-783` and the same-handle round-trip + source-store integration were already proven at `fmpl-persistence/tests/bytecode_persistence.rs:39-180`. R2 surfaced that a proposed compiler-free instrumentation ratchet was structurally vacuous (no transitive reach from `load_from_store` to `Compiler`). R3 surfaced that an over-broad `?Sized` sibling sweep (to ObjectDb + ParseState) would manufacture consumers via mirror tests. R4 narrowed scope to the genuine novel delta and proceeded. Pre-2026-05-12 wording referenced `MigrationEngine::migrate`; that engine was deferred per ITER-0005a.0's deferral rationale and will be revived as `MigrationVisitor` on ITER-0005e's tracer substrate when the first real schema change arrives.
+
+**Verification gates (as run):** `cargo test -p fmpl-persistence --features fjall-backend --test bytecode_persistence` (9 passed; +2 from this iteration); full `fmpl-persistence` test sweep 112 passed; `fmpl-core` lib tests 328 passed; clippy workspace-wide clean; sentinel sweep 26/0/4 byte-identical to baseline.
 
 ---
 
@@ -2435,6 +2517,11 @@ In-module-tier (`fmpl-persistence/src/recovery.rs::tests`):
 **Rationale:** Four payload classes that share the same machinery proven in ITER-0005c. Each has its own serialization detail (objects already derive Serialize; grammar semantic actions contain AST expressions — the hardest case per the original scope; memo tables are partially Fjall-integrated already). This is parallel work across four targets, not a single monolithic story.
 
 **Caveat at iteration entry:** if this still feels too large after running-an-iteration's pre-scope review, split along the AC hardness boundary — one iteration for "objects + GrammarRegistry" (easier; existing Serialize derives), another for "grammar definitions with AST semantic actions + memo tables" (harder; needs careful round-trip semantics). The PAR scope review at iteration entry will surface whether this split is needed.
+
+**Inherited carried gaps from ITER-0005c (closing PAR):**
+1. **Per-payload-class testing seam decision.** ITER-0005c set drop+reopen-on-same-path as its precedent for bytecode. ITER-0005d's scope card MUST explicitly revisit drop+reopen vs subprocess for each payload class — drop+reopen is not silently inherited. Some payload classes (e.g. grammar definitions with AST semantic actions) may have preconditions that make subprocess testing the better choice.
+2. **`?Sized` relaxation on `ObjectDb::load_from_store`** (`fmpl-core/src/object.rs:223`) and **`ParseState::load_from_store`** (`fmpl-core/src/grammar/incremental.rs:167`). ITER-0005c relaxed only `CompiledCode::load_from_store` because that was the only peer with a real `&dyn Store` consumer in scope (per `feedback_ship_infrastructure_with_first_consumer`). When ITER-0005d wires a real `&dyn Store` consumer through ObjectDb or ParseState, that iteration owns the relaxation **with its first consumer**.
+3. **Save-side `?Sized` asymmetry on ObjectDb/ParseState** (`object.rs:184`, `incremental.rs:123`). `CompiledCode::save_to_store` is already `+ ?Sized` (from prior iteration); the other two save peers are not. Same first-consumer treatment.
 
 **Impacted scenarios:** SCENARIO-0008 (objects), SCENARIO-0010/0011 (grammars).
 
@@ -2465,6 +2552,9 @@ In-module-tier (`fmpl-persistence/src/recovery.rs::tests`):
 **Architectural framing (2026-05-12, post-PAR retrospective):** Per `docs/superpowers/specs/2026-05-12-lessons-from-siblings.md` §2.5 — the Smalltalk tracer family is a **generic object-graph walker with pluggable visitor semantics**, not just a migration tool. ITER-0005e is the right home for the **tracer substrate** because `Vm::snapshot`'s determinism + reproducibility requirements pin the substrate's design correctly. The substrate's first visitor (`SerializationVisitor`) is the consumer that earns its keep; ITER-0006's `ReachabilityVisitor` (seed-snapshot) then inherits the substrate without rework; the eventual `MigrationVisitor` (first real schema change) lands as a third visitor on the same substrate, replacing what was deferred from ITER-0005a.0. This is the "infrastructure ships with its first consumer" discipline (per `feedback_ship_infrastructure_with_first_consumer.md`) applied at the right granularity — the visitor pattern, not the engine, is what waits for a consumer; the substrate ships when the first visitor demands it.
 
 **Implication for build order:** rather than hand-rolling `Vm::snapshot`'s traversal, design the snapshot as the first visitor on the tracer substrate. The substrate's design is pinned by `SerializationVisitor`'s needs (deterministic traversal order, cycle handling, single-write-per-object guarantee) — NOT by speculation about future visitors.
+
+**Inherited carried gaps from ITER-0005c (closing PAR):**
+1. **Snapshot template question.** ITER-0005c set drop+reopen-on-same-path as the precedent for single-payload-class persistence but explicitly made NO walk-forward commitment for the snapshot API. ITER-0005e's snapshot semantics (taking a directory, writing/reading multiple keyspaces atomically: object db, bytecode store, source store, grammar registry, memo tables) may require a different pattern — e.g. atomic-rename (`tmp_dir → final_dir`) or a manifest+versioned-pointer — because cross-keyspace atomicity isn't proven by single-store drop+reopen. ITER-0005e's pre-iteration PAR must decide between (a) extending drop+reopen to multi-keyspace, (b) atomic-rename, or (c) a manifest-pointer pattern, and pin the choice before T1 lands.
 
 **Impacted scenarios:** SCENARIO-0009, SCENARIO-0019.
 

@@ -200,3 +200,113 @@ fn save_without_source_stamps_none() {
         "source: None must stamp Hash::NONE (all-zeros)"
     );
 }
+
+/// SCENARIO-0018: bytecode survives a drop+reopen of `FjallStore` at the
+/// same path within the same process. Proves STORY-0014 AC-1's
+/// "integration-seam" claim: after the store handle is closed and a fresh
+/// handle is opened at the same path, the bytecode loads by key and runs.
+///
+/// Also asserts the envelope's `source_hash` and the corresponding source
+/// bytes both survive drop+reopen — proves the envelope + source store
+/// composition is durable, not just the payload.
+///
+/// The load goes through `&dyn Store` (exercising the `?Sized` relaxation
+/// of `CompiledCode::load_from_store` shipped in the same iteration as its
+/// first consumer).
+#[test]
+fn bytecode_survives_drop_and_reopen() {
+    use fmpl_persistence::Store;
+    use fmpl_persistence::envelope::EnvelopeHeader;
+    use zerocopy::FromBytes;
+
+    let dir = tempfile::tempdir().unwrap();
+    let bytecode_path = dir.path().join("bytecode");
+    let sources_path = dir.path().join("sources");
+
+    let source = "1 + 2";
+    let key = "k";
+
+    // Phase 1: open stores, compile, save, drop.
+    {
+        let store = FjallStore::open(&bytecode_path).unwrap();
+        let source_store = SourceStore::open(&sources_path).unwrap();
+        let code = compile(source);
+        code.save_to_store(&store, &source_store, key, Some(source.as_bytes()))
+            .unwrap();
+    } // store + source_store dropped here; fjall releases the single-writer lock
+
+    // Phase 2: fresh handles at the SAME paths, load through `&dyn Store`,
+    // execute on a fresh Vm.
+    let store2 = FjallStore::open(&bytecode_path).unwrap();
+    let source_store2 = SourceStore::open(&sources_path).unwrap();
+
+    let store_dyn: &dyn Store = &store2;
+    let restored = CompiledCode::load_from_store(store_dyn, key)
+        .unwrap()
+        .expect("bytecode must be loadable after drop+reopen");
+    assert_eq!(
+        eval_code(&restored),
+        Value::Int(3),
+        "restored bytecode must execute to the original value"
+    );
+
+    // Envelope's source_hash survives drop+reopen and resolves in source_store2.
+    let raw = store2
+        .get(key.as_bytes())
+        .unwrap()
+        .expect("envelope must be present at the key after drop+reopen");
+    let (hdr, _) = EnvelopeHeader::ref_from_prefix(&raw[..])
+        .expect("raw bytes must frame a complete envelope header");
+    let source_hash = fmpl_persistence::Hash::from_bytes(hdr.source_hash);
+    assert_ne!(
+        source_hash,
+        fmpl_persistence::Hash::NONE,
+        "envelope source_hash must be non-NONE after drop+reopen"
+    );
+    let recovered = source_store2
+        .get(source_hash)
+        .unwrap()
+        .expect("source bytes must be in source_store after drop+reopen");
+    assert_eq!(
+        recovered.as_slice(),
+        source.as_bytes(),
+        "source_hash must resolve to original source bytes after drop+reopen"
+    );
+}
+
+/// SCENARIO-0018 second sub-test: a `nested: Vec<CompiledCode>`-bearing
+/// program (lambda call) also survives drop+reopen. Closes the
+/// "`nested` round-trip across drop+reopen" gap surfaced by pre-iteration
+/// PAR.
+#[test]
+fn nested_code_survives_drop_and_reopen() {
+    use fmpl_persistence::Store;
+
+    let dir = tempfile::tempdir().unwrap();
+    let bytecode_path = dir.path().join("bytecode");
+    let sources_path = dir.path().join("sources");
+
+    let source = "let f = \\x x + 1; f(41)";
+    let key = "lambda";
+
+    // Phase 1.
+    {
+        let store = FjallStore::open(&bytecode_path).unwrap();
+        let source_store = SourceStore::open(&sources_path).unwrap();
+        let code = compile(source);
+        code.save_to_store(&store, &source_store, key, Some(source.as_bytes()))
+            .unwrap();
+    }
+
+    // Phase 2.
+    let store2 = FjallStore::open(&bytecode_path).unwrap();
+    let store_dyn: &dyn Store = &store2;
+    let restored = CompiledCode::load_from_store(store_dyn, key)
+        .unwrap()
+        .expect("nested bytecode must be loadable after drop+reopen");
+    assert_eq!(
+        eval_code(&restored),
+        Value::Int(42),
+        "lambda-bearing bytecode must execute correctly after drop+reopen"
+    );
+}

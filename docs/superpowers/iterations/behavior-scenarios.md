@@ -503,7 +503,7 @@
 **Sources:**
 - `docs/plans/2026-03-03-self-hosting-bootstrap-implementation.md:220-246`
 
-## SCENARIO-0018 — Bytecode round-trip through Fjall persistence
+## SCENARIO-0018 — Bytecode round-trip through Fjall persistence — drop+reopen
 
 **Kind:** contract
 **Proof seam:** integration
@@ -512,22 +512,25 @@
 **Preconditions:**
 - Fjall keyspace is available via tempdir
 - Bytecode save/load functions exist
+- `FjallStore::open` releases its single-writer lock on `Drop` (fjall library guarantee, not asserted by our code), so re-opening at the same path in the same process succeeds
 
 **Action:**
-- Compile '1 + 2' to CompiledCode
-- Save bytecode to Fjall with key 'test_key'
-- Load bytecode from Fjall with key 'test_key'
-- Execute restored bytecode in a VM
+1. Open `FjallStore` and `SourceStore` at sibling subdirs of a tempdir
+2. Compile '1 + 2' to `CompiledCode`
+3. Save bytecode to the store under key 'k' with source bytes (`save_to_store(&store, &source_store, "k", Some(b"1 + 2"))`)
+4. Drop both stores (releases fjall's single-writer lock)
+5. Re-open `FjallStore` and `SourceStore` at the SAME paths (fresh handles)
+6. Load bytecode via `&dyn Store`: `CompiledCode::load_from_store(&store2 as &dyn Store, "k")`
+7. Execute restored bytecode on a fresh `Vm`
 
 **Expected observables:**
-- Compilation succeeds
-- Save succeeds
-- Load succeeds, returns CompiledCode
-- Produces Value::Int(3)
-- Compiled bytecode survives save/restore and executes correctly
+- Step (7) returns `Value::Int(3)` (proves bytecode survived drop+reopen)
+- The raw envelope bytes at `store2.get(b"k")` decode to a valid `EnvelopeHeader` whose `source_hash` is non-`Hash::NONE`
+- `source_store2.get(Hash::from_bytes(envelope.source_hash))` returns the original source bytes `b"1 + 2"` (proves the envelope and the source-store both survive drop+reopen)
+- A second sub-scenario uses the source `let f = \\x x + 1; f(41)` (a `nested: Vec<CompiledCode>`-bearing program) and observes `Value::Int(42)`, proving lambda/method nesting also survives drop+reopen
 
-**Automation status:** pending
-**Execution command:** TBD
+**Automation status:** automated
+**Execution command:** `cargo test -p fmpl-persistence --features fjall-backend --test bytecode_persistence drop_and_reopen`
 
 **Sources:**
 - `docs/plans/2026-03-03-self-hosting-bootstrap-implementation.md:265-288`

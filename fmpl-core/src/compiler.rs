@@ -757,7 +757,7 @@ impl CompiledCode {
     /// payload; this will be replaced with `loader::decode(&bytes)`
     /// returning a `DecodedRecord` whose `payload` is the borrowed
     /// `serde_json::from_slice` input.
-    pub fn load_from_store<S: crate::persistence::Store>(
+    pub fn load_from_store<S: crate::persistence::Store + ?Sized>(
         store: &S,
         key: &str,
     ) -> Result<Option<Self>> {
