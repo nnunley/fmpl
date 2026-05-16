@@ -11,7 +11,7 @@
 
 ## 3. Runtime/REPL Path Cleanup
 - [x] 3.1 Remove legacy-only completeness assumptions from `is_complete` and align behavior with generated parser workflow.
-- [ ] 3.2 Add CI/test guard preventing new `eval_with_legacy_parser` callsites outside allowlist.
+- [ ] 3.2 Add CI/test guard preventing new `eval_via_legacy_parser` callsites outside allowlist.
 
 ## 4. Integration Tests
 - [ ] 4.1 Add stage0 bootstrap integration test (legacy-allowed bootstrap artifact generation).
@@ -19,9 +19,9 @@
 - [ ] 4.3 Add end-to-end test proving regenerated parser compiles and evaluates a representative corpus.
 
 ## 5. Documentation Updates (docs/ review)
-- [x] 5.1 Update `docs/plans/2026-01-29-scannerless-fmpl-parser.md` with staged bootstrap status and cutover constraints.
+- [ ] 5.1 Update `docs/plans/2026-01-29-scannerless-fmpl-parser.md` with staged bootstrap status and cutover constraints.
 - [ ] 5.2 Update `docs/design/project-overview-draft.md` to reflect generated-parser-first bootstrap posture.
-- [x] 5.3 Add a concise operator/developer runbook for bootstrap regeneration commands and troubleshooting.
+- [ ] 5.3 Add a concise operator/developer runbook for bootstrap regeneration commands and troubleshooting.
 
 ## 6. Validation and Handoff
 - [ ] 6.1 Run `openspec validate update-parser-bootstrap-cutover --strict`.

@@ -50,3 +50,7 @@ test_*
 !docs/superpowers/
 docs/superpowers/iterations/scratch/
 docs/superpowers/specs/.clearance-rendered-preview-*/
+
+# Override global ignore for OpenSpec spec-driven-development artifacts
+!openspec/
+!openspec/**
