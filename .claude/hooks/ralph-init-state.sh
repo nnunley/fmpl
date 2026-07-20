@@ -1,1 +1,0 @@
-/Users/ndn/development/ralph-loop/hooks/ralph-init-state.sh

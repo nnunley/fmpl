@@ -1,9 +1,0 @@
-[02:20:50] Ralph loop started: prompt=PROMPT.md max=1
-[02:20:50] --- Iteration 1 ---
-[02:24:59] Raw log: .ralph-logs/iter-20260304-022050-001.jsonl (202 events, 249s)
-[02:24:59] COMPLETED [0ccfc9c feat(core)] add human.approve() builtin for approval requests (249s)
-[02:24:59] Reached max iterations (1)
-[02:24:59] === Ralph Loop Summary ===
-[02:24:59] Iterations: 2  Completed: 1  Blocked: 0  Closed: 0
-[02:24:59] Session: .ralph-logs/session-20260304-022050.log
-[02:24:59] =========================

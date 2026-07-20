@@ -1,9 +1,0 @@
-[02:15:38] Ralph loop started: prompt=PROMPT.md max=1
-[02:15:38] --- Iteration 1 ---
-[02:20:49] Raw log: .ralph-logs/iter-20260304-021538-001.jsonl (145 events, 311s)
-[02:20:49] NO STRUCTURED OUTPUT (311s, $,  turns) — check .ralph-logs/iter-20260304-021538-001.jsonl
-[02:20:49] Reached max iterations (1)
-[02:20:49] === Ralph Loop Summary ===
-[02:20:49] Iterations: 2  Completed: 0  Blocked: 0  Closed: 0
-[02:20:49] Session: .ralph-logs/session-20260304-021538.log
-[02:20:49] =========================

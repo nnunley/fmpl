@@ -1,2 +1,0 @@
-# Approved Skills
-
