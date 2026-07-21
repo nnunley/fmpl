@@ -84,6 +84,12 @@ just tui                         # TUI (Ctrl+L for LLM chat)
 
 ## Documentation Conventions
 
+- **```` ```fmpl ```` blocks in TUTORIAL.md / DEMO.md / README.md are executed
+  in CI** by `fmpl-core/tests/doc_examples.rs`; `-- Returns:` / `-- =>` /
+  `// =>` comments are asserted against real results. Mark blocks that can't
+  run (network) with `<!-- fmpl-doctest: skip -->` before the fence; use the
+  ```` ```fmpl-sketch ```` tag for non-executable design sketches. Full
+  conventions in the harness header.
 - Discoveries during implementation that need fixing → `specs/`
 - Design decisions → `docs/`
 - Build/workflow rules and gotchas → `AGENTS.md` (this file); codebase
