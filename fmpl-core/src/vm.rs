@@ -4481,7 +4481,36 @@ impl Vm {
         Value::Map(Arc::new(map))
     }
 
+    /// Type-predicate and reflection methods that apply to *every* value,
+    /// regardless of receiver type — so `n.is_number()` works in a guard even
+    /// when `n` is a bare int. Returns `None` for names that are not universal,
+    /// leaving the normal per-type dispatch to run. Predicates ignore args.
+    fn universal_method(receiver: &Value, name: &str) -> Option<Value> {
+        let b = |v: bool| Some(Value::Bool(v));
+        match name {
+            "is_null" => b(matches!(receiver, Value::Null)),
+            "is_bool" => b(matches!(receiver, Value::Bool(_))),
+            "is_int" => b(matches!(receiver, Value::Int(_))),
+            "is_float" => b(matches!(receiver, Value::Float(_))),
+            "is_number" => b(matches!(receiver, Value::Int(_) | Value::Float(_))),
+            "is_string" => b(matches!(receiver, Value::String(_))),
+            "is_symbol" => b(matches!(receiver, Value::Symbol(_))),
+            "is_list" => b(matches!(receiver, Value::List(_))),
+            "is_map" => b(matches!(receiver, Value::Map(_))),
+            "is_object" => b(matches!(receiver, Value::Object(_))),
+            "type_name" => Some(Value::Symbol(SmolStr::new(receiver.type_name()))),
+            _ => None,
+        }
+    }
+
     fn call_method(&mut self, receiver: Value, name: &str, args: Vec<Value>) -> Result<()> {
+        // Universal methods (type predicates + type_name) come first so they
+        // work on any receiver, including primitives that have no method table.
+        if let Some(result) = Self::universal_method(&receiver, name) {
+            let frame = self.frames.last_mut().unwrap();
+            frame.set_current(result);
+            return Ok(());
+        }
         match receiver {
             Value::Symbol(ref s) if s.starts_with("__builtin_") => {
                 let result = self.call_builtin(s.as_str(), name, args)?;
@@ -5316,6 +5345,28 @@ mod tests {
         let mut vm = Vm::new();
         let result = eval(&mut vm, "[1, 2, 3].len()").unwrap();
         assert_eq!(result, Value::Int(3));
+    }
+
+    #[test]
+    fn test_universal_type_predicates() {
+        // Predicates work on bare primitives (no method table), including in guards.
+        let cases = [
+            ("(42).is_number()", Value::Bool(true)),
+            ("(42).is_int()", Value::Bool(true)),
+            ("(42).is_string()", Value::Bool(false)),
+            ("\"hi\".is_string()", Value::Bool(true)),
+            ("[1, 2].is_list()", Value::Bool(true)),
+            ("true.is_bool()", Value::Bool(true)),
+            ("null.is_null()", Value::Bool(true)),
+            ("(3.5).is_number()", Value::Bool(true)),
+            ("(3.5).is_int()", Value::Bool(false)),
+            ("42 @ { n when n.is_number() => n * 2, _ => 0 }", Value::Int(84)),
+        ];
+        for (src, expected) in cases {
+            let mut vm = Vm::new();
+            let result = eval(&mut vm, src).unwrap_or_else(|e| panic!("{src}: {e}"));
+            assert_eq!(result, expected, "{src}");
+        }
     }
 
     /// T-9: Deep Nesting
