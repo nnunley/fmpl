@@ -10,14 +10,18 @@ description = "FMPL language core: lexer, parser, compiler, and VM"
 default = []
 # Use trampolined grammar evaluation for bounded stack usage
 trampolined-grammar = []
-# Enable cross-compilation to execution_tape VM
-cross_compile = ["execution_tape"]
+# Cross-compilation to the external `execution_tape` VM. That crate is not part
+# of this repo, so the dependency below is commented out and this feature is
+# dormant (declared so `#[cfg(feature = "cross_compile")]` stays warning-free).
+# To re-enable: vendor `execution_tape`, uncomment the dependency, and set this
+# to `cross_compile = ["execution_tape"]`.
+cross_compile = []
 # Enable Fjall-backed persistence for objects, bytecode, and grammars
 fjall-persistence = []
 
 [dependencies]
 curl = "0.4"
-execution_tape = { optional = true, path = "../../execution/execution_tape", package = "execution_tape" }
+# execution_tape = { optional = true, path = "../../execution/execution_tape", package = "execution_tape" }  # external crate; see the `cross_compile` feature above
 fjall = "3"
 logos = { workspace = true }
 rand = "0.8"
