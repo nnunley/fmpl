@@ -97,7 +97,8 @@ Source → Lexer (logos) → Parser → AST → Compiler → Indexed RPN bytecod
 - [Engineering tour](https://mparrett.github.io/fmpl/fmpl-tour.html) — one-page overview: architecture, what works, what doesn't
 - [`project.md`](project.md) — north star, principles, design lineage
 - [`docs/design-principles.md`](docs/design-principles.md) — durable design invariants
-- [`AGENTS.md`](AGENTS.md) — build/test conventions and architecture notes
+- [`AGENTS.md`](AGENTS.md) — workflow rules and gotchas for agents and humans
+- [`DEV.md`](DEV.md) — codebase inventory: workspace layout, key files, documentation map
 - [`TUTORIAL.md`](TUTORIAL.md) / [`DEMO.md`](DEMO.md) — language walkthrough and examples
 - [`specs/`](specs/) — implementation specs (VM, object system, grammars, tuplespace, persistence, pattern matching)
 
