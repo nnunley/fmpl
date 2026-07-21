@@ -1,0 +1,669 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FMPL: An Engineering Tour</title>
+<style>
+  :root {
+    --ground: #f7f5f0;
+    --surface: #fffefb;
+    --panel: #f0ede4;
+    --ink: #26241e;
+    --muted: #6c6a60;
+    --faint: #97948a;
+    --accent: #a5661a;
+    --accent-ink: #8a5413;
+    --works: #296e63;
+    --works-bg: #e3ede9;
+    --partial: #986013;
+    --partial-bg: #f2e8d5;
+    --missing: #a44a3d;
+    --missing-bg: #f2e2dd;
+    --line: #e2ded2;
+    --line-strong: #cfcaba;
+    --code-bg: #f0ede4;
+    --term-ground: #16181d;
+    --term-ink: #d8d4c8;
+    --term-amber: #e0a458;
+    --term-teal: #7db8ac;
+    --term-muted: #6e7076;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #16181d;
+      --surface: #1d2026;
+      --panel: #1a1d23;
+      --ink: #e3e0d7;
+      --muted: #9b988d;
+      --faint: #6e6c64;
+      --accent: #e0a458;
+      --accent-ink: #e6b06c;
+      --works: #7db8ac;
+      --works-bg: #1d2b28;
+      --partial: #d9a763;
+      --partial-bg: #2b2519;
+      --missing: #c7705f;
+      --missing-bg: #2d1f1c;
+      --line: #2c2f37;
+      --line-strong: #3d414b;
+      --code-bg: #1a1d23;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f7f5f0;
+    --surface: #fffefb;
+    --panel: #f0ede4;
+    --ink: #26241e;
+    --muted: #6c6a60;
+    --faint: #97948a;
+    --accent: #a5661a;
+    --accent-ink: #8a5413;
+    --works: #296e63;
+    --works-bg: #e3ede9;
+    --partial: #986013;
+    --partial-bg: #f2e8d5;
+    --missing: #a44a3d;
+    --missing-bg: #f2e2dd;
+    --line: #e2ded2;
+    --line-strong: #cfcaba;
+    --code-bg: #f0ede4;
+  }
+  :root[data-theme="dark"] {
+    --ground: #16181d;
+    --surface: #1d2026;
+    --panel: #1a1d23;
+    --ink: #e3e0d7;
+    --muted: #9b988d;
+    --faint: #6e6c64;
+    --accent: #e0a458;
+    --accent-ink: #e6b06c;
+    --works: #7db8ac;
+    --works-bg: #1d2b28;
+    --partial: #d9a763;
+    --partial-bg: #2b2519;
+    --missing: #c7705f;
+    --missing-bg: #2d1f1c;
+    --line: #2c2f37;
+    --line-strong: #3d414b;
+    --code-bg: #1a1d23;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 1.0625rem;
+    line-height: 1.65;
+  }
+  .wrap { max-width: 62rem; margin: 0 auto; padding: 0 1.5rem; }
+  .prose { max-width: 44rem; }
+  .prose p { margin: 0 0 1.1em; }
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 0.08em 0.35em;
+    white-space: nowrap;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1rem 1.25rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    margin: 1.25rem 0;
+  }
+  pre code { background: none; border: none; padding: 0; white-space: pre; font-size: inherit; }
+
+  /* ---------- masthead ---------- */
+  header.masthead { padding: 4.5rem 0 0; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 1.25rem;
+  }
+  h1 {
+    font-size: clamp(2.6rem, 6vw, 4rem);
+    line-height: 1.05;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 0 0 1rem;
+    text-wrap: balance;
+  }
+  h1 .of { font-style: italic; font-weight: 400; color: var(--muted); }
+  .dek {
+    font-size: 1.3rem;
+    line-height: 1.5;
+    color: var(--muted);
+    max-width: 40rem;
+    margin: 0 0 1.75rem;
+    text-wrap: balance;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.75rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--muted);
+    border-top: 1px solid var(--line-strong);
+    border-bottom: 1px solid var(--line-strong);
+    padding: 0.7rem 0;
+    margin-bottom: 2.5rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .meta-row b { color: var(--ink); font-weight: 600; }
+
+  /* ---------- terminal hero ---------- */
+  .term {
+    background: var(--term-ground);
+    border: 1px solid #2c2f37;
+    border-radius: 6px;
+    padding: 1.1rem 1.4rem 1.3rem;
+    font-family: var(--mono);
+    font-size: 0.8125rem;
+    line-height: 1.75;
+    color: var(--term-ink);
+    white-space: pre;
+    overflow-x: auto;
+    margin: 0 0 1rem;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.25), 0 12px 40px -18px rgba(224,164,88,0.25);
+  }
+  .term .bar { color: var(--term-muted); display: block; margin-bottom: 0.6rem; user-select: none; }
+  .term .p { color: var(--term-amber); }
+  .term .o { color: var(--term-teal); }
+  .term .c { color: var(--term-muted); }
+  .term-cap {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    color: var(--faint);
+    margin: 0 0 3.5rem;
+  }
+
+  /* ---------- sections ---------- */
+  section { margin: 0 0 4.5rem; }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    border-top: 2px solid var(--ink);
+    padding-top: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    color: var(--accent-ink);
+    white-space: nowrap;
+  }
+  h2 {
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h3 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin: 2.2rem 0 0.6rem;
+  }
+  h3 code { font-size: 0.85em; }
+
+  /* ---------- toc ---------- */
+  nav.toc { margin: 0 0 4.5rem; }
+  nav.toc ol {
+    list-style: none;
+    margin: 0; padding: 0;
+    columns: 2;
+    column-gap: 3rem;
+    max-width: 44rem;
+  }
+  nav.toc li { margin: 0 0 0.35rem; break-inside: avoid; }
+  nav.toc a {
+    display: flex;
+    gap: 0.75rem;
+    align-items: baseline;
+    text-decoration: none;
+    color: var(--ink);
+    padding: 0.15rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  nav.toc a:hover { color: var(--accent-ink); }
+  nav.toc .n { font-family: var(--mono); font-size: 0.7rem; color: var(--accent-ink); }
+  @media (max-width: 40rem) { nav.toc ol { columns: 1; } }
+
+  /* ---------- pipeline diagram ---------- */
+  .pipeline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 0;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    margin: 1.5rem 0;
+  }
+  .pipeline .stage {
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    padding: 0.55rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.1rem;
+  }
+  .pipeline .stage small { color: var(--muted); font-size: 0.65rem; }
+  .pipeline .arrow {
+    display: flex;
+    align-items: center;
+    padding: 0 0.5rem;
+    color: var(--accent-ink);
+    user-select: none;
+  }
+
+  /* ---------- crate map ---------- */
+  .crates {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 1px;
+    background: var(--line-strong);
+    border: 1px solid var(--line-strong);
+    margin: 1.5rem 0;
+  }
+  .crate { background: var(--surface); padding: 1rem 1.2rem; }
+  .crate.core { grid-column: 1 / -1; }
+  .crate h4 {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin: 0 0 0.35rem;
+    color: var(--accent-ink);
+  }
+  .crate p { margin: 0; font-size: 0.9rem; color: var(--muted); line-height: 1.5; }
+
+  /* ---------- field notes ---------- */
+  .fieldnote {
+    border-left: 3px solid var(--accent);
+    background: var(--panel);
+    padding: 1rem 1.4rem;
+    margin: 1.75rem 0;
+    max-width: 44rem;
+  }
+  .fieldnote .fn-label {
+    font-family: var(--mono);
+    font-size: 0.65rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    display: block;
+    margin-bottom: 0.4rem;
+  }
+  .fieldnote p { margin: 0 0 0.75em; font-size: 0.95rem; }
+  .fieldnote p:last-child { margin-bottom: 0; }
+
+  /* ---------- capability list ---------- */
+  .caps { list-style: none; margin: 1.25rem 0; padding: 0; max-width: 48rem; }
+  .caps li {
+    display: flex;
+    gap: 0.9rem;
+    align-items: baseline;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.95rem;
+  }
+  .chip {
+    font-family: var(--mono);
+    font-size: 0.625rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.15rem 0.5rem;
+    border-radius: 2px;
+    white-space: nowrap;
+    flex-shrink: 0;
+    min-width: 4.4rem;
+    text-align: center;
+  }
+  .chip.works { color: var(--works); background: var(--works-bg); }
+  .chip.partial { color: var(--partial); background: var(--partial-bg); }
+  .chip.missing { color: var(--missing); background: var(--missing-bg); }
+  .caps li .what { flex: 1; }
+  .caps li .what code { white-space: nowrap; }
+
+  /* ---------- gap ledger ---------- */
+  .ledger { border: 1px solid var(--line-strong); margin: 1.5rem 0; }
+  .ledger-row {
+    display: grid;
+    grid-template-columns: 4.5rem 1fr;
+    border-bottom: 1px solid var(--line);
+  }
+  .ledger-row:last-child { border-bottom: none; }
+  .ledger-row .count {
+    font-family: var(--mono);
+    font-size: 1.15rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--missing);
+    padding: 0.9rem 0 0.9rem 1.1rem;
+  }
+  .ledger-row .desc { padding: 1rem 1.25rem 1rem 0.5rem; }
+  .ledger-row .desc b { display: block; font-size: 0.95rem; }
+  .ledger-row .desc span { font-size: 0.875rem; color: var(--muted); }
+
+  /* ---------- principles ---------- */
+  .principles { margin: 1.5rem 0; padding: 0; max-width: 46rem; }
+  .principles dt {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--accent-ink);
+    margin: 1.4rem 0 0.2rem;
+  }
+  .principles dt b { color: var(--ink); font-size: 0.95rem; font-family: var(--serif); font-weight: 600; margin-left: 0.5rem; letter-spacing: 0; }
+  .principles dd { margin: 0; color: var(--muted); font-size: 0.95rem; }
+
+  /* ---------- footer ---------- */
+  footer {
+    border-top: 2px solid var(--ink);
+    padding: 1.25rem 0 4rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 2rem;
+  }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0 2.5rem; align-items: start; }
+  @media (max-width: 52rem) { .two-col { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">Engineering tour &middot; github.com/mparrett/fmpl</p>
+  <h1>FMPL<span class="of">, &ldquo;of Accardi&rdquo;</span></h1>
+  <p class="dek">A 1992 MUD-server language, revived in Rust as a streaming-first substrate for AI agents — with first-class PEG grammars, an indexed-RPN bytecode VM, and a parser that compiles itself.</p>
+  <div class="meta-row">
+    <span><b>Rust</b> edition 2024</span>
+    <span><b>6</b> workspace crates</span>
+    <span><b>1,390</b> tests passing</span>
+    <span><b>185</b> pinned to future features</span>
+    <span><b>MIT</b> license</span>
+  </div>
+
+  <div class="term" role="img" aria-label="An FMPL REPL session demonstrating pattern matching, grammars, and the metaprogramming pipeline">
+<span class="bar">$ just repl &nbsp;·&nbsp; FMPL v0.1.0</span><span class="p">fmpl&gt;</span> [1, 2, 3].map(\x x * 2)
+<span class="o">=&gt; [2, 4, 6]</span>
+<span class="p">fmpl&gt;</span> %{name: "Ada", age: 36} @ { %{name: _:n, age: _:a} when a &gt;= 18 =&gt; "adult: " + n }
+<span class="o">=&gt; "adult: Ada"</span>
+<span class="p">fmpl&gt;</span> let g = grammar { num = [0-9]+:d =&gt; d }
+<span class="p">fmpl&gt;</span> "42" @ g.num
+<span class="o">=&gt; "42"</span>
+<span class="p">fmpl&gt;</span> ast::parse("1 + 2")
+<span class="o">=&gt; [:Binary, :+, [:Int, 1], [:Int, 2]]</span>
+<span class="p">fmpl&gt;</span> code::eval(ir::compile([:Add, [:LoadInt, 1], [:LoadInt, 2]]))
+<span class="o">=&gt; 3</span>
+<span class="c">-- every snippet in this post was run against this REPL, 2026-07-20</span></div>
+  <p class="term-cap">Lists, pattern guards, a user-defined grammar, and the parse&nbsp;&rarr;&nbsp;IR&nbsp;&rarr;&nbsp;bytecode&nbsp;&rarr;&nbsp;eval pipeline — in nine lines of REPL.</p>
+</header>
+
+<nav class="toc" aria-label="Contents">
+  <ol>
+    <li><a href="#lineage"><span class="n">§1</span> Lineage and thesis</a></li>
+    <li><a href="#architecture"><span class="n">§2</span> Architecture</a></li>
+    <li><a href="#bootstrap"><span class="n">§3</span> The metacircular bootstrap</a></li>
+    <li><a href="#capabilities"><span class="n">§4</span> What works today</a></li>
+    <li><a href="#gaps"><span class="n">§5</span> The gap ledger</a></li>
+    <li><a href="#principles"><span class="n">§6</span> Design principles</a></li>
+    <li><a href="#running"><span class="n">§7</span> Running it</a></li>
+  </ol>
+</nav>
+
+<section id="lineage">
+  <div class="sec-head"><span class="sec-num">§1</span><h2>Lineage and thesis</h2></div>
+  <div class="prose">
+    <p>FMPL was created in 1992 by Jon Blow at UC Berkeley&rsquo;s Experimental Computing Facility — a MUD server language in the LambdaMOO / ColdMUD tradition. Those systems shared a distinctive shape: a <em>live image</em> of prototype-based objects, edited from inside, serving many users at once, persisting across restarts. The program wasn&rsquo;t a file you ran; it was a world you inhabited.</p>
+    <p>This repository is a from-scratch Rust revival that bets that the MUD shape is the right shape for AI agents. A modern agent system wants exactly what a MUD had: long-lived stateful objects, many concurrent actors (now LLMs as well as humans), capability-scoped access between them, and durable state that survives a crash mid-conversation. FMPL adds the modern half: streaming as a first-class concern, OMeta-style PEG grammars as the universal tool for parsing any stream — text, bytes, or structured values — and an async runtime for tool calls.</p>
+    <p>One more thing worth saying plainly, because it shapes the codebase: most of this implementation was written by an autonomous LLM agent loop, iterating against a roadmap for months. It was recently rehabilitated for public release by hand — the agent harness sidelined to an archive branch (~30,000 lines), a build that works on a fresh clone, CI, and a documentation pass in which every claim in the tutorial was re-verified against a live REPL. The result is unusually honest about itself: the test suite encodes where the language <em>is</em> and, via 185 deliberately-ignored tests, where it is <em>going</em>.</p>
+  </div>
+</section>
+
+<section id="architecture">
+  <div class="sec-head"><span class="sec-num">§2</span><h2>Architecture</h2></div>
+  <div class="prose">
+    <p>FMPL is a Cargo workspace of six crates around one core. The execution pipeline is conventional in outline and unconventional in detail:</p>
+  </div>
+
+  <div class="pipeline" role="img" aria-label="Pipeline: source to lexer to parser to AST to compiler to indexed RPN bytecode to VM">
+    <div class="stage">Source<small>.fmpl text</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">Lexer<small>logos</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">Parser<small>FMPL-generated</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">AST<small>[:Tag, &hellip;] values</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">Compiler<small>tree &rarr; linear</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">Indexed RPN<small>bytecode</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">VM<small>async-aware</small></div>
+  </div>
+
+  <div class="crates">
+    <div class="crate core">
+      <h4>fmpl-core</h4>
+      <p>The whole language: lexer, parser, compiler, bytecode VM, prototype object system, OMeta-style PEG grammar engine (with packrat memoization, streaming input, and an optional trampolined evaluator for bounded stack), pattern matching, tuple space, and Fjall-backed persistence. Sixteen builtin modules cover I/O, HTTP, JSON, and the metaprogramming surface.</p>
+    </div>
+    <div class="crate"><h4>fmpl-cli</h4><p>The REPL — rustyline, dot-prefixed commands, multiline continuation.</p></div>
+    <div class="crate"><h4>fmpl-web</h4><p>Axum + HTMX web REPL with per-user sessions and an approval queue.</p></div>
+    <div class="crate"><h4>fmpl-tui</h4><p>Ratatui terminal UI with DAG-based conversation management and LLM chat.</p></div>
+    <div class="crate"><h4>fmpl-bootstrap</h4><p>Stage-0 interpreter that runs the parser generator at build time, breaking the circular dependency.</p></div>
+    <div class="crate"><h4>fmpl-scenario-runner</h4><p>Data-driven test runner; the build script generates a test suite from a markdown corpus of behavior scenarios.</p></div>
+  </div>
+
+  <div class="prose">
+    <h3>Indexed RPN, not a stack machine</h3>
+    <p>The VM&rsquo;s central design choice: instead of a classic operand stack, every instruction writes its result to <code>values[ip]</code> — the slot named by its own instruction index — and operands are <em>references to earlier instruction indices</em>, not popped values.</p>
+  </div>
+
+<pre><code>// A frame is just results-by-instruction-index plus a cursor:
+Frame { values: Vec&lt;Value&gt;, ip: usize }
+
+// "1 + 2" compiles to:
+//   0: LoadInt(1)                  → values[0] = 1
+//   1: LoadInt(2)                  → values[1] = 2
+//   2: Add { lhs: 0, rhs: 1 }      → values[2] = 3</code></pre>
+
+  <div class="prose">
+    <p>Every intermediate result stays addressable for the frame&rsquo;s lifetime, which pays off twice: the async runtime can suspend mid-expression (an <code>&lt;-</code> await or a streaming read) and resume with all live values intact by index, and serializing a continuation for durable suspension is a matter of writing out the frame, not reconstructing stack discipline.</p>
+
+    <h3>Grammars as the universal matcher</h3>
+    <p>The single most characteristic feature is the <code>@</code> operator: <em>apply the thing on the right to the stream on the left</em>. The right side can be a full OMeta-style PEG grammar rule, an inline pattern block with guards, or a tree-transformation grammar — over strings, byte streams, or lists of structured values. Parsing, destructuring, and data transformation are one mechanism, not three.</p>
+    <p>The grammar engine is a proper PEG runtime: ordered choice, negative lookahead, packrat memoization, left-recursion handling via the optimizer&rsquo;s first-set computation, incremental/streaming input, and semantic actions that are ordinary FMPL expressions with <code>:binding</code> captures. A distinctive detail with teeth — action errors are <em>hard errors</em>, not backtrackable failures: if a semantic action raises (say, integer overflow while folding digits), the parse aborts with that error rather than silently trying another alternative. The generated parser and the interpreted engine agree on this by contract.</p>
+
+    <h3>Objects, images, and durable state</h3>
+    <p>The object system is prototype-based in the Goblins tradition — <code>spawn</code>, facets for capability attenuation, <code>bcom</code>-style become — with <code>self</code>, <code>parent</code>, and <code>caller</code> as the method-context variables. The north star is image-based: the persistent object image is the source of truth and source files are a bootstrapping convenience. Persistence rides on Fjall, an embedded LSM key-value store, with a versioned zero-copy envelope (rkyv/zerocopy) for every persisted record. A Linda-style tuple space for actor coordination exists in-core but isn&rsquo;t yet surfaced in the language.</p>
+  </div>
+</section>
+
+<section id="bootstrap">
+  <div class="sec-head"><span class="sec-num">§3</span><h2>The metacircular bootstrap</h2></div>
+  <div class="prose">
+    <p>The flagship engineering commitment (DESIGN-001): the Rust parser is a stage-0 mechanism, and the <em>canonical</em> parser is written in FMPL itself. The chain that makes this real runs at build time:</p>
+  </div>
+
+  <div class="pipeline" role="img" aria-label="Bootstrap chain: fmpl_parser.fmpl through fmpl-bootstrap and parser_generator to generated Rust code compiled into fmpl-core">
+    <div class="stage">fmpl_parser.fmpl<small>grammar, in FMPL</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">fmpl-bootstrap<small>stage-0 interpreter</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">parser_generator.fmpl<small>+ ir_to_rust</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">generated_parser.rs<small>~8,900 lines</small></div>
+    <div class="arrow">&rarr;</div>
+    <div class="stage">fmpl-core<small>include!()</small></div>
+  </div>
+
+  <div class="prose">
+    <p>An FMPL grammar describing FMPL is executed by a minimal interpreter, which emits a complete recursive-descent Rust parser that is compiled into the core crate. <code>ast::parse</code> in the hero transcript above runs through this generated parser. Because a stale or silently-substituted parser would make every parity test vacuously true, the build embeds a generator <em>epoch number</em> (currently 6) checked at compile time, and a <code>canonical_pipeline_must_be_active</code> test fails loudly if the fallback parser is in use.</p>
+    <p>The same discipline extends downstream: <code>lib/core/ast_to_ir.fmpl</code> is a tree-transformation grammar that lowers AST to IR, <code>ir::compile</code> linearizes IR to bytecode, and 21 parity tests compare the FMPL pipeline&rsquo;s output against the Rust compiler&rsquo;s, node type by node type. The self-hosting loop is genuinely closed for core expressions and genuinely open for the rest — the ledger in §5 is precise about which.</p>
+  </div>
+
+  <div class="fieldnote">
+    <span class="fn-label">Field note &middot; the determinism bug</span>
+    <p>The first CI run in this repo&rsquo;s history failed a check no local build had ever exercised: regenerate the parser twice, byte-compare the outputs. They differed — every run. The cause: grammar rules travel through FMPL&rsquo;s <code>Value::Map</code>, which is a <code>HashMap</code>, so each generator <em>process</em> emitted the parser&rsquo;s functions in a different random order. Rust doesn&rsquo;t care about definition order, so 1,390 tests stayed green for months while the build was nondeterministic underneath.</p>
+    <p>The fix was one sort — emit rules in name order — but the lesson generalizes: byte-stable codegen is a property you must assert, because nothing else will tell you. The previously-ignored determinism test now runs on every build.</p>
+  </div>
+</section>
+
+<section id="capabilities">
+  <div class="sec-head"><span class="sec-num">§4</span><h2>What works today</h2></div>
+  <div class="prose">
+    <p>Every row below was verified against a fresh REPL during the July 2026 documentation sweep — this is observed behavior, not roadmap.</p>
+  </div>
+
+  <div class="two-col">
+    <ul class="caps">
+      <li><span class="chip works">works</span><span class="what">Checked arithmetic, comparisons, <code>&amp;&amp;</code> <code>||</code> <code>!</code>; overflow is a clean error, not a panic</span></li>
+      <li><span class="chip works">works</span><span class="what">Lists, maps, <code>.map()</code> / <code>.fold()</code>, prototype objects with <code>self</code></span></li>
+      <li><span class="chip works">works</span><span class="what">Lambdas: <code>\x</code>, <code>\x, y</code>, curried <code>\x \y</code>, <code>lambda (n)</code>; recursion via top-level <code>let</code></span></li>
+      <li><span class="chip works">works</span><span class="what">Map / list / tagged-value patterns with <code>_:name</code> bindings and <code>when</code>/<code>if</code> guards</span></li>
+      <li><span class="chip works">works</span><span class="what">User-defined PEG grammars with <code>:binding</code> captures and expression actions</span></li>
+      <li><span class="chip works">works</span><span class="what">Metaprogramming: <code>ast::parse</code> &rarr; transform &rarr; <code>ir::compile</code> &rarr; <code>code::eval</code></span></li>
+      <li><span class="chip works">works</span><span class="what">Type predicates on every value (<code>is_int</code>, &hellip;, <code>type_name()</code>)</span></li>
+      <li><span class="chip works">works</span><span class="what"><code>json::parse</code>, <code>curl.get/post</code>; LLM clients for Claude and Ollama in the stdlib</span></li>
+    </ul>
+    <ul class="caps">
+      <li><span class="chip partial">partial</span><span class="what">Async operators <code>&lt;-</code>, <code>spawn</code>, <code>|&gt;</code> — syntax in, runtime in progress</span></li>
+      <li><span class="chip partial">partial</span><span class="what">Bootstrap pipeline — core expressions lower correctly; several node types don&rsquo;t yet</span></li>
+      <li><span class="chip partial">partial</span><span class="what">Persistence — engine and envelope exist; not yet integrated with the object system</span></li>
+      <li><span class="chip missing">missing</span><span class="what">Literal values inside map patterns (bind + guard instead)</span></li>
+      <li><span class="chip missing">missing</span><span class="what">Rest patterns <code>[first | rest]</code>; string interpolation</span></li>
+      <li><span class="chip missing">missing</span><span class="what">Recursive scoped <code>let</code>; mutable closure capture</span></li>
+      <li><span class="chip missing">missing</span><span class="what">Grammar inheritance <code>&lt;:</code> — deliberately deferred (DESIGN-005)</span></li>
+      <li><span class="chip missing">missing</span><span class="what">Exponentiation <code>**</code>; list <code>.length()</code> / <code>.get()</code></span></li>
+    </ul>
+  </div>
+
+  <div class="prose">
+    <p>The metaprogramming pipeline deserves one full example, because it is the language&rsquo;s thesis in miniature — a compiler written as a pattern match:</p>
+  </div>
+
+<pre><code>let ast = ast::parse("1 + 2")
+-- =&gt; [:Binary, :+, [:Int, 1], [:Int, 2]]
+
+let ir = ast @ {
+  [:Binary, :+, [:Int, a], [:Int, b]] =&gt; [:Add, [:LoadInt, a], [:LoadInt, b]];
+  [:Binary, :-, [:Int, a], [:Int, b]] =&gt; [:Sub, [:LoadInt, a], [:LoadInt, b]]
+}
+
+code::eval(ir::compile(ir))
+-- =&gt; 3</code></pre>
+
+  <div class="prose">
+    <p>This is exactly the shape of the real bootstrap: <code>ast_to_ir.fmpl</code> is this pattern match, grown to cover the language.</p>
+  </div>
+</section>
+
+<section id="gaps">
+  <div class="sec-head"><span class="sec-num">§5</span><h2>The gap ledger</h2></div>
+  <div class="prose">
+    <p>185 tests are <code>#[ignore]</code>d, each with a machine-readable reason, grouped by root cause in <code>docs/known-gaps.md</code>. Read as a ledger, the count is intent rather than neglect — the suite pins behavior for features before they exist:</p>
+  </div>
+
+  <div class="ledger">
+    <div class="ledger-row">
+      <div class="count">~120</div>
+      <div class="desc"><b>Metacircular parser incomplete — the critical path</b>
+      <span>The FMPL grammar doesn&rsquo;t cover the whole language yet; the generated pipeline still mis-produces ASTs for some constructs (it cannot yet parse <code>ast_to_ir.fmpl</code> itself). Most other buckets ease when this one closes.</span></div>
+    </div>
+    <div class="ledger-row">
+      <div class="count">~50</div>
+      <div class="desc"><b>Pattern-matching completeness</b>
+      <span>Pattern unification, list-as-stream tree matching, and compilation of specific pattern shapes aren&rsquo;t wired end-to-end.</span></div>
+    </div>
+    <div class="ledger-row">
+      <div class="count">~9</div>
+      <div class="desc"><b>Design decisions pending</b>
+      <span>For-loop bodies can&rsquo;t mutate outer bindings; recursive scoped <code>let</code> and mutable closure capture need a strategy (Y-combinator, <code>let rec</code>, or cells); <code>yield</code>.</span></div>
+    </div>
+    <div class="ledger-row">
+      <div class="count">~5</div>
+      <div class="desc"><b>Optimizer wiring and web storylets</b>
+      <span>The FMPL AST optimizer isn&rsquo;t in the bootstrap compile path; the web REPL&rsquo;s storylet route is mid-build.</span></div>
+    </div>
+  </div>
+
+  <div class="fieldnote">
+    <span class="fn-label">Field note &middot; the overflow panic</span>
+    <p>Fuzzing the REPL found that typing <code>99999999999999999999999</code> aborted the process. Fixing the VM&rsquo;s arithmetic to checked ops moved the panic rather than removing it: the <em>generated parser&rsquo;s</em> digit-fold action (<code>acc * 10 + d</code>) was emitted with <code>.unwrap()</code> on the now-fallible ops, and the REPL runs that parser on every keystroke&rsquo;s completeness check.</p>
+    <p>The real fix was threading <code>Result</code> through generated grammar actions — fold closures return <code>Result</code>, arithmetic emits <code>?</code>, and backtracking combinators propagate runtime errors instead of swallowing them, matching the interpreted engine&rsquo;s semantics. The tempting shortcut, <code>catch_unwind</code> at the eval boundary, was rejected for a concrete reason: FMPL holds <code>Mutex</code>es across evaluation, and a caught panic would poison them.</p>
+  </div>
+</section>
+
+<section id="principles">
+  <div class="sec-head"><span class="sec-num">§6</span><h2>Design principles</h2></div>
+  <div class="prose">
+    <p>Five durable invariants govern the project (<code>docs/design-principles.md</code>). They override feature scope when in conflict — several large deletions in the history are these principles being enforced:</p>
+  </div>
+  <dl class="principles">
+    <dt>DESIGN-001<b>Metacircular bootstrap</b></dt>
+    <dd>The Rust parser is stage-0 only; the end-state parser is FMPL applied by the FMPL grammar runtime. Rust artifacts with no FMPL equivalent are bugs, not features.</dd>
+    <dt>DESIGN-002<b>One canonical form for structured data</b></dt>
+    <dd>All structured data is <code>[:Tag, child, &hellip;]</code>. The former <code>:Tag(args)</code> constructor syntax was deleted from both parsers and is rejected with a migration hint — a second representation would tax every consumer at every seam.</dd>
+    <dt>DESIGN-003<b>Symbols for type and node names</b></dt>
+    <dd>Tags and type names are interned symbols (<code>:Binary</code>), compared by identity, never strings.</dd>
+    <dt>DESIGN-004<b>Tree IR with named temporaries</b></dt>
+    <dd>The IR nests naturally; <code>ir::compile</code> allocates instruction indices. Transformation grammars never see indices — sharing is expressed with <code>:Let</code>.</dd>
+    <dt>DESIGN-005<b>Grammar inheritance deferred</b></dt>
+    <dd>Optimizer grammars deliberately duplicate their traversals rather than hand-factoring — the right abstraction is <code>&lt;:</code> inheritance, and premature helpers would obscure it.</dd>
+  </dl>
+</section>
+
+<section id="running">
+  <div class="sec-head"><span class="sec-num">§7</span><h2>Running it</h2></div>
+  <div class="prose">
+    <p>The build is two-step because of the bootstrap: a plain <code>cargo build</code> works but silently uses the Rust fallback parser. <code>just build</code> runs both steps and leaves the canonical FMPL-generated parser active (a parity test enforces it).</p>
+  </div>
+
+<pre><code>git clone https://github.com/mparrett/fmpl && cd fmpl
+just build      # bootstrap the FMPL-generated parser, then build the workspace
+just test       # 1,390 passing / 185 pinned to future work
+just repl       # REPL        (dot-commands: .help, .quit)
+just web        # web REPL    http://localhost:3000
+just tui        # terminal UI (Ctrl+L for LLM chat)</code></pre>
+
+  <div class="prose">
+    <p>Start with <code>TUTORIAL.md</code> — every snippet in it runs as documented, verified line-by-line against the REPL. <code>DEMO.md</code> is the quick version; <code>specs/</code> holds the implementation specs (VM, grammars, objects, persistence, tuplespace); <code>docs/known-gaps.md</code> is the honest map of the frontier. If you want to contribute, the metacircular-parser bucket is the critical path: pick a file from the ledger, run it with <code>-- --ignored</code>, and land the feature its tests describe.</p>
+  </div>
+</section>
+
+<footer>
+  <span>FMPL &middot; MIT &middot; github.com/mparrett/fmpl (fork of nnunley/fmpl)</span>
+  <span>Written 2026-07-20 &middot; all claims verified against a fresh REPL</span>
+</footer>
+
+</div>
+
+</body>
+</html>
