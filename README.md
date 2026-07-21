@@ -27,7 +27,7 @@ nums.fold(0, \acc, x acc + x)   -- => 15
 
 %{name: "Alice", age: 30}.name  -- => "Alice"
 
--- Guarded pattern match via the `@` operator:
+-- Guarded pattern match via the `@` operator (`when` and `if` are equivalent):
 42 @ { n when n > 0 => n * 2, _ => 0 }   -- => 84
 
 -- Prototype objects with capability-scoped access:

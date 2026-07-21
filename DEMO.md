@@ -107,8 +107,11 @@ sum  // => 0 (outer sum unchanged)
 ```fmpl
 let numbers = [1, 2, 3, 4, 5]
 let doubled = numbers.map(\x x * 2)
-doubled.fold(0, \acc x acc + x)  // => 30
+doubled.fold(0, \acc, x acc + x)  // => 30
 ```
+
+Note: multi-argument short lambdas separate parameters with commas
+(`\acc, x ...`), not spaces.
 
 ### 2. Grammar Loading
 Grammar files exist (`lib/json.fmpl`, `lib/yaml.fmpl`) but need to be explicitly loaded in the VM. The `@` operator works with inline grammars:
@@ -122,12 +125,6 @@ value @ {
 ```
 
 But accessing `json.value` requires the grammar to be loaded first.
-
-### 3. Map Method Not Yet Implemented
-```fmpl
-let numbers = [1, 2, 3]
-numbers.map(\x x * 2)  // Error: Undefined method: map
-```
 
 ## Example Session
 
@@ -156,7 +153,7 @@ fmpl> cursor::advance(cursor, 1)
 fmpl> cursor::current(cursor)
 => 20
 
-fmpl> :quit
+fmpl> .quit
 Bye!
 ```
 
@@ -170,10 +167,11 @@ Bye!
 - Strings and string operations
 - Cursor/stream observation
 - Cursor operations (advance, rewind, position)
-- Pattern matching with `@` operator (inline grammars)
+- Pattern matching with `@` operator (inline grammars), guards (`when`/`if`)
+- List higher-order methods (`map`, `fold`)
+- Universal type predicates (`.is_number()`, `.is_string()`, `.type_name()`, …)
 
 **Needs Work**:
 - Grammar loading from .fmpl files
 - For loop scope mutation (design decision needed)
-- List `map` method implementation
 - JSON/YAML parsing integration
