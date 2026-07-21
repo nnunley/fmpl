@@ -1,5 +1,8 @@
-# Build artifacts
-/target/
+# Build artifacts (root and per-crate target/ dirs)
+target/
+
+# Node (stray npm artifacts; this is a Rust project)
+node_modules/
 
 # macOS
 .DS_Store
