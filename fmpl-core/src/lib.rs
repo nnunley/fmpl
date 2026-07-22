@@ -10,8 +10,8 @@
 
 // The fjall dependency is native-only (see Cargo.toml), so the persistence
 // feature cannot be satisfied on wasm — fail loudly instead of half-compiling.
-#[cfg(all(feature = "fjall-persistence", target_arch = "wasm32"))]
-compile_error!("the `fjall-persistence` feature is not supported on wasm32 targets");
+#[cfg(all(feature = "persistence", target_arch = "wasm32"))]
+compile_error!("the `persistence` feature is not supported on wasm32 targets");
 
 #[macro_use]
 pub mod macros;

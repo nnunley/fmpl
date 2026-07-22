@@ -5495,7 +5495,10 @@ mod tests {
             ("null.is_null()", Value::Bool(true)),
             ("(3.5).is_number()", Value::Bool(true)),
             ("(3.5).is_int()", Value::Bool(false)),
-            ("42 @ { n when n.is_number() => n * 2, _ => 0 }", Value::Int(84)),
+            (
+                "42 @ { n when n.is_number() => n * 2, _ => 0 }",
+                Value::Int(84),
+            ),
         ];
         for (src, expected) in cases {
             let mut vm = Vm::new();

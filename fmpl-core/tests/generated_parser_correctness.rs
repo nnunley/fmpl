@@ -1002,9 +1002,7 @@ fn test_grammar_tree_pattern_runtime() {
     let result = vm.run(&code2).unwrap();
     assert_eq!(
         result,
-        Value::List(
-            vec![Value::Symbol(SmolStr::new("LoadInt")), Value::Int(42)].into()
-        )
+        Value::List(vec![Value::Symbol(SmolStr::new("LoadInt")), Value::Int(42)].into())
     );
 }
 

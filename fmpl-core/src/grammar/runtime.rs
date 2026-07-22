@@ -1249,9 +1249,7 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
             let evaluator_clone = evaluator.clone();
             let bindings_clone = self.bindings.clone();
             let expr_clone = expr.clone();
-            return grow_stack(move || {
-                evaluator_clone.borrow_mut()(&expr_clone, &bindings_clone)
-            });
+            return grow_stack(move || evaluator_clone.borrow_mut()(&expr_clone, &bindings_clone));
         }
 
         // Fallback: always succeed (for testing without VM)

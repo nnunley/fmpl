@@ -90,7 +90,8 @@ fn comment_start(line: &str) -> Option<usize> {
         }
         if b == b'"' {
             in_string = !in_string;
-        } else if !in_string && ((b == b'-' && bytes[i + 1] == b'-') || (b == b'/' && bytes[i + 1] == b'/'))
+        } else if !in_string
+            && ((b == b'-' && bytes[i + 1] == b'-') || (b == b'/' && bytes[i + 1] == b'/'))
         {
             return Some(i);
         }
@@ -184,7 +185,8 @@ fn maps_equal(actual: &str, expected: &str) -> bool {
 fn values_match(actual: &str, expected: &str) -> bool {
     let candidates = [Some(expected), strip_parenthetical(expected)];
     candidates.into_iter().flatten().any(|exp| {
-        actual == exp || (actual.starts_with("%{") && exp.starts_with("%{") && maps_equal(actual, exp))
+        actual == exp
+            || (actual.starts_with("%{") && exp.starts_with("%{") && maps_equal(actual, exp))
     })
 }
 
@@ -306,7 +308,10 @@ fn readme_examples_run() {
 fn annotation_forms_are_recognized() {
     assert_eq!(annotation_of("x + 1  -- Returns: 3"), Some("3".into()));
     assert_eq!(annotation_of("-- Returns: \"ok\""), Some("\"ok\"".into()));
-    assert_eq!(annotation_of("nums.map(\\x x)  -- => [1, 2]"), Some("[1, 2]".into()));
+    assert_eq!(
+        annotation_of("nums.map(\\x x)  -- => [1, 2]"),
+        Some("[1, 2]".into())
+    );
     assert_eq!(annotation_of("nums[0]  // => 1"), Some("1".into()));
     // Bare comments and prose are not annotations.
     assert_eq!(annotation_of("1 + 2  -- 3"), None);
