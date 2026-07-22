@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FMPL — Browser REPL</title>
+<style>
+  :root {
+    --ground: #16181d;
+    --panel: #1d2026;
+    --ink: #d8d4c8;
+    --muted: #6e7076;
+    --amber: #e0a458;
+    --teal: #7db8ac;
+    --red: #c7705f;
+    --line: #2c2f37;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    line-height: 1.55;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  header {
+    padding: 0.9rem 1.4rem;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+  header .title { color: var(--amber); font-weight: 600; letter-spacing: 0.04em; }
+  header .sub { color: var(--muted); font-size: 0.8rem; font-family: var(--serif); font-style: italic; }
+  header a { color: var(--teal); text-decoration: none; font-size: 0.8rem; margin-left: auto; }
+  header a:hover { text-decoration: underline; }
+  .notice {
+    padding: 0.55rem 1.4rem;
+    color: var(--muted);
+    font-size: 0.75rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .notice b { color: var(--ink); font-weight: 600; }
+  .examples {
+    padding: 0.55rem 1.4rem;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+  }
+  .examples button {
+    background: var(--panel);
+    color: var(--teal);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    padding: 0.25rem 0.55rem;
+    cursor: pointer;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .examples button:hover { border-color: var(--amber); color: var(--amber); }
+  #screen {
+    flex: 1;
+    padding: 1rem 1.4rem 0.4rem;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  #screen .in { color: var(--ink); }
+  #screen .in .p { color: var(--amber); user-select: none; }
+  #screen .out { color: var(--teal); }
+  #screen .err { color: var(--red); }
+  #screen .sys { color: var(--muted); }
+  #inputrow {
+    display: flex;
+    padding: 0.3rem 1.4rem 1.1rem;
+    gap: 0.55ch;
+    align-items: baseline;
+  }
+  #prompt { color: var(--amber); user-select: none; }
+  #cmd {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--ink);
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    padding: 0;
+    caret-color: var(--amber);
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">FMPL</span>
+  <span class="sub">browser REPL — the VM below is fmpl-core compiled to WebAssembly</span>
+  <a href="fmpl-tour.html">← engineering tour</a>
+</header>
+<div class="notice">
+  Session is persistent: <b>let</b> bindings, objects, and grammars survive across inputs.
+  Native-only builtins are absent in this build: <b>curl</b> (HTTP), <b>io</b> (files), and fjall persistence.
+  Commands: <b>.help</b>, <b>.reset</b>, <b>.clear</b>.
+</div>
+<div class="examples" id="examples"></div>
+<div id="screen"><span class="sys">Loading WebAssembly…</span>
+</div>
+<div id="inputrow">
+  <span id="prompt">fmpl&gt;</span>
+  <input id="cmd" autocomplete="off" spellcheck="false" disabled aria-label="FMPL input">
+</div>
+<script type="module">
+import init, { repl_eval, repl_is_complete, repl_reset } from "./repl/fmpl_wasm.js";
+
+const screen = document.getElementById("screen");
+const input = document.getElementById("cmd");
+const promptEl = document.getElementById("prompt");
+const examplesEl = document.getElementById("examples");
+
+const EXAMPLES = [
+  '[1, 2, 3, 4, 5].map(\\x x * 2)',
+  '%{name: "Alice", age: 30}.name',
+  '42 @ { n when n > 0 => n * 2, _ => 0 }',
+  'let g = grammar { num = [0-9]+:d => d }',
+  '"42" @ g.num',
+  'let factorial = \\n if n <= 1 then 1 else n * factorial(n - 1)',
+  'factorial(10)',
+  'ast::parse("1 + 2")',
+];
+
+let buffer = "";
+let history = [];
+let histIdx = -1;
+
+function print(text, cls) {
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = text + "\n";
+  screen.appendChild(span);
+  screen.scrollTop = screen.scrollHeight;
+}
+
+function echoInput(line, continuation) {
+  const span = document.createElement("span");
+  span.className = "in";
+  const p = document.createElement("span");
+  p.className = "p";
+  p.textContent = continuation ? "....> " : "fmpl> ";
+  span.appendChild(p);
+  span.appendChild(document.createTextNode(line + "\n"));
+  screen.appendChild(span);
+  screen.scrollTop = screen.scrollHeight;
+}
+
+function setContinuation(on) {
+  promptEl.textContent = on ? "....>" : "fmpl>";
+}
+
+function runCommand(cmd) {
+  switch (cmd) {
+    case ".help":
+      print(".help   this message\n.reset  fresh VM (drops all bindings)\n.clear  clear the screen", "sys");
+      return true;
+    case ".reset":
+      repl_reset();
+      print("VM reset — all bindings dropped.", "sys");
+      return true;
+    case ".clear":
+      screen.replaceChildren();
+      return true;
+  }
+  return false;
+}
+
+function submit(line) {
+  const continuation = buffer.length > 0;
+  echoInput(line, continuation);
+
+  if (!continuation && line.trim().startsWith(".")) {
+    if (runCommand(line.trim())) return;
+    print(`Unknown command: ${line.trim()} (try .help)`, "sys");
+    return;
+  }
+
+  buffer = continuation ? buffer + "\n" + line : line;
+  if (buffer.trim() === "") { buffer = ""; return; }
+
+  // Multi-line continuation, same rule as the CLI REPL: an empty line
+  // force-submits whatever is buffered.
+  if (!repl_is_complete(buffer) && line.trim() !== "") {
+    setContinuation(true);
+    return;
+  }
+
+  const source = buffer;
+  buffer = "";
+  setContinuation(false);
+  const result = repl_eval(source);
+  print(result, result.startsWith("Error:") ? "err" : "out");
+}
+
+input.addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") {
+    const line = input.value;
+    input.value = "";
+    if (line.trim() !== "") {
+      history.push(line);
+      histIdx = history.length;
+    }
+    submit(line);
+  } else if (ev.key === "ArrowUp" && histIdx > 0) {
+    histIdx -= 1;
+    input.value = history[histIdx];
+    ev.preventDefault();
+  } else if (ev.key === "ArrowDown") {
+    if (histIdx < history.length - 1) {
+      histIdx += 1;
+      input.value = history[histIdx];
+    } else {
+      histIdx = history.length;
+      input.value = "";
+    }
+    ev.preventDefault();
+  }
+});
+
+document.body.addEventListener("click", (ev) => {
+  // Clicking anywhere that isn't a control focuses the input, like a terminal.
+  if (ev.target.tagName !== "BUTTON" && ev.target.tagName !== "A") input.focus();
+});
+
+for (const ex of EXAMPLES) {
+  const b = document.createElement("button");
+  b.textContent = ex;
+  b.addEventListener("click", () => {
+    input.value = ex;
+    input.focus();
+  });
+  examplesEl.appendChild(b);
+}
+
+try {
+  await init();
+  screen.replaceChildren();
+  print("FMPL v0.1.0 — wasm build. Type .help for commands.", "sys");
+  input.disabled = false;
+  input.focus();
+} catch (e) {
+  print(`Failed to load WebAssembly: ${e}`, "err");
+}
+</script>
+</body>
+</html>

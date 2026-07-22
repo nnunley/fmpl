@@ -43,3 +43,4 @@ __pycache__/
 test_*
 # Keep test source files
 !tests/
+docs/repl/

@@ -5,7 +5,9 @@ multi-user/multi-agent environment, implemented in Rust. The persistent object
 image is the source of truth; source files are a bootstrapping convenience.
 
 New here? Read the **[engineering tour](https://mparrett.github.io/fmpl/fmpl-tour.html)** —
-architecture, verified capabilities, and the honest gap ledger, in one page.
+architecture, verified capabilities, and the honest gap ledger, in one page —
+or try the **[browser REPL](https://mparrett.github.io/fmpl/repl.html)**
+(fmpl-core compiled to WebAssembly, no install).
 
 > **Status: experimental.** FMPL is a working prototype under active
 > development, not a finished language. The core pipeline (lexer → parser →
@@ -95,6 +97,7 @@ Source → Lexer (logos) → Parser → AST → Compiler → Indexed RPN bytecod
 ## Documentation
 
 - [Engineering tour](https://mparrett.github.io/fmpl/fmpl-tour.html) — one-page overview: architecture, what works, what doesn't
+- [Browser REPL](https://mparrett.github.io/fmpl/repl.html) — fmpl-core as WebAssembly, live on GitHub Pages
 - [`project.md`](project.md) — north star, principles, design lineage
 - [`docs/design-principles.md`](docs/design-principles.md) — durable design invariants
 - [`AGENTS.md`](AGENTS.md) — workflow rules and gotchas for agents and humans

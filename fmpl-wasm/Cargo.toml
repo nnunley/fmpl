@@ -1,0 +1,19 @@
+[package]
+name = "fmpl-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "wasm-bindgen bindings for fmpl-core: the browser REPL served from GitHub Pages"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# default-features = false drops curl-builtin — libcurl can't exist in the
+# browser; the io/persistence builtins are already absent on wasm (see
+# fmpl-core's target-gated dependencies).
+fmpl-core = { path = "../fmpl-core", default-features = false }
+# Pinned exactly: the wasm-bindgen CLI that post-processes the .wasm must be
+# the same version as this crate dependency (CI installs the matching CLI).
+wasm-bindgen = "=0.2.114"

@@ -7,6 +7,7 @@ members = [
   "fmpl-web",
   "fmpl-tui",
   "fmpl-bootstrap",
+  "fmpl-wasm",
   # "benches" is excluded from the default workspace: it depends unconditionally
   # on the external `execution_tape` crate (not part of this repo). To run the
   # benchmarks, vendor `execution_tape` at ../execution/execution_tape and add
