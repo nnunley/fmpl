@@ -2,10 +2,144 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="refresh" content="0; url=fmpl-tour.html">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FMPL</title>
+<style>
+  :root {
+    --ground: #f7f5f0;
+    --surface: #fffefb;
+    --ink: #26241e;
+    --muted: #6c6a60;
+    --accent-ink: #8a5413;
+    --line: #e2ded2;
+    --line-strong: #cfcaba;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #16181d;
+      --surface: #1d2026;
+      --ink: #e3e0d7;
+      --muted: #9b988d;
+      --accent-ink: #e6b06c;
+      --line: #2c2f37;
+      --line-strong: #3d414b;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f7f5f0;
+    --surface: #fffefb;
+    --ink: #26241e;
+    --muted: #6c6a60;
+    --accent-ink: #8a5413;
+    --line: #e2ded2;
+    --line-strong: #cfcaba;
+  }
+  :root[data-theme="dark"] {
+    --ground: #16181d;
+    --surface: #1d2026;
+    --ink: #e3e0d7;
+    --muted: #9b988d;
+    --accent-ink: #e6b06c;
+    --line: #2c2f37;
+    --line-strong: #3d414b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--serif);
+    font-size: 1.0625rem;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 40rem; margin: 0 auto; padding: 0 1.5rem; }
+  header { padding: 5rem 0 0; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    margin: 0 0 1.25rem;
+  }
+  h1 {
+    font-size: clamp(2.4rem, 6vw, 3.4rem);
+    line-height: 1.05;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 0 0 0.75rem;
+  }
+  h1 .of { font-style: italic; font-weight: 400; color: var(--muted); }
+  .dek { color: var(--muted); margin: 0 0 2.5rem; text-wrap: balance; }
+  nav.surfaces { border-top: 2px solid var(--ink); margin: 0 0 3rem; }
+  nav.surfaces a {
+    display: grid;
+    grid-template-columns: 9.5rem 1fr;
+    gap: 1rem;
+    align-items: baseline;
+    padding: 1.05rem 0.25rem;
+    border-bottom: 1px solid var(--line);
+    text-decoration: none;
+    color: var(--ink);
+  }
+  nav.surfaces a:hover { background: var(--surface); }
+  nav.surfaces a:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+  nav.surfaces .k {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    white-space: nowrap;
+  }
+  nav.surfaces b { font-weight: 600; }
+  nav.surfaces .d { display: block; font-size: 0.9rem; color: var(--muted); }
+  @media (max-width: 34rem) {
+    nav.surfaces a { grid-template-columns: 1fr; gap: 0.15rem; }
+  }
+  footer {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    padding: 0 0 4rem;
+  }
+  footer a { color: var(--accent-ink); }
+</style>
 </head>
 <body>
-<p><a href="fmpl-tour.html">FMPL: An Engineering Tour</a></p>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">github.com/mparrett/fmpl</p>
+  <h1>FMPL<span class="of">, &ldquo;of Accardi&rdquo;</span></h1>
+  <p class="dek">A 1992 MUD-server language, revived in Rust as a streaming-first substrate for AI agents — with first-class PEG grammars, an indexed-RPN bytecode VM, and a parser that compiles itself.</p>
+</header>
+
+<nav class="surfaces" aria-label="Site surfaces">
+  <a href="fmpl-tour.html">
+    <span class="k">start here</span>
+    <span><b>The engineering tour</b><span class="d">What it is, what provably works, and what honestly doesn&rsquo;t — every claim verified against a live REPL.</span></span>
+  </a>
+  <a href="repl.html">
+    <span class="k">try it</span>
+    <span><b>The browser REPL</b><span class="d">The same VM compiled to WebAssembly, rebuilt from source on every deploy. No install.</span></span>
+  </a>
+  <a href="fmpl-rehab-log.html">
+    <span class="k">field log 1</span>
+    <span><b>The Revival, Revived</b><span class="d">Revitalizing an agent-written codebase: from a repo that wouldn&rsquo;t build to a published fork with CI.</span></span>
+  </a>
+  <a href="fmpl-field-log.html">
+    <span class="k">field log 2</span>
+    <span><b>Closing the Loop</b><span class="d">How the metacircular-parser ledger went to zero — five stacked bugs behind one error message.</span></span>
+  </a>
+</nav>
+
+<footer>
+  FMPL &middot; MIT &middot; <a href="https://github.com/mparrett/fmpl">source</a> (fork of nnunley/fmpl)
+</footer>
+
+</div>
 </body>
 </html>
