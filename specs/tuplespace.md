@@ -250,4 +250,4 @@ Multiple concurrent operations:
 ## References
 
 - [Linda coordination language](https://en.wikipedia.org/wiki/Linda_(coordination_language))
-- [Tuple space VAT actor conversion research](../research/2025-12-27-tuplespace-vat-actor-conversion.md)
+- [Tuple space VAT actor conversion research](../docs/research/2025-12-27-tuplespace-vat-actor-conversion.md)

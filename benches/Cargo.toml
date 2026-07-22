@@ -7,8 +7,8 @@ license.workspace = true
 publish = false
 
 [dependencies]
-criterion = "0.5"
-fmpl-core = { path = "../fmpl-core" }
+criterion = { workspace = true }
+fmpl-core = { workspace = true }
 
 [dependencies.execution_tape]
 path = "../../execution/execution_tape"

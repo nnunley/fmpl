@@ -1,0 +1,192 @@
+title: "FMPL — Rusty Flagon walkthrough (live REPL)"
+
+description: |
+  One `fmpl-cli` REPL session against the shipped binary, loading
+  `demo/tavern.fmpl` and then progressively querying each primitive.
+  The centerpiece is the capability-discipline contrast: the SAME
+  parsed command, dispatched through a customer facet vs through a
+  staff facet, lands or is rejected based purely on which facet the
+  actor presents.
+
+  Each section follows the same shape:
+    1. SHOW the FMPL source from demo/tavern.fmpl that builds the
+       construct (inline as a fenced code block).
+    2. NARRATE what to expect.
+    3. SEND the live REPL query; see the result.
+
+defaults:
+  sleep_after: 0.7
+
+actions:
+  - type: comment
+    title: "Reading guide"
+    body: |
+      The tavern is a small text-adventure world. One file builds it:
+        - a `tuplespace` named `world` seeded with room + menu tuples
+        - an `object barkeep` with two facets: `customer` and `staff`
+        - a `grammar` that parses player input
+        - a `dispatch` lambda that takes (actor, cmd) and routes the
+          command through whatever facet the actor presents
+
+      Capability discipline rides on the ACTOR, not on the parse. The
+      same parsed `:StockCount` command lands through `staff` (returns
+      the stock number) and is rejected through `customer` (runtime
+      error). That's the demo's punchline.
+
+  - type: spawn
+    name: tavern
+
+  # ─────────── 1. Load ───────────
+  - type: section
+    title: "1. Load demo/tavern.fmpl"
+  - type: narrate
+    text: >-
+      `io::load` reads the file, parses it through the FMPL pipeline,
+      and evaluates it. The file's final expression is a `result`
+      summary map; the REPL prints it.
+  - type: repl_eval
+    in: tavern
+    expr: 'io::load("demo/tavern.fmpl")'
+    sleep_after: 1.0
+
+  # ─────────── 2. Tuplespace ───────────
+  - type: section
+    title: "2. Tuplespace — the world's coordination state"
+  - type: show_source
+    file: demo/tavern.fmpl
+    lines: "10-14"
+    caption: "where the world tuplespace gets seeded"
+  - type: narrate
+    text: >-
+      `world.rd(:room)` is a non-destructive read by symbol-typed key.
+      The tuple stays in the space.
+  - type: repl_eval
+    in: tavern
+    expr: 'world.rd(:room).data.name'
+
+  # ─────────── 3. The actor handles ───────────
+  - type: section
+    title: "3. Two facets, two actors"
+  - type: show_source
+    file: demo/tavern.fmpl
+    lines: "18-31"
+    caption: "the barkeep object — customer and staff facets"
+  - type: show_source
+    file: demo/tavern.fmpl
+    lines: "71-72"
+    caption: "binding the two actor handles"
+  - type: narrate
+    text: >-
+      `barkeep.as(:customer)` returns a sealed handle that only exposes
+      greet/menu/order. `barkeep.as(:staff)` exposes restock/stock_count
+      instead. Same underlying object; two restricted views.
+
+  - type: section
+    title: "4. Customer-facet methods work"
+  - type: narrate
+    text: >-
+      Greet through the customer facet — listed under `customer` in the
+      object definition, so the call lands.
+  - type: repl_eval
+    in: tavern
+    expr: 'customer.greet("Alice")'
+
+  - type: section
+    title: "5. Staff-facet methods work — barkeep reads their own stock"
+  - type: narrate
+    text: >-
+      `stock_count` is listed under the `staff` facet, so the barkeep
+      reading their own stock works.
+  - type: repl_eval
+    in: tavern
+    expr: 'staff.stock_count()'
+
+  - type: section
+    title: "6. CAPABILITY DENIAL — customer reaches for staff-only method"
+  - type: narrate
+    text: >-
+      The customer tries to peek at the bar's stock directly. The
+      `stock_count` method is on the `staff` facet, not `customer`.
+      The object model rejects it at the call site.
+  - type: repl_eval
+    in: tavern
+    expr: 'customer.stock_count()'
+    expect_error: true
+    sleep_after: 1.5
+
+  # ─────────── 4. Grammar ───────────
+  - type: section
+    title: "7. Grammar parses a player command"
+  - type: show_source
+    file: demo/tavern.fmpl
+    lines: "40-48"
+    caption: "the command grammar"
+  - type: narrate
+    text: >-
+      The same grammar parses both customer verbs (look/talk/order) and
+      a staff verb (stock). Capability isn't a property of the parse —
+      it's a property of who's dispatching.
+  - type: repl_eval
+    in: tavern
+    expr: '"stock" @ cmd_grammar.command'
+    capture_result_as: parsed_stock_cmd
+
+  # ─────────── 5. The punchline: dispatch contrast ───────────
+  - type: section
+    title: "8. Dispatcher — facet-NEUTRAL, takes the actor as an argument"
+  - type: show_source
+    file: demo/tavern.fmpl
+    lines: "57-63"
+    caption: "the dispatcher routes through actor.METHOD()"
+  - type: narrate
+    text: >-
+      Notice the dispatcher uses `actor.greet(npc)`, `actor.stock_count()` —
+      it doesn't know or care which facet was passed. The actor's facet
+      decides whether the call lands.
+
+  - type: section
+    title: "9. Dispatch :StockCount as the BARKEEP — landed"
+  - type: narrate
+    text: >-
+      Bind the parsed command, then dispatch it through the staff
+      actor. `actor.stock_count()` resolves to the staff facet's
+      stock_count method. The barkeep can do this.
+  - type: repl_eval
+    in: tavern
+    expr: 'let parsed = "stock" @ cmd_grammar.command'
+  - type: repl_eval
+    in: tavern
+    expr: 'dispatch(staff)(parsed)'
+
+  - type: section
+    title: "10. Dispatch the SAME parsed cmd as the CUSTOMER — REJECTED"
+  - type: narrate
+    text: >-
+      Identical parsed `:StockCount` command. Same dispatcher. The only
+      thing that changed is the actor handle. The customer facet
+      rejects the call — capability denial through the same code path.
+  - type: repl_eval
+    in: tavern
+    expr: 'dispatch(customer)(parsed)'
+    expect_error: true
+    sleep_after: 1.5
+
+  - type: comment
+    title: "Wrap"
+    body: |
+      Every core FMPL primitive worked end-to-end over the FMPL source
+      you saw inline:
+        - coordination via tuplespace
+        - capability via faceted objects, with the SAME parsed command
+          landing through one facet and being rejected through another
+        - parsing via grammar application
+        - dispatch via pattern matching, parameterized on the actor
+
+      Capability discipline lives in the object model — the dispatcher
+      is naive, the facet enforces. That's the substrate the
+      persistence layer (see `three_hashes.yaml`) sits on. Next
+      iteration wires `TupleSpace` itself through `Store` so this
+      coordination state survives restart.
+
+  - type: close_session
+    name: tavern

@@ -1,0 +1,201 @@
+
+════════════════════════════════════════════════════════════════════════
+  FMPL — Rusty Flagon walkthrough (live REPL)
+════════════════════════════════════════════════════════════════════════
+
+# One `fmpl-cli` REPL session against the shipped binary, loading
+`demo/tavern.fmpl` and then progressively querying each primitive.
+The centerpiece is the capability-discipline contrast: the SAME
+parsed command, dispatched through a customer facet vs through a
+staff facet, lands or is rejected based purely on which facet the
+actor presents.
+
+Each section follows the same shape:
+  1. SHOW the FMPL source from demo/tavern.fmpl that builds the
+     construct (inline as a fenced code block).
+  2. NARRATE what to expect.
+  3. SEND the live REPL query; see the result.
+
+# scenario: demo/scenarios/tavern.yaml
+# transcript: /Users/ndn/development/fmpl/demo/transcript-tavern-20260515-131425.txt
+# tmpdir: /tmp/fmpl-harness.HBCMAb
+# echo: on
+# default sleep_after: 0.0s
+# started: 2026-05-15T13:14:25
+
+────────────────────────────────────────────────────────────────────────
+Reading guide
+────────────────────────────────────────────────────────────────────────
+
+# The tavern is a small text-adventure world. One file builds it:
+# - a `tuplespace` named `world` seeded with room + menu tuples
+# - an `object barkeep` with two facets: `customer` and `staff`
+# - a `grammar` that parses player input
+# - a `dispatch` lambda that takes (actor, cmd) and routes the
+# command through whatever facet the actor presents
+
+# Capability discipline rides on the ACTOR, not on the parse. The
+# same parsed `:StockCount` command lands through `staff` (returns
+# the stock number) and is rejected through `customer` (runtime
+# error). That's the demo's punchline.
+# spawning REPL session: tavern
+
+────────────────────────────────────────────────────────────────────────
+1. Load demo/tavern.fmpl
+────────────────────────────────────────────────────────────────────────
+
+# `io::load` reads the file, parses it through the FMPL pipeline, and evaluates it. The file's final expression is a `result` summary map; the REPL prints it.
+[tavern] fmpl> io::load("demo/tavern.fmpl")
+=> %{menu: "We serve: ale (3g), mead (5g), stew (7g)", greet: "Welcome to The Rusty Flagon, Traveler!", room: "A cozy tavern with a roaring fire", order: "Here is your ale. Enjoy!"}
+
+────────────────────────────────────────────────────────────────────────
+2. Tuplespace — the world's coordination state
+────────────────────────────────────────────────────────────────────────
+
+# source: where the world tuplespace gets seeded
+```fmpl
+// --- 1. Tuple space: room state -------------------------------------------
+
+let world = tuplespace.new();
+world.out(:room, %{name: "The Rusty Flagon", desc: "A cozy tavern with a roaring fire"});
+world.out(:menu, %{ale: 3, mead: 5, stew: 7})
+```
+# `world.rd(:room)` is a non-destructive read by symbol-typed key. The tuple stays in the space.
+[tavern] fmpl> world.rd(:room).data.name
+=> "The Rusty Flagon"
+
+────────────────────────────────────────────────────────────────────────
+3. Two facets, two actors
+────────────────────────────────────────────────────────────────────────
+
+# source: the barkeep object — customer and staff facets
+```fmpl
+object barkeep {
+  .#facets
+    customer: [greet, menu, order]
+    staff:    [restock, stock_count]
+  .#public
+  init(): self.stock = 10
+
+  greet(name): "Welcome to The Rusty Flagon, " + name + "!"
+  menu(): "We serve: ale (3g), mead (5g), stew (7g)"
+  order(item): "Here is your " + item + ". Enjoy!"
+  restock(n): self.stock = self.stock + n
+  stock_count(): self.stock
+  stock: 10
+}
+```
+# source: binding the two actor handles
+```fmpl
+let customer = barkeep.as(:customer)
+let staff    = barkeep.as(:staff)
+```
+# `barkeep.as(:customer)` returns a sealed handle that only exposes greet/menu/order. `barkeep.as(:staff)` exposes restock/stock_count instead. Same underlying object; two restricted views.
+
+────────────────────────────────────────────────────────────────────────
+4. Customer-facet methods work
+────────────────────────────────────────────────────────────────────────
+
+# Greet through the customer facet — listed under `customer` in the object definition, so the call lands.
+[tavern] fmpl> customer.greet("Alice")
+=> "Welcome to The Rusty Flagon, Alice!"
+
+────────────────────────────────────────────────────────────────────────
+5. Staff-facet methods work — barkeep reads their own stock
+────────────────────────────────────────────────────────────────────────
+
+# `stock_count` is listed under the `staff` facet, so the barkeep reading their own stock works.
+[tavern] fmpl> staff.stock_count()
+=> 10
+
+────────────────────────────────────────────────────────────────────────
+6. CAPABILITY DENIAL — customer reaches for staff-only method
+────────────────────────────────────────────────────────────────────────
+
+# The customer tries to peek at the bar's stock directly. The `stock_count` method is on the `staff` facet, not `customer`. The object model rejects it at the call site.
+[tavern] fmpl> customer.stock_count()
+Error: Runtime error: facet :customer does not expose method 'stock_count'
+
+────────────────────────────────────────────────────────────────────────
+7. Grammar parses a player command
+────────────────────────────────────────────────────────────────────────
+
+# source: the command grammar
+```fmpl
+let cmd_grammar = grammar CmdGrammar {
+  command  = look | talk | order | stock
+  look     = "look"          => :Look
+  talk     = "talk to " name:n => [:Talk, n]
+  order    = "order " item:i => [:Order, i]
+  stock    = "stock"         => :StockCount
+  name     = [a-zA-Z ]+:cs => cs
+  item     = [a-z]+:cs => cs
+}
+```
+# The same grammar parses both customer verbs (look/talk/order) and a staff verb (stock). Capability isn't a property of the parse — it's a property of who's dispatching.
+[tavern] fmpl> "stock" @ cmd_grammar.command
+=> :StockCount
+@captured parsed_stock_cmd = :StockCount
+
+────────────────────────────────────────────────────────────────────────
+8. Dispatcher — facet-NEUTRAL, takes the actor as an argument
+────────────────────────────────────────────────────────────────────────
+
+# source: the dispatcher routes through actor.METHOD()
+```fmpl
+let dispatch = \actor \cmd cmd @ {
+  :Look           => world.rd(:room).data.desc
+  [:Talk, npc]    => actor.greet(npc)
+  [:Order, item]  => actor.order(item)
+  :StockCount     => actor.stock_count()
+  _               => "You can't do that."
+}
+```
+# Notice the dispatcher uses `actor.greet(npc)`, `actor.stock_count()` — it doesn't know or care which facet was passed. The actor's facet decides whether the call lands.
+
+────────────────────────────────────────────────────────────────────────
+9. Dispatch :StockCount as the BARKEEP — landed
+────────────────────────────────────────────────────────────────────────
+
+# Bind the parsed command, then dispatch it through the staff actor. `actor.stock_count()` resolves to the staff facet's stock_count method. The barkeep can do this.
+[tavern] fmpl> let parsed = "stock" @ cmd_grammar.command
+=> :StockCount
+[tavern] fmpl> dispatch(staff)(parsed)
+=> 10
+
+────────────────────────────────────────────────────────────────────────
+10. Dispatch the SAME parsed cmd as the CUSTOMER — REJECTED
+────────────────────────────────────────────────────────────────────────
+
+# Identical parsed `:StockCount` command. Same dispatcher. The only thing that changed is the actor handle. The customer facet rejects the call — capability denial through the same code path.
+[tavern] fmpl> dispatch(customer)(parsed)
+Error: Runtime error: facet :customer does not expose method 'stock_count'
+
+────────────────────────────────────────────────────────────────────────
+Wrap
+────────────────────────────────────────────────────────────────────────
+
+# Every core FMPL primitive worked end-to-end over the FMPL source
+# you saw inline:
+# - coordination via tuplespace
+# - capability via faceted objects, with the SAME parsed command
+# landing through one facet and being rejected through another
+# - parsing via grammar application
+# - dispatch via pattern matching, parameterized on the actor
+
+# Capability discipline lives in the object model — the dispatcher
+# is naive, the facet enforces. That's the substrate the
+# persistence layer (see `three_hashes.yaml`) sits on. Next
+# iteration wires `TupleSpace` itself through `Store` so this
+# coordination state survives restart.
+# closing REPL session: tavern
+
+════════════════════════════════════════════════════════════════════════
+  Summary
+════════════════════════════════════════════════════════════════════════
+
+Actions run: 38
+Failures:    0
+Sessions:    []
+Captured:    ['parsed_stock_cmd', 'tmpdir']
+Transcript:  /Users/ndn/development/fmpl/demo/transcript-tavern-20260515-131425.txt

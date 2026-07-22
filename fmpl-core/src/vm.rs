@@ -3683,6 +3683,43 @@ impl Vm {
                 let space = TupleSpace::new();
                 Ok(Value::TupleSpace(Arc::new(std::sync::Mutex::new(space))))
             }
+            ("__builtin_tuplespace", "open") => {
+                // Open a durable tuplespace at the given filesystem
+                // path. Only available with the `persistence` feature;
+                // without it, the call surface exists but errors at
+                // runtime to keep the FMPL contract uniform across
+                // build configurations.
+                if args.len() != 1 {
+                    return Err(Error::Runtime(format!(
+                        "tuplespace.open(path) takes exactly one argument, got {}",
+                        args.len()
+                    )));
+                }
+                let path = match &args[0] {
+                    Value::String(s) => s.to_string(),
+                    other => {
+                        return Err(Error::Runtime(format!(
+                            "tuplespace.open(path): expected a String path, got {}",
+                            other.type_name()
+                        )));
+                    }
+                };
+                #[cfg(feature = "persistence")]
+                {
+                    use crate::tuplespace::store::TupleSpace;
+                    let space = TupleSpace::open(&path)?;
+                    Ok(Value::TupleSpace(Arc::new(std::sync::Mutex::new(space))))
+                }
+                #[cfg(not(feature = "persistence"))]
+                {
+                    let _ = path;
+                    Err(Error::Runtime(
+                        "tuplespace.open requires the `persistence` feature \
+                         (rebuild fmpl-core with --features persistence)"
+                            .to_string(),
+                    ))
+                }
+            }
             ("__builtin_time", "sleep") => {
                 let ms = match args.first() {
                     Some(Value::Int(n)) => *n,
@@ -4901,25 +4938,79 @@ impl Vm {
 
                 let result = match name {
                     "out" => {
-                        // out(type_name, data) -> null
-                        if args.len() != 2 {
+                        // `out` takes a single tagged map per
+                        // `specs/tuplespace.md`. Required keys: `type`, `data`.
+                        // Optional: `durable: Bool`, `namespace: String|Symbol`.
+                        //
+                        // Shape:  space.out(%{type: :T, data: D, durable: true})
+                        if args.len() != 1 {
                             return Err(Error::Runtime(format!(
-                                "out() expects 2 arguments (type_name, data), got {}",
+                                "out() expects 1 argument (a tagged map with \
+                                 keys `type`, `data`, optional `durable`, \
+                                 optional `namespace`), got {}",
                                 args.len()
                             )));
                         }
-                        let type_name = match &args[0] {
+                        let map = match &args[0] {
+                            Value::Map(m) => m.clone(),
+                            other => {
+                                return Err(Error::Runtime(format!(
+                                    "out() expects a Map argument, got {}",
+                                    other.type_name()
+                                )));
+                            }
+                        };
+
+                        let type_value = map.get("type").ok_or_else(|| {
+                            Error::Runtime("out() map missing required key `type`".to_string())
+                        })?;
+                        let type_name = match type_value {
                             Value::String(s) => s.clone(),
                             Value::Symbol(s) if s.starts_with(':') => SmolStr::new(&s[1..]),
                             Value::Symbol(s) => s.clone(),
                             other => {
                                 return Err(Error::Runtime(format!(
-                                    "out() type_name must be a string or symbol, got {}",
+                                    "out() `type` must be a String or Symbol, got {}",
                                     other.type_name()
                                 )));
                             }
                         };
-                        let tuple = Tuple::new(type_name, args[1].clone());
+
+                        let data = map.get("data").cloned().ok_or_else(|| {
+                            Error::Runtime("out() map missing required key `data`".to_string())
+                        })?;
+
+                        let durable = match map.get("durable") {
+                            None => false,
+                            Some(Value::Bool(b)) => *b,
+                            Some(other) => {
+                                return Err(Error::Runtime(format!(
+                                    "out() `durable` must be a Bool, got {}",
+                                    other.type_name()
+                                )));
+                            }
+                        };
+
+                        let namespace = match map.get("namespace") {
+                            None => None,
+                            Some(Value::String(s)) => Some(s.clone()),
+                            Some(Value::Symbol(s)) if s.starts_with(':') => {
+                                Some(SmolStr::new(&s[1..]))
+                            }
+                            Some(Value::Symbol(s)) => Some(s.clone()),
+                            Some(other) => {
+                                return Err(Error::Runtime(format!(
+                                    "out() `namespace` must be a String or Symbol, got {}",
+                                    other.type_name()
+                                )));
+                            }
+                        };
+
+                        let mut tuple = Tuple::new(type_name, data).with_durable(durable);
+                        if let Some(ns) = namespace {
+                            tuple = tuple.with_namespace(ns);
+                        }
+
                         let mut space = space.lock().unwrap();
                         space.out(tuple)?;
                         Value::Null

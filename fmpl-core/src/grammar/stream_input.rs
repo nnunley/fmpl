@@ -1,14 +1,24 @@
-//! OMStream-style lazy input stream for grammar application.
+//! Lazy, cons-cell input stream for grammar application.
 //!
-//! This module provides an immutable, cons-cell based input stream that supports:
-//! - Lazy tail construction (blocks on async channel when needed)
-//! - Per-position memoization for packrat parsing
-//! - Configurable timeout for blocking operations
+//! Each [`StreamPosition`] is an immutable node holding the value at one
+//! cursor location plus a lazily-computed tail. The shape mirrors OMeta's
+//! `OMInputStream` and maru's `<parser-stream>`: parsing advances by walking
+//! cons cells, and a position can be retained as a backtrack anchor without
+//! copying upstream input.
 //!
-//! Based on OMeta's OMInputStream design and maru's <parser-stream>.
+//! Three source kinds are supported:
+//! - `Async`: pulls from an mpsc channel with a configurable blocking
+//!   timeout, optionally spilling old positions to a [`Store`][crate::persistence::Store]-
+//!   backed overflow tier.
+//! - `Static`: walks a fixed `Vec<Value>` with no blocking.
+//! - `Empty`: a terminal sentinel.
+//!
+//! All positions carry a per-position memo table for packrat parsing; the
+//! memo table optionally persists to a [`Store`][crate::persistence::Store]-
+//! backed memo table so memoization survives across runs.
 
-// Allow large enum variant - StreamSource::Async is intentionally larger than Static/Empty
-// because it carries channel and memoization state for live streaming.
+// Async carries channel state and an overflow handle; Static / Empty are
+// thin. The size asymmetry is intentional.
 #![allow(clippy::large_enum_variant)]
 
 use crate::stream::{StreamEvent, StreamHandle};
@@ -17,115 +27,142 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::cell::RefCell;
 use std::collections::HashMap;
-#[cfg(not(target_arch = "wasm32"))]
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-/// Default timeout for blocking stream operations (30 seconds).
-/// Use `None` for infinite blocking.
+/// Default blocking-recv timeout for async stream sources. 30 s is chosen to
+/// be long enough that a slow producer doesn't get falsely classified as
+/// end-of-stream, but short enough that a wedged producer doesn't hang the
+/// parser indefinitely. Use `None` for unbounded blocking.
 pub const DEFAULT_STREAM_TIMEOUT: Option<Duration> = Some(Duration::from_secs(30));
 
-/// A position in a streaming input.
+/// One immutable cell in a lazy input stream.
 ///
-/// This is an immutable cons-cell with lazy tail construction.
-/// Each position has:
-/// - `head`: The value at this position (or None if at end)
-/// - `tail`: The next position (lazily computed)
-/// - `memo`: Per-position memoization table for packrat parsing
+/// A `StreamPosition` is the cursor type that grammars and packrat memo
+/// tables key on. Each cell stores the value visible at this cursor plus a
+/// lazily-computed pointer to the next cell. Multiple borrowing parsers can
+/// hold `Rc<StreamPosition>` clones simultaneously (backtracking anchors,
+/// memoized continuations) without copying upstream data.
+///
+/// # Lifetime / ownership
+///
+/// Cells are reference-counted (`Rc`). Interior mutability on `tail` and
+/// `memo` is `RefCell` because parsing is single-threaded; the async source
+/// uses `Mutex` only because the channel handle itself is `Send`.
+///
+/// # End of stream
+///
+/// `head == None` signals end-of-stream — a normal terminal state, *not*
+/// corruption. Callers should treat it as a successful termination signal.
 #[derive(Debug)]
 pub struct StreamPosition {
-    /// The value at this position (None = end of stream).
+    /// Value at this cursor; `None` iff this is the terminal cell.
     head: Option<Value>,
-    /// The next position (lazily computed).
+    /// Memoized next cell; populated on first call to [`tail`](Self::tail).
     tail: RefCell<Option<Rc<StreamPosition>>>,
-    /// Position index (for memoization keys).
+    /// Zero-based position index used as a memo key and as the spill key.
     index: usize,
-    /// Per-position memoization table.
+    /// Memo table keyed by rule name. Populated by packrat-style parsers.
     memo: RefCell<HashMap<SmolStr, MemoEntry>>,
-    /// Source reference for pulling more data.
+    /// Shared source descriptor — all cells of one stream point at the same
+    /// `StreamSource`.
     source: Rc<StreamSource>,
-    /// Optional Fjall partition for memo persistence.
-    memo_fjall: Option<Arc<Mutex<MemoFjall>>>,
+    /// Optional persistent memo backing. When `Some`, [`get_memo`] /
+    /// [`set_memo`] read through and write through to a Fjall partition so
+    /// memoization survives process restarts.
+    ///
+    /// [`get_memo`]: Self::get_memo
+    /// [`set_memo`]: Self::set_memo
+    memo_store: Option<Arc<Mutex<MemoStore>>>,
 }
 
-/// Cached parse result for memoization.
+/// Memoized outcome of one rule invocation at one position.
+///
+/// `InProgress` is a sentinel used to detect direct left recursion: when a
+/// rule looks up its own memo at the position where it was just entered and
+/// finds `InProgress`, the parser knows it must abort or apply seed-parsing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum MemoEntry {
-    /// Parsing in progress (for left recursion detection).
+    /// This rule is currently being evaluated at this position. A second
+    /// lookup of this entry indicates left recursion.
     InProgress,
-    /// Completed with result: (value, end_position_index).
+    /// Rule completed. `(produced_value, end_position_index)`; a `None`
+    /// produced value means the rule matched but produced no payload.
     Done(Option<Value>, usize),
 }
 
-/// Fjall-backed overflow storage for spilled positions.
-#[cfg(not(target_arch = "wasm32"))]
-struct FjallOverflow {
-    #[allow(dead_code)]
-    keyspace: fjall::Keyspace,
-}
+/// Backing [`Store`][crate::persistence::Store] used to spill cold
+/// positions out of memory. Trait-object form (`Arc<dyn Store + Send +
+/// Sync>`) avoids a generic parameter cascade through `StreamSource`,
+/// `StreamPosition`, and `Input::Position`.
+struct OverflowStore(Arc<dyn crate::persistence::Store + Send + Sync>);
 
-/// Wasm stub: fjall is native-only, so overflow storage is never constructed
-/// there — the type exists only to keep field/signature shapes uniform.
-#[cfg(target_arch = "wasm32")]
-struct FjallOverflow {}
-
-impl std::fmt::Debug for FjallOverflow {
+impl std::fmt::Debug for OverflowStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("FjallOverflow").finish_non_exhaustive()
+        f.debug_struct("OverflowStore").finish_non_exhaustive()
     }
 }
 
-/// Fjall-backed memo storage wrapper for StreamPosition.
-/// Wraps a PartitionHandle with Debug implementation.
-#[cfg(not(target_arch = "wasm32"))]
-struct MemoFjall(fjall::Keyspace);
+/// Backing [`Store`][crate::persistence::Store] used to persist memo
+/// entries. Trait-object form for the same reason as [`OverflowStore`].
+struct MemoStore(Arc<dyn crate::persistence::Store + Send + Sync>);
 
-/// Wasm stub: never constructed (see [`FjallOverflow`]).
-#[cfg(target_arch = "wasm32")]
-struct MemoFjall();
-
-impl std::fmt::Debug for MemoFjall {
+impl std::fmt::Debug for MemoStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoFjall").finish_non_exhaustive()
+        f.debug_struct("MemoStore").finish_non_exhaustive()
     }
 }
 
-/// Source of streaming data.
+/// Backing source of stream values.
+///
+/// One `StreamSource` is shared (via `Rc`) by every cell of a single stream.
 #[derive(Debug)]
 enum StreamSource {
-    /// From an async stream with blocking receive.
+    /// Pulls values from an mpsc channel. Cell production is incremental and
+    /// may block on the channel.
     Async {
+        /// Receiver, behind a `Mutex` so cells can pull lazily from any
+        /// thread holding the `Rc`.
         handle: Mutex<StreamHandle>,
-        /// Timeout for blocking recv (None = infinite).
+        /// Per-recv timeout. `None` blocks indefinitely (use with care).
         timeout: Option<Duration>,
-        /// Cached positions for position index lookup.
+        /// In-memory position cache, scanned by index when a cell asks
+        /// for its tail. Acts as the hot tier above the [`OverflowStore`]
+        /// cold tier (see `overflow` below).
         positions: Mutex<Vec<Rc<StreamPosition>>>,
-        /// Fjall overflow for spilled positions (optional).
-        fjall: Option<FjallOverflow>,
-        /// Memory limit before spilling (default: no limit).
+        /// Cold tier; when `Some`, positions evicted from `positions` are
+        /// spilled here so they can be re-materialized on a later access.
+        overflow: Option<OverflowStore>,
+        /// Maximum size of the in-memory cache before spilling. `None`
+        /// disables spilling regardless of whether `overflow` is set.
         memory_limit: Option<usize>,
     },
-    /// From a static list of values (no blocking needed).
+    /// Fixed input. No blocking, no caching needed — cells walk `values`
+    /// directly.
     Static(Vec<Value>),
-    /// Empty source (end of stream).
+    /// Already at end-of-stream.
     Empty,
 }
 
 impl StreamPosition {
-    /// Create a new stream from an async stream handle.
+    /// Returns a stream rooted on an async channel.
     ///
-    /// `timeout` is the timeout for blocking recv operations.
-    /// Use `None` for infinite blocking.
+    /// Eagerly pulls the first value from `handle` so the returned cell has a
+    /// concrete `head` (or `None` if the channel was already drained). All
+    /// subsequent cells are produced lazily by [`tail`](Self::tail).
+    ///
+    /// `timeout` bounds each blocking receive. `None` blocks indefinitely.
+    /// There is no overflow store backing this constructor — use
+    /// [`from_async_with_store`](Self::from_async_with_store) for that.
     pub fn from_async(handle: StreamHandle, timeout: Option<Duration>) -> Rc<Self> {
         let source = Rc::new(StreamSource::Async {
             handle: Mutex::new(handle),
             timeout,
             positions: Mutex::new(Vec::new()),
-            fjall: None,
+            overflow: None,
             memory_limit: None,
         });
 
@@ -137,7 +174,7 @@ impl StreamPosition {
             index: 0,
             memo: RefCell::new(HashMap::new()),
             source: source.clone(),
-            memo_fjall: None,
+            memo_store: None,
         });
 
         // Cache this position
@@ -148,33 +185,35 @@ impl StreamPosition {
         pos
     }
 
-    /// Create a new stream from an async stream handle with Fjall overflow support.
+    /// Returns a stream rooted on an async channel, with cold positions
+    /// spilled to a [`Store`][crate::persistence::Store].
     ///
-    /// `timeout` is the timeout for blocking recv operations (use `None` for infinite blocking).
-    /// `fjall_path` is the optional directory for Fjall storage (None = no overflow).
-    /// `memory_limit` is the number of positions to keep in memory before spilling to Fjall.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_async_with_fjall(
+    /// Behaves like [`from_async`](Self::from_async) but, when the in-memory
+    /// position cache exceeds `memory_limit`, the oldest cells are
+    /// serialized to `store` and reloaded on-demand. This bounds memory
+    /// for long-running parses against streams whose backtrack window
+    /// cannot be statically bounded.
+    ///
+    /// # Parameters
+    ///
+    /// * `handle`: source channel; eagerly drained for the head value.
+    /// * `timeout`: per-recv blocking timeout; `None` blocks indefinitely.
+    /// * `store`: overflow store. `None` disables spilling entirely
+    ///   (equivalent to `from_async`).
+    /// * `memory_limit`: cap on the in-memory position cache before spill.
+    pub fn from_async_with_store(
         handle: StreamHandle,
         timeout: Option<Duration>,
-        fjall_path: Option<PathBuf>,
+        store: Option<Arc<dyn crate::persistence::Store + Send + Sync>>,
         memory_limit: usize,
     ) -> Rc<Self> {
-        let fjall = fjall_path.map(|path| {
-            let db = fjall::Database::builder(path)
-                .open()
-                .expect("failed to open fjall database");
-            let keyspace = db
-                .keyspace("positions", fjall::KeyspaceCreateOptions::default)
-                .expect("failed to open positions keyspace");
-            FjallOverflow { keyspace }
-        });
+        let overflow = store.map(OverflowStore);
 
         let source = Rc::new(StreamSource::Async {
             handle: Mutex::new(handle),
             timeout,
             positions: Mutex::new(Vec::new()),
-            fjall,
+            overflow,
             memory_limit: Some(memory_limit),
         });
 
@@ -186,7 +225,7 @@ impl StreamPosition {
             index: 0,
             memo: RefCell::new(HashMap::new()),
             source: source.clone(),
-            memo_fjall: None,
+            memo_store: None,
         });
 
         // Cache this position
@@ -197,7 +236,11 @@ impl StreamPosition {
         pos
     }
 
-    /// Create a new stream from a static list of values.
+    /// Returns a stream rooted on a fixed `Vec<Value>`.
+    ///
+    /// An empty `values` yields a terminal cell directly. No memo persistence;
+    /// use [`from_values_with_memo_store`](Self::from_values_with_memo_store)
+    /// for that.
     pub fn from_values(values: Vec<Value>) -> Rc<Self> {
         if values.is_empty() {
             return Self::end_of_stream(None);
@@ -207,45 +250,47 @@ impl StreamPosition {
         Self::build_static_chain(source, &values, 0, None)
     }
 
-    /// Create a new stream from a static list of values with Fjall memo backing.
+    /// Returns a stream over fixed `values` with a [`Store`][crate::persistence::Store]-backed
+    /// memo table.
     ///
-    /// `fjall_path` is the directory for Fjall storage for memo tables.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn from_values_with_memo_fjall(values: Vec<Value>, fjall_path: PathBuf) -> Rc<Self> {
+    /// `store` is the memo backing. Memo entries written via
+    /// [`set_memo`](Self::set_memo) are persisted there and surface
+    /// again on subsequent runs against the same store — useful for
+    /// incremental parses where prefix work should not be redone.
+    pub fn from_values_with_memo_store(
+        values: Vec<Value>,
+        store: Arc<dyn crate::persistence::Store + Send + Sync>,
+    ) -> Rc<Self> {
         if values.is_empty() {
             return Self::end_of_stream(None);
         }
 
-        let keyspace = fjall::Database::builder(&fjall_path)
-            .open()
-            .expect("failed to open fjall keyspace for memo");
-        let partition = keyspace
-            .keyspace("memo", fjall::KeyspaceCreateOptions::default)
-            .expect("failed to open memo partition");
-        let memo_fjall = Some(Arc::new(Mutex::new(MemoFjall(partition))));
+        let memo_store = Some(Arc::new(Mutex::new(MemoStore(store))));
 
         let source = Rc::new(StreamSource::Static(values.clone()));
-        Self::build_static_chain(source, &values, 0, memo_fjall)
+        Self::build_static_chain(source, &values, 0, memo_store)
     }
 
-    /// Create an end-of-stream position.
-    fn end_of_stream(memo_fjall: Option<Arc<Mutex<MemoFjall>>>) -> Rc<Self> {
+    /// Returns a terminal cell with no head and no source.
+    fn end_of_stream(memo_store: Option<Arc<Mutex<MemoStore>>>) -> Rc<Self> {
         Rc::new(Self {
             head: None,
             tail: RefCell::new(None),
             index: 0,
             memo: RefCell::new(HashMap::new()),
             source: Rc::new(StreamSource::Empty),
-            memo_fjall,
+            memo_store,
         })
     }
 
-    /// Build a chain of positions from static values.
+    /// Constructs a cell rooted at `values[index]`. Returns a terminal cell
+    /// when `index >= values.len()`. The tail is left uncomputed; subsequent
+    /// cells are produced on demand by [`tail`](Self::tail).
     fn build_static_chain(
         source: Rc<StreamSource>,
         values: &[Value],
         index: usize,
-        memo_fjall: Option<Arc<Mutex<MemoFjall>>>,
+        memo_store: Option<Arc<Mutex<MemoStore>>>,
     ) -> Rc<Self> {
         if index >= values.len() {
             return Rc::new(Self {
@@ -254,7 +299,7 @@ impl StreamPosition {
                 index,
                 memo: RefCell::new(HashMap::new()),
                 source,
-                memo_fjall,
+                memo_store,
             });
         }
 
@@ -264,14 +309,20 @@ impl StreamPosition {
             index,
             memo: RefCell::new(HashMap::new()),
             source,
-            memo_fjall,
+            memo_store,
         })
     }
 
-    /// Pull the next value from an async source.
+    /// Pulls one value from `source`.
     ///
-    /// This uses try_recv first (non-blocking), and if that fails,
-    /// uses blocking_recv with timeout via block_on.
+    /// Returns `None` for any of: end-of-channel, timeout, error event, or a
+    /// non-`Async` source. The distinction between these is not surfaced —
+    /// from the parser's point of view all four mean "no further input
+    /// available at this position".
+    ///
+    /// Tries a non-blocking `try_recv` first to avoid runtime overhead when
+    /// the producer is keeping up, and only falls back to a blocking recv
+    /// when the channel is momentarily empty.
     fn pull_next(source: &StreamSource) -> Option<Value> {
         match source {
             StreamSource::Async {
@@ -291,21 +342,25 @@ impl StreamPosition {
         }
     }
 
-    /// Blocking receive with optional timeout.
+    /// Blocks on `receiver.recv()` with an optional timeout.
     ///
-    /// If `timeout` is `None`, blocks indefinitely.
-    /// Handles being called from within or outside a tokio runtime.
+    /// Reuses the ambient tokio runtime if one is available
+    /// (via `block_in_place` to release the worker), otherwise builds a
+    /// transient single-thread runtime for the duration of the call. This
+    /// lets `StreamPosition` be driven equally from synchronous callers and
+    /// from inside async tasks.
+    ///
+    /// Returns `None` on timeout, on a closed channel, or on a
+    /// stream-terminating event ([`StreamEvent::Err`] / [`StreamEvent::Done`]
+    /// — see [`event_to_value`](Self::event_to_value)).
     fn blocking_recv_with_timeout(
         receiver: &mut mpsc::Receiver<StreamEvent>,
         timeout: Option<Duration>,
     ) -> Option<Value> {
-        // Check if we're already in a runtime. block_in_place only exists on
-        // multi-thread runtimes, which don't exist on wasm — there the
-        // temporary-runtime path below is the only one.
-        #[cfg(not(target_arch = "wasm32"))]
+        // Check if we're already in a runtime
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
             // We're in a runtime - use block_in_place to allow blocking
-            return tokio::task::block_in_place(|| {
+            tokio::task::block_in_place(|| {
                 rt_handle.block_on(async {
                     match timeout {
                         Some(duration) => {
@@ -324,10 +379,8 @@ impl StreamPosition {
                         }
                     }
                 })
-            });
-        }
-
-        {
+            })
+        } else {
             // Not in a runtime - create a temporary one for the blocking call
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_time()
@@ -355,7 +408,10 @@ impl StreamPosition {
         }
     }
 
-    /// Convert a stream event to an optional value.
+    /// Projects a [`StreamEvent`] onto the parser's view: `Some` for a value
+    /// to consume, `None` for any terminator (error or done). The error vs.
+    /// done distinction is intentionally lost — both terminate the stream
+    /// for the grammar.
     fn event_to_value(event: StreamEvent) -> Option<Value> {
         match event {
             StreamEvent::Data(v) => Some(v),
@@ -365,22 +421,34 @@ impl StreamPosition {
         }
     }
 
-    /// Get the value at this position (None = end of stream).
+    /// Returns the value at this cursor, or `None` if this is the terminal
+    /// cell. The borrow is tied to the cell's lifetime; clone the
+    /// [`Value`] if it must outlive `self`.
     pub fn head(&self) -> Option<&Value> {
         self.head.as_ref()
     }
 
-    /// Check if this position is at end of stream.
+    /// Returns `true` iff this cell is the terminal sentinel (no more input
+    /// will become available from this cursor).
     pub fn is_at_end(&self) -> bool {
         self.head.is_none()
     }
 
-    /// Get the position index.
+    /// Returns the zero-based position index. Used by callers that need a
+    /// stable key (memo tables, error reports, spill keys).
     pub fn index(&self) -> usize {
         self.index
     }
 
-    /// Get the tail (next position), computing lazily if needed.
+    /// Returns the next cell, computing and caching it on first call.
+    ///
+    /// The returned cell is shared (`Rc::clone` of the cached pointer) so
+    /// repeated `tail()` calls on the same cell return the same successor
+    /// — this is what makes packrat memo lookups across siblings work.
+    ///
+    /// For an `Async` source, this may block on the source channel for up to
+    /// the configured timeout. It may also trigger spill-to-Fjall if the
+    /// in-memory position cache exceeds `memory_limit`.
     pub fn tail(self: &Rc<Self>) -> Rc<Self> {
         // Check if tail is already computed
         if let Some(ref tail) = *self.tail.borrow() {
@@ -391,7 +459,7 @@ impl StreamPosition {
         let new_tail = match self.source.as_ref() {
             StreamSource::Async {
                 positions,
-                fjall,
+                overflow,
                 memory_limit,
                 ..
             } => {
@@ -400,7 +468,6 @@ impl StreamPosition {
                 // Check if we already have this position cached in memory
                 {
                     let positions_guard = positions.lock().unwrap();
-                    // Try to find the position in memory
                     for pos in positions_guard.iter() {
                         if pos.index == target_index {
                             return pos.clone();
@@ -408,19 +475,13 @@ impl StreamPosition {
                     }
                 }
 
-                // Fjall overflow/spill is native-only; on wasm these bindings
-                // have no readers.
-                #[cfg(target_arch = "wasm32")]
-                let _ = (fjall, memory_limit);
-
-                // Check if it's in Fjall overflow
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(fjall_overflow) = fjall
-                    && let Some(pos) = Self::restore_from_fjall(
-                        fjall_overflow,
+                // Check if it's in the cold-tier overflow store
+                if let Some(overflow_store) = overflow
+                    && let Some(pos) = Self::restore_from_store(
+                        overflow_store,
                         target_index,
                         self.source.clone(),
-                        self.memo_fjall.clone(),
+                        self.memo_store.clone(),
                     )
                 {
                     // Cache it in memory (it will be spilled again if needed)
@@ -436,7 +497,7 @@ impl StreamPosition {
                     index: target_index,
                     memo: RefCell::new(HashMap::new()),
                     source: self.source.clone(),
-                    memo_fjall: self.memo_fjall.clone(),
+                    memo_store: self.memo_store.clone(),
                 });
 
                 // Cache the new position and potentially spill old ones
@@ -444,16 +505,14 @@ impl StreamPosition {
                     let mut positions_guard = positions.lock().unwrap();
                     positions_guard.push(new_pos.clone());
 
-                    // Check if we need to spill to Fjall
-                    #[cfg(not(target_arch = "wasm32"))]
+                    // Spill the oldest positions when we exceed memory_limit.
                     if let Some(limit) = memory_limit
                         && positions_guard.len() > *limit
-                        && let Some(fjall_overflow) = fjall
+                        && let Some(overflow_store) = overflow
                     {
-                        // Spill the oldest positions
                         let spill_count = positions_guard.len() - *limit;
                         for pos in positions_guard.drain(0..spill_count) {
-                            Self::spill_to_fjall(fjall_overflow, &pos);
+                            Self::spill_to_store(overflow_store, &pos);
                         }
                     }
                 }
@@ -464,9 +523,9 @@ impl StreamPosition {
                 self.source.clone(),
                 values,
                 self.index + 1,
-                self.memo_fjall.clone(),
+                self.memo_store.clone(),
             ),
-            StreamSource::Empty => Self::end_of_stream(self.memo_fjall.clone()),
+            StreamSource::Empty => Self::end_of_stream(self.memo_store.clone()),
         };
 
         // Cache the computed tail
@@ -474,91 +533,103 @@ impl StreamPosition {
         new_tail
     }
 
-    /// Spill a position to Fjall storage.
+    /// Writes `pos.head` to the overflow store under
+    /// [`PayloadKind::StreamPosition`].
     ///
-    /// Routes through [`crate::persistence::envelope::write`] per
-    /// STORY-0099 AC-5 with [`PayloadKind::StreamPosition`] (0x09). The
-    /// on-disk payload shape is `Option<Vec<u8>>` (a JSON-encoded optional
-    /// head value, where the inner Vec<u8> is itself a serialized `Value`).
-    /// Distinct from `ParseState` (incremental.rs) because the shapes
-    /// differ — the prior collision under a shared discriminator was
-    /// caught and fixed in the ITER-0005a.2 audit fix-up (G2).
+    /// The on-disk payload is JSON-encoded `Option<Vec<u8>>` where the inner
+    /// bytes are themselves a JSON-encoded [`Value`] — preserving the wire
+    /// shape that [`restore_from_store`](Self::restore_from_store) reads
+    /// back. This payload kind is deliberately distinct from
+    /// `ParseState` so the two cannot alias in the store.
     ///
-    /// Preserves panic-on-write semantics by `.expect()`-ing the helper's
-    /// `Result`. Source-hash deferred to ITER-0005b; uses NO_SOURCE_HASH.
+    /// # Panics
+    ///
+    /// Panics if serialization or the store write fails. Spill is invoked
+    /// during normal traversal and there is no recovery path — a failure
+    /// here is a storage-layer bug, surfaced loudly rather than swallowed.
     ///
     /// [`PayloadKind::StreamPosition`]: crate::persistence::schema::PayloadKind::StreamPosition
-    #[cfg(not(target_arch = "wasm32"))]
-    fn spill_to_fjall(fjall: &FjallOverflow, pos: &Rc<StreamPosition>) {
-        use crate::persistence::envelope::{NO_SOURCE_HASH, write};
+    fn spill_to_store(overflow: &OverflowStore, pos: &Rc<StreamPosition>) {
+        use crate::persistence::envelope::write;
         use crate::persistence::schema::PayloadKind;
+        use fmpl_types::Hash;
 
-        // Serialize the head value (if any) using serde_json (inner-wrapping
-        // preserves the existing on-the-wire shape that restore_from_fjall
-        // reads back).
         let head_bytes = pos
             .head
             .as_ref()
-            .map(|v| serde_json::to_vec(v).expect("failed to serialize value for fjall"));
+            .map(|v| serde_json::to_vec(v).expect("failed to serialize value for store"));
 
-        // Key is the position index as bytes
         let key = pos.index.to_be_bytes();
 
         write(
-            &fjall.keyspace,
+            &*overflow.0,
             &key,
             &head_bytes,
             PayloadKind::StreamPosition,
-            NO_SOURCE_HASH,
+            crate::VM_VERSION,
+            Hash::NONE,
         )
-        .expect("failed to write position envelope to fjall");
+        .expect("failed to write position envelope to store");
     }
 
-    /// Restore a position from Fjall storage.
-    /// Restore a position from Fjall storage.
+    /// Reconstructs a previously spilled position from the store, or
+    /// returns `None` if no record exists for `index` or the record
+    /// fails any envelope integrity check (magic / CRC / VM-major /
+    /// payload-kind / schema-version).
     ///
-    /// **TODO(ITER-0005a.3):** Transitional manual envelope-prefix-strip.
-    /// 0005a.2's writer sweep wraps every fjall value in a 56-byte envelope
-    /// header followed by the JSON payload. ITER-0005a.3 will replace this
-    /// strip with `loader::decode(&bytes)` returning a `DecodedRecord`.
-    #[cfg(not(target_arch = "wasm32"))]
-    fn restore_from_fjall(
-        fjall: &FjallOverflow,
+    /// The returned cell carries a fresh memo table and an uncomputed
+    /// tail; it is observationally equivalent to a freshly-pulled cell
+    /// at the same index. `source` and `memo_store` are propagated from
+    /// the caller so the resurrected cell stays attached to the live
+    /// stream.
+    ///
+    /// Records that fail to decode are treated as missing (the spilled
+    /// position is re-pulled from the source). This is the same
+    /// "graceful skip" semantics the loader applies elsewhere — a
+    /// corrupted overflow record never panics the parser, since the
+    /// source can always re-produce the value.
+    fn restore_from_store(
+        overflow: &OverflowStore,
         index: usize,
         source: Rc<StreamSource>,
-        memo_fjall: Option<Arc<Mutex<MemoFjall>>>,
+        memo_store: Option<Arc<Mutex<MemoStore>>>,
     ) -> Option<Rc<StreamPosition>> {
-        use crate::persistence::envelope::ENVELOPE_HEADER_SIZE;
+        use crate::persistence::loader::{DecodeOutcome, decode};
         let key = index.to_be_bytes();
 
-        if let Ok(Some(value_bytes)) = fjall.keyspace.get(key) {
-            if value_bytes.len() < ENVELOPE_HEADER_SIZE {
-                return None;
-            }
-            let payload = &value_bytes[ENVELOPE_HEADER_SIZE..];
-            // Deserialize the Option<Vec<u8>>
-            let head_bytes: Option<Vec<u8>> =
-                serde_json::from_slice(payload).expect("failed to deserialize from fjall");
-
-            // Deserialize the head value (if any)
-            let head = head_bytes.map(|bytes| {
-                serde_json::from_slice(&bytes).expect("failed to deserialize value from fjall")
-            });
-
-            Some(Rc::new(StreamPosition {
-                head,
-                tail: RefCell::new(None),
-                index,
-                memo: RefCell::new(HashMap::new()),
-                source,
-                memo_fjall,
-            }))
-        } else {
-            None
+        let value_bytes = overflow.0.get(&key).ok().flatten()?;
+        let (outcome, decoded) = decode(&value_bytes, crate::VM_VERSION.major);
+        if outcome != DecodeOutcome::Loaded {
+            return None;
         }
+        let rec = decoded?;
+
+        // The on-wire payload is JSON-encoded `Option<Vec<u8>>` where the
+        // inner bytes are themselves a JSON-encoded `Value` — see
+        // `spill_to_store` for the producer side. A decode failure here
+        // would indicate envelope-internal schema drift (header passed,
+        // payload didn't); skip rather than panic.
+        let head_bytes: Option<Vec<u8>> = serde_json::from_slice(rec.payload).ok()?;
+        let head = match head_bytes {
+            None => None,
+            Some(bytes) => Some(serde_json::from_slice(&bytes).ok()?),
+        };
+
+        Some(Rc::new(StreamPosition {
+            head,
+            tail: RefCell::new(None),
+            index,
+            memo: RefCell::new(HashMap::new()),
+            source,
+            memo_store,
+        }))
     }
 
-    /// Advance n positions, returning the new position.
+    /// Walks `n` cells forward and returns the resulting cursor.
+    ///
+    /// Stops early at end-of-stream — the returned cell is the terminal cell
+    /// if `self` had fewer than `n` remaining values. Each step may pull /
+    /// block on the underlying source (see [`tail`](Self::tail)).
     pub fn advance(self: &Rc<Self>, n: usize) -> Rc<Self> {
         let mut current = self.clone();
         for _ in 0..n {
@@ -570,66 +641,84 @@ impl StreamPosition {
         current
     }
 
-    /// Get the memoization entry for a rule at this position.
+    /// Returns the memoized outcome of `rule` at this position, or `None`
+    /// for a cache miss.
+    ///
+    /// Reads the in-memory memo table first; on a miss, falls through
+    /// to the optional [`Store`][crate::persistence::Store]-backed memo
+    /// table and promotes any hit into the in-memory table for
+    /// subsequent lookups. Persisted records that fail envelope
+    /// integrity checks (magic / CRC / VM-major / payload-kind) are
+    /// treated as cache misses — the rule will be re-evaluated rather
+    /// than silently returning a tampered or version-mismatched
+    /// memoization.
+    ///
+    /// A `None` here is *only* a cache miss — it does not distinguish
+    /// "not yet attempted" from "attempted and failed".
     pub fn get_memo(&self, rule: &SmolStr) -> Option<MemoEntry> {
-        // Check in-memory cache first
         if let Some(entry) = self.memo.borrow().get(rule).cloned() {
             return Some(entry);
         }
 
-        // Check Fjall storage if configured (native-only; memo_fjall is
-        // always None on wasm)
-        // TODO(ITER-0005a.3): replace manual prefix-strip with loader::decode.
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(ref memo_fjall) = self.memo_fjall {
-            use crate::persistence::envelope::ENVELOPE_HEADER_SIZE;
-            let memo_fjall_guard = memo_fjall.lock().unwrap();
-            // Key is position_index:rule_name
+        if let Some(ref memo_store) = self.memo_store {
+            use crate::persistence::loader::{DecodeOutcome, decode};
+            let memo_store_guard = memo_store.lock().unwrap();
             let key = format!("{}:{}", self.index, rule);
-            if let Ok(Some(value_bytes)) = memo_fjall_guard.0.get(key.as_bytes())
-                && value_bytes.len() >= ENVELOPE_HEADER_SIZE
-                && let payload = &value_bytes[ENVELOPE_HEADER_SIZE..]
-                && let Ok(entry) = serde_json::from_slice::<MemoEntry>(payload)
-            {
-                // Cache in memory for subsequent lookups
-                self.memo.borrow_mut().insert(rule.clone(), entry.clone());
-                return Some(entry);
+            if let Ok(Some(value_bytes)) = memo_store_guard.0.get(key.as_bytes()) {
+                let (outcome, decoded) = decode(&value_bytes, crate::VM_VERSION.major);
+                if outcome == DecodeOutcome::Loaded
+                    && let Some(rec) = decoded
+                    && let Ok(entry) = serde_json::from_slice::<MemoEntry>(rec.payload)
+                {
+                    self.memo.borrow_mut().insert(rule.clone(), entry.clone());
+                    return Some(entry);
+                }
             }
         }
 
         None
     }
 
-    /// Set the memoization entry for a rule at this position.
+    /// Inserts `entry` as the memoized outcome of `rule` at this position.
+    ///
+    /// Writes both the in-memory table and (when configured) the Fjall
+    /// partition. Any previous entry for `rule` at this position is
+    /// overwritten — packrat semantics require the latest `Done` result to
+    /// win, and overwriting `InProgress` with `Done` is the normal
+    /// completion path.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the Fjall write fails; matches the spill path semantics —
+    /// storage errors are not silently tolerated.
     pub fn set_memo(&self, rule: SmolStr, entry: MemoEntry) {
-        // Write to in-memory cache
         self.memo.borrow_mut().insert(rule.clone(), entry.clone());
 
-        // Write to Fjall storage if configured (native-only; memo_fjall is
-        // always None on wasm).
-        // Routes through persistence::envelope::write per STORY-0099 AC-5
-        // (PayloadKind::MemoTable). Preserves panic-on-write semantics via
-        // .expect(). Source-hash deferred to ITER-0005b.
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(ref memo_fjall) = self.memo_fjall {
-            use crate::persistence::envelope::{NO_SOURCE_HASH, write};
+        if let Some(ref memo_store) = self.memo_store {
+            use crate::persistence::envelope::write;
             use crate::persistence::schema::PayloadKind;
+            use fmpl_types::Hash;
 
-            let memo_fjall_guard = memo_fjall.lock().unwrap();
-            // Key is position_index:rule_name
+            let memo_store_guard = memo_store.lock().unwrap();
             let key = format!("{}:{}", self.index, rule);
             write(
-                &memo_fjall_guard.0,
+                &*memo_store_guard.0,
                 key.as_bytes(),
                 &entry,
                 PayloadKind::MemoTable,
-                NO_SOURCE_HASH,
+                crate::VM_VERSION,
+                Hash::NONE,
             )
-            .expect("failed to write memo envelope to fjall");
+            .expect("failed to write memo envelope to store");
         }
     }
 
-    /// Collect values from current position to end (for testing/debugging).
+    /// Drains the stream from this cursor to end-of-stream into a `Vec`.
+    ///
+    /// Intended for tests and debugging — forces full materialization of the
+    /// remaining stream, defeating the laziness this type otherwise
+    /// preserves. Not appropriate for production parsing of unbounded
+    /// streams.
     pub fn collect_to_vec(self: &Rc<Self>) -> Vec<Value> {
         let mut result = Vec::new();
         let mut current = self.clone();
@@ -641,27 +730,29 @@ impl StreamPosition {
     }
 }
 
-/// Streaming input wrapper that can be used with PegRuntime.
+/// PegRuntime-compatible wrapper around a [`StreamPosition`].
 ///
-/// This wraps StreamPosition to provide the same interface as Input,
-/// but with streaming/lazy evaluation.
+/// Presents the indexed `value_at` / `is_at_end` interface that PEG-style
+/// drivers expect, while retaining lazy stream semantics underneath. The
+/// `start` position is shared (`Rc`), so cloning a `StreamInput` is cheap
+/// and shares all upstream cells with the original.
 #[derive(Debug)]
 pub struct StreamInput {
-    /// The starting position in the stream.
+    /// Root position of the underlying lazy stream.
     start: Rc<StreamPosition>,
-    /// The timeout for blocking operations (None = infinite).
+    /// Cached copy of the source's blocking timeout for observability via
+    /// [`timeout`](Self::timeout).
     timeout: Option<Duration>,
 }
 
 impl StreamInput {
-    /// Create a streaming input from an async stream with default timeout.
+    /// Returns a stream input over `handle` using [`DEFAULT_STREAM_TIMEOUT`].
     pub fn from_async(handle: StreamHandle) -> Self {
         Self::from_async_with_timeout(handle, DEFAULT_STREAM_TIMEOUT)
     }
 
-    /// Create a streaming input from an async stream with custom timeout.
-    ///
-    /// Use `None` for infinite blocking.
+    /// Returns a stream input over `handle` with a caller-chosen blocking
+    /// timeout. `None` blocks indefinitely.
     pub fn from_async_with_timeout(handle: StreamHandle, timeout: Option<Duration>) -> Self {
         Self {
             start: StreamPosition::from_async(handle, timeout),
@@ -669,7 +760,9 @@ impl StreamInput {
         }
     }
 
-    /// Create a streaming input from a static list of values.
+    /// Returns a stream input over a fixed `Vec<Value>`. The recorded
+    /// `timeout` is the default — static streams never actually block, but
+    /// the field is preserved so the inspection API is uniform.
     pub fn from_values(values: Vec<Value>) -> Self {
         Self {
             start: StreamPosition::from_values(values),
@@ -677,31 +770,34 @@ impl StreamInput {
         }
     }
 
-    /// Get the starting position.
+    /// Returns a shared handle to the root position. Clones cheaply.
     pub fn start(&self) -> Rc<StreamPosition> {
         self.start.clone()
     }
 
-    /// Get the configured timeout for blocking operations.
-    /// Returns `None` if infinite blocking is configured.
+    /// Returns the configured blocking timeout, or `None` for unbounded.
     pub fn timeout(&self) -> Option<Duration> {
         self.timeout
     }
 
-    /// Get the position at a given index.
+    /// Returns the cell at `index`, walking the stream from the root.
     ///
-    /// This may block if the position hasn't been computed yet.
+    /// O(index) in cell traversal; may block on the underlying source for
+    /// uncomputed indices. For repeated indexed access, prefer holding the
+    /// returned [`Rc<StreamPosition>`] and using [`StreamPosition::tail`].
     pub fn position_at(&self, index: usize) -> Rc<StreamPosition> {
         self.start.advance(index)
     }
 
-    /// Get the value at a given index.
+    /// Returns the value at `index`, or `None` if `index` is past
+    /// end-of-stream. Equivalent to `position_at(index).head().cloned()`.
     pub fn value_at(&self, index: usize) -> Option<Value> {
         let pos = self.position_at(index);
         pos.head().cloned()
     }
 
-    /// Check if position is at end.
+    /// Returns `true` iff `index` falls at or past end-of-stream. May block
+    /// while pulling cells up to `index`.
     pub fn is_at_end(&self, index: usize) -> bool {
         let pos = self.position_at(index);
         pos.is_at_end()
@@ -713,48 +809,11 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc;
 
-    #[test]
-    fn test_fjall_overflow_basic() {
-        use tempfile::tempdir;
-
-        let temp_dir = tempdir().unwrap();
-        let values: Vec<Value> = (0..10).map(Value::Int).collect();
-
-        // Create async stream with fjall backing
-        let (tx, rx) = mpsc::channel(100);
-
-        // Send all values
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            for v in values.iter() {
-                tx.send(crate::stream::StreamEvent::Data(v.clone()))
-                    .await
-                    .unwrap();
-            }
-        });
-        drop(tx);
-
-        let handle = crate::stream::StreamHandle::new(rx, 1);
-        // Use a memory limit of 5 positions - should trigger spilling after 5 positions
-        let stream = StreamPosition::from_async_with_fjall(
-            handle,
-            Some(std::time::Duration::from_secs(1)),
-            Some(temp_dir.path().to_path_buf()),
-            5,
-        );
-
-        // Advance through all positions to trigger potential spilling
-        let pos5 = stream.advance(5);
-        assert_eq!(pos5.head(), Some(&Value::Int(5)));
-
-        // Continue to the end
-        let pos9 = stream.advance(9);
-        assert_eq!(pos9.head(), Some(&Value::Int(9)));
-
-        // Going beyond end should give None
-        let end = pos9.tail();
-        assert!(end.is_at_end());
-    }
+    // Store-backed overflow + memo integration tests live at
+    // `fmpl-persistence/tests/stream_input_store.rs`. They construct
+    // a `FjallStore` directly (which the no-fjall-in-fmpl-core gate
+    // forbids in `fmpl-core/src/`) and exercise spill/restore + memo
+    // round-trips through the loader's integrity gates.
 
     #[test]
     fn test_static_stream_basic() {
@@ -821,30 +880,9 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_memo_persists_to_fjall() {
-        use tempfile::tempdir;
-
-        let temp_dir = tempdir().unwrap();
-        let values = vec![Value::Int(1), Value::Int(2)];
-
-        // Create stream with Fjall memo backing
-        let stream =
-            StreamPosition::from_values_with_memo_fjall(values, temp_dir.path().to_path_buf());
-
-        // Set memo entry
-        stream.set_memo(
-            SmolStr::new("test_rule"),
-            MemoEntry::Done(Some(Value::Int(42)), 1),
-        );
-
-        // Verify it can be retrieved
-        let memo = stream.get_memo(&SmolStr::new("test_rule"));
-        assert!(matches!(
-            memo,
-            Some(MemoEntry::Done(Some(Value::Int(42)), 1))
-        ));
-    }
+    // The memo-persists-across-reopen scenario lives in
+    // `fmpl-persistence/tests/stream_input_store.rs` as the
+    // `memo_persists_across_store_reopen` integration test.
 
     #[test]
     fn test_stream_input_interface() {

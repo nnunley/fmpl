@@ -41,6 +41,9 @@ pub mod tuplespace;
 pub mod types;
 pub mod value;
 pub mod vm;
+pub mod vm_version;
+
+pub use vm_version::{VM_VERSION, VM_VERSION_MAJOR, VM_VERSION_MINOR, VM_VERSION_PATCH};
 
 pub use ast::Expr;
 pub use compiler::{CompiledCode, Compiler, Instruction};
@@ -158,6 +161,115 @@ pub fn eval_via_legacy_parser(vm: &mut Vm, source: &str) -> Result<Value> {
     let ast = Parser::with_source(&tokens, source).parse()?;
     let code = Compiler::new().compile(&ast)?;
     vm.run(&code)
+}
+
+/// Compile `source` through the native pipeline, persist the resulting
+/// `CompiledCode` to `bytecode_store` at `key` (stamping the envelope's
+/// `source_hash` against an entry in `source_store`), then execute the
+/// code on `vm` and return the result.
+///
+/// This is the **persistence-aware sibling** of [`eval`]. `eval()` is
+/// unchanged; production callers that don't want persistence keep
+/// calling it. Callers that want compile-time bytecode persisted under
+/// a recoverable source reference call this instead.
+///
+/// # Pipeline choice
+///
+/// Internally takes the **native compile path** (lexer → legacy parser
+/// → Compiler → VM), not the `FMPL_USE_FMPL_COMPILER` pipeline. The
+/// FMPL pipeline routes user source through `ast_to_ir.fmpl` via
+/// `eval_via_legacy_parser` on a derived driver string; persisting that
+/// `CompiledCode` would stamp the driver string's hash, not the user's
+/// source. Persisting against the user's source is what
+/// `source_hash`-based recovery needs, so we compile-once via the
+/// native path. The `FMPL_USE_GENERATED_PARSER` opt-in for the
+/// generated parser is honored — it changes the parser, not the
+/// compiler — so the existing parity gates apply to persisted output.
+///
+/// # Errors
+///
+/// - Lex/parse/compile errors surface as `Error::Lexer` / `Error::Parser`
+///   / `Error::Compiler`.
+/// - Source-store insert and envelope-store insert failures surface as
+///   `Error::BytecodePersistenceError`.
+/// - Runtime errors during VM execution surface as `Error::Runtime`
+///   (whatever the VM normally returns).
+///
+/// On error the persisted-bytecode state may be partially populated
+/// (e.g. source bytes inserted but envelope insert failed). Callers
+/// that care about atomicity must layer their own transactional wrapper.
+#[cfg(feature = "persistence")]
+pub fn eval_persistent(
+    vm: &mut Vm,
+    source: &str,
+    bytecode_store: &dyn fmpl_persistence::Store,
+    source_store: &fmpl_persistence::SourceStore,
+    key: &str,
+) -> Result<Value> {
+    let use_generated = std::env::var("FMPL_USE_GENERATED_PARSER")
+        .map(|v| v == "1" || v == "true")
+        .unwrap_or(false);
+
+    let ast = if use_generated {
+        parser::generated_parse(source)?
+    } else {
+        let tokens = Lexer::new(source).tokenize()?;
+        Parser::with_source(&tokens, source).parse()?
+    };
+    let code = Compiler::new().compile(&ast)?;
+    code.save_to_store(bytecode_store, source_store, key, Some(source.as_bytes()))?;
+    vm.run(&code)
+}
+
+/// Walk `bytecode_store` and rebuild every envelope whose payload is
+/// incompatible with the current VM major version by recompiling its
+/// source from `source_store`. Returns the recovery taxonomy
+/// ([`fmpl_persistence::RecoveryStats`]) so the caller can observe how
+/// many records were recovered, were unrecoverable, or failed to
+/// recompile.
+///
+/// This is the **fmpl-core-side orchestrator** that closes
+/// fmpl-persistence's `recover_incompatible` over the running VM:
+/// reuses the existing closure seam at `fmpl_persistence::recovery`,
+/// converts the iteration `&[u8]` key back to a `&str`, and routes
+/// through [`eval_persistent`] so the rebuilt record is stamped with a
+/// fresh envelope (current VM version, same source_hash) and the
+/// resulting value lands on `vm`.
+///
+/// Per-record errors (UTF-8 failure on the key, recompile failure)
+/// are surfaced through `RecoveryError::recompile(...)` and counted
+/// into `RecoveryStats.recompile_failed`. Backend (store I/O) errors
+/// short-circuit and propagate as `Error::BytecodePersistenceError`.
+///
+/// # Why no new trait
+///
+/// `fmpl-persistence::recover_incompatible` already exposes a closure
+/// (`FnMut(&[u8], &[u8]) -> Result<(), RecoveryError>`) as its
+/// inversion-of-control seam. The project pattern at this layer is
+/// closure parameters, not traits — wrapping the closure in a trait
+/// would add ceremony without changing the inversion-of-control shape.
+#[cfg(feature = "persistence")]
+pub fn recover_and_rebind(
+    vm: &mut Vm,
+    bytecode_store: &dyn fmpl_persistence::Store,
+    source_store: &fmpl_persistence::SourceStore,
+) -> Result<fmpl_persistence::RecoveryStats> {
+    use fmpl_persistence::{RecoveryError, recover_incompatible};
+
+    let stats = recover_incompatible(
+        bytecode_store,
+        source_store,
+        VM_VERSION_MAJOR,
+        |key_bytes, src_bytes| {
+            let key = std::str::from_utf8(key_bytes).map_err(RecoveryError::recompile)?;
+            let source = std::str::from_utf8(src_bytes).map_err(RecoveryError::recompile)?;
+            eval_persistent(vm, source, bytecode_store, source_store, key)
+                .map(|_| ())
+                .map_err(|e| RecoveryError::recompile(std::io::Error::other(e.to_string())))
+        },
+    )
+    .map_err(|e| Error::BytecodePersistenceError(format!("recover_incompatible: {e}")))?;
+    Ok(stats)
 }
 
 /// Check if source code is syntactically complete.

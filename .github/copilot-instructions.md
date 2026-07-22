@@ -115,7 +115,7 @@ cargo run -p fmpl-tui            # Launch TUI (Ctrl+L for LLM chat)
 - **Always run tests after changes**: `cargo test -p fmpl-core`
 
 ### Feature Flags
-- `fjall-persistence` — Enable Fjall-backed durable storage (optional)
+- `persistence` — Enable Fjall-backed durable storage (optional)
 
 ## Key Files Reference
 

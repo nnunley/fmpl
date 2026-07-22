@@ -154,3 +154,10 @@ fn gate_strips_comments_before_matching() {
     let stripped = strip_comments(with_comment);
     assert!(!stripped.contains("keyspace.insert("));
 }
+
+// The no-fjall-in-fmpl-core scan that previously lived here (added
+// ITER-0005a.5 closing PAR R-D-C-1) has been superseded by the
+// workspace-wide `fmpl-workspace-tests::no_fjall_in_consumers` gate
+// in ITER-0005a.6 T5. The new gate scans BOTH fmpl-core/src/ AND
+// fmpl-core/tests/ AND fmpl-web/src/ — wider scope, single source of
+// truth for the invariant.

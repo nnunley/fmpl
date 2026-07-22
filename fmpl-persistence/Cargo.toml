@@ -1,0 +1,45 @@
+[package]
+name = "fmpl-persistence"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "FMPL persistence layer: envelope writer, loader, Store trait"
+
+[features]
+default = []
+fjall-backend = ["dep:fjall"]
+
+[dependencies]
+# fjall v3: direct pin, not workspace. This crate is the sole place
+# fjall is named at the type level (via `FjallStore` + `From<fjall::Error>
+# for StoreError`). Gated behind `fjall-backend`; without the feature
+# the Store trait still compiles and downstream callers can use other
+# backends. Per ITER-0005a.5 + 0005a.6 architecture.
+fjall = { version = "3", optional = true }
+fmpl-types = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+zerocopy = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+fmpl-scenario-runner = { workspace = true }
+# Cyclic dev-dep: fmpl-core regular-deps fmpl-persistence (added in T4.9),
+# but relocated bytecode/object/parse_state persistence tests need
+# CompiledCode/ObjectDb/ParseState from fmpl-core. Cargo permits dev-dep
+# cycles (dev-deps don't propagate). Per the 0005a.5 R3-S1 resolution.
+# ITER-0005b: activate fmpl-core's `persistence` feature so the new
+# CompiledCode::save_to_store signature (which references SourceStore)
+# compiles in this crate's tests.
+fmpl-core = { workspace = true, features = ["persistence"] }
+# fjall v3 direct pin matches the regular-dep above; integration tests
+# construct FjallStore which is v3-backed. See the [dependencies] comment.
+fjall = "3"
+smol_str = { workspace = true }
+# tokio (full features) drives the mpsc-based async stream tests in
+# stream_input_store.rs. Matches fmpl-core's dev-deps tokio entry so
+# the runtime types resolve the same.
+tokio = { workspace = true, features = ["full"] }

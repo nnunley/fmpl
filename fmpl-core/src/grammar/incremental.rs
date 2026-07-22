@@ -1,47 +1,73 @@
-//! Incremental parsing support for streaming grammars.
+//! Incremental parsing primitives for streaming grammars.
 //!
-//! Provides ParseState for suspension/resumption and ParseNext for
-//! incremental parse results.
+//! A [`ParseState`] is a serializable snapshot of an in-flight parse: input
+//! cursor, rule call stack, and bound variables. A [`ParseNext`] is the
+//! tri-state outcome of one driver step (matched / needs more input /
+//! end-of-stream). Together they let a grammar suspend on a short read,
+//! persist to durable storage, and resume later — possibly in a different
+//! process — without rerunning prefix work.
 
 use crate::value::Value;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 
-/// State needed to resume an incremental parse.
+/// Resumable snapshot of an in-flight parse.
 ///
-/// Captures position, rule call stack, and bindings for serialization.
+/// All fields are public because `ParseState` is the wire format between the
+/// parser driver, the persistence layer, and any resumption logic. The state
+/// is by-value `Clone` and serde-serializable so it can be checkpointed
+/// mid-parse and rehydrated later.
+///
+/// # Invariants
+///
+/// * `position_index` indexes into the input stream that produced this state.
+///   Resuming against a *different* stream (or a stream whose prefix has
+///   changed) is undefined behavior at the grammar level — the driver must
+///   match states to streams.
+/// * `rule_stack` is innermost-last; each entry records the position at which
+///   that rule was entered, which is what packrat memoization keys on.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ParseState {
-    /// Current position index in input.
+    /// Cursor into the input stream this state was captured from.
     pub position_index: usize,
-    /// Rule call stack: (rule_name, entry_position_index).
+    /// Active rule stack as `(rule_name, entry_position_index)`, innermost
+    /// last.
     pub rule_stack: Vec<(SmolStr, usize)>,
-    /// Current variable bindings.
+    /// Variable bindings visible to the innermost rule.
     pub bindings: HashMap<SmolStr, Value>,
 }
 
-/// Result of an incremental parse step.
+/// Outcome of one step of incremental parsing.
+///
+/// The driver loop matches on this to decide whether to consume the result,
+/// suspend (persist the embedded [`ParseState`] and wait for more input), or
+/// stop.
 #[derive(Debug, Clone)]
 pub enum ParseNext {
-    /// Rule matched, here's the result value.
+    /// A top-level rule matched; carries the produced value.
     Match(Value),
-    /// Need more input - here's state to resume from.
+    /// The parse cannot proceed without more input. The embedded state is the
+    /// resumption point and is safe to serialize.
     NeedInput(ParseState),
-    /// Input stream ended.
+    /// The input stream terminated before any further match was possible.
     End,
 }
 
-/// Errors for ParseState serialization/persistence.
+/// Failure modes for [`ParseState`] persistence.
+///
+/// `Serialize` / `Deserialize` indicate a JSON-level shape mismatch (typically
+/// a struct version skew). `Store` is the underlying key-value store
+/// returning an I/O or storage-engine error.
 #[derive(Debug)]
 pub enum ParseStateError {
-    /// Serialization failed.
+    /// JSON serialization of the state failed.
     Serialize(serde_json::Error),
-    /// Deserialization failed.
+    /// JSON deserialization of stored bytes failed (likely shape drift or
+    /// corrupted record).
     Deserialize(serde_json::Error),
-    /// Fjall operation failed (fjall is native-only).
-    #[cfg(not(target_arch = "wasm32"))]
-    Fjall(fjall::Error),
+    /// Underlying Store error (wraps backend-specific failure like fjall).
+    Store(crate::persistence::StoreError),
 }
 
 impl std::fmt::Display for ParseStateError {
@@ -49,77 +75,102 @@ impl std::fmt::Display for ParseStateError {
         match self {
             Self::Serialize(e) => write!(f, "serialize error: {}", e),
             Self::Deserialize(e) => write!(f, "deserialize error: {}", e),
-            #[cfg(not(target_arch = "wasm32"))]
-            Self::Fjall(e) => write!(f, "fjall error: {}", e),
+            Self::Store(e) => write!(f, "store error: {}", e),
         }
     }
 }
 
 impl std::error::Error for ParseStateError {}
 
-/// Serialization support for ParseState.
+impl From<crate::persistence::StoreError> for ParseStateError {
+    fn from(e: crate::persistence::StoreError) -> Self {
+        Self::Store(e)
+    }
+}
+
 impl ParseState {
-    /// Serialize to bytes for Fjall storage.
+    /// Returns the JSON encoding of this state.
+    ///
+    /// This is the raw payload (no envelope header). Use [`save_to_store`] to
+    /// write a record that round-trips through [`load_from_store`].
+    ///
+    /// [`save_to_store`]: Self::save_to_store
+    /// [`load_from_store`]: Self::load_from_store
     pub fn to_bytes(&self) -> Result<Vec<u8>, serde_json::Error> {
         serde_json::to_vec(self)
     }
 
-    /// Deserialize from bytes.
+    /// Reconstructs a state from its raw JSON encoding (no envelope header).
+    ///
+    /// Pair with [`to_bytes`]. Reads from durable storage should go through
+    /// [`load_from_store`] instead — it strips the envelope first.
+    ///
+    /// [`to_bytes`]: Self::to_bytes
+    /// [`load_from_store`]: Self::load_from_store
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, serde_json::Error> {
         serde_json::from_slice(bytes)
     }
 
-    /// Save parse state to Fjall keyspace.
+    /// Persists this state under `key` in `store`, wrapped in the
+    /// standard persistence envelope.
     ///
-    /// Routes through [`crate::persistence::envelope::write`] per STORY-0099
-    /// AC-5. Uses [`crate::persistence::schema::PayloadKind::ParseState`]
-    /// (0x06). Source-hash deferred to ITER-0005b; carries
-    /// [`crate::persistence::envelope::NO_SOURCE_HASH`].
+    /// The on-disk record is `envelope_header || json(self)` where the header
+    /// carries the payload kind ([`PayloadKind::ParseState`]) and a source
+    /// hash slot. Returns `Err(Serialize)` for a JSON encoding failure and
+    /// `Err(Store)` for an I/O / storage failure.
     ///
-    /// Note: this call site is NOT `#[cfg(feature = "fjall-persistence")]`-gated
-    /// (unlike `compiler.rs::save_to_fjall` and `object.rs::save_to_fjall`).
-    /// The asymmetry is preserved per the ITER-0005a.2 scope-card decision;
-    /// closing it is a separate future hardening iteration. The envelope
-    /// helper itself is unconditional (on native targets), so this works.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn save_to_fjall(
+    /// [`PayloadKind::ParseState`]: crate::persistence::schema::PayloadKind::ParseState
+    pub fn save_to_store<S: crate::persistence::Store>(
         &self,
-        keyspace: &fjall::Keyspace,
+        store: &S,
         key: &[u8],
     ) -> Result<(), ParseStateError> {
-        use crate::persistence::envelope::{NO_SOURCE_HASH, write};
+        use crate::persistence::envelope::write;
         use crate::persistence::schema::PayloadKind;
-        // Bridge envelope::EnvelopeWriteError → ParseStateError.
-        match write(keyspace, key, self, PayloadKind::ParseState, NO_SOURCE_HASH) {
+        use fmpl_types::Hash;
+        match write(
+            store,
+            key,
+            self,
+            PayloadKind::ParseState,
+            crate::VM_VERSION,
+            Hash::NONE,
+        ) {
             Ok(()) => Ok(()),
             Err(crate::persistence::envelope::EnvelopeWriteError::Serialize(e)) => {
                 Err(ParseStateError::Serialize(e))
             }
-            Err(crate::persistence::envelope::EnvelopeWriteError::Keyspace(e)) => {
-                Err(ParseStateError::Fjall(e))
+            Err(crate::persistence::envelope::EnvelopeWriteError::Store(e)) => {
+                Err(ParseStateError::Store(e))
             }
         }
     }
 
-    /// Load parse state from Fjall keyspace.
+    /// Loads a previously saved state from `store`, stripping the envelope
+    /// header.
     ///
-    /// **TODO(ITER-0005a.3):** Transitional manual prefix-strip. After
-    /// 0005a.2's writer sweep, on-disk values have a 56-byte envelope
-    /// header followed by the serialized payload. ITER-0005a.3 will
-    /// replace this manual strip with `loader::decode(&bytes)`.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_from_fjall(
-        keyspace: &fjall::Keyspace,
+    /// Returns `Ok(None)` if no record exists at `key` (a normal "not found"
+    /// — the caller treats this as a cache miss). Returns `Err(Deserialize)`
+    /// if a record is present but cannot be decoded — that signals either
+    /// schema drift across versions or on-disk corruption, and the caller
+    /// must decide whether to invalidate the slot.
+    ///
+    /// A record shorter than [`ENVELOPE_HEADER_SIZE`] is treated as
+    /// corruption: we floor the slice at the header size so the deserializer
+    /// rejects an empty payload rather than the function panicking on an
+    /// out-of-bounds index.
+    ///
+    /// TODO(ITER-0005a.4): Replace the manual header strip with
+    /// `loader::decode(&bytes)` once the loader API lands.
+    ///
+    /// [`ENVELOPE_HEADER_SIZE`]: crate::persistence::envelope::ENVELOPE_HEADER_SIZE
+    pub fn load_from_store<S: crate::persistence::Store>(
+        store: &S,
         key: &[u8],
     ) -> Result<Option<Self>, ParseStateError> {
         use crate::persistence::envelope::ENVELOPE_HEADER_SIZE;
-        match keyspace.get(key).map_err(ParseStateError::Fjall)? {
+        match store.get(key)? {
             Some(bytes) => {
-                // Defensive: feed at most a too-short slice into from_bytes
-                // so a corrupted record surfaces as Deserialize rather than
-                // panicking on the slice index below. ENVELOPE_HEADER_SIZE
-                // is the floor; serde_json will reject the empty slice it
-                // gets in that case.
                 let payload_start = bytes.len().min(ENVELOPE_HEADER_SIZE);
                 let payload = &bytes[payload_start..];
                 let state = Self::from_bytes(payload).map_err(ParseStateError::Deserialize)?;
@@ -205,52 +256,9 @@ mod tests {
         assert!(restored.bindings.is_empty());
     }
 
-    #[test]
-    fn test_parse_state_fjall_roundtrip() {
-        use tempfile::tempdir;
-
-        let temp_dir = tempdir().unwrap();
-        let db = fjall::Database::builder(temp_dir.path()).open().unwrap();
-        let keyspace = db
-            .keyspace("parse_states", fjall::KeyspaceCreateOptions::default)
-            .unwrap();
-
-        let mut bindings = HashMap::new();
-        bindings.insert(SmolStr::new("result"), Value::Int(999));
-
-        let state = ParseState {
-            position_index: 42,
-            rule_stack: vec![(SmolStr::new("expr"), 10)],
-            bindings,
-        };
-
-        // Store in Fjall
-        let key = b"test_session_123";
-        state.save_to_fjall(&keyspace, key).unwrap();
-
-        // Load from Fjall
-        let restored = ParseState::load_from_fjall(&keyspace, key)
-            .unwrap()
-            .expect("should find saved state");
-
-        assert_eq!(restored.position_index, 42);
-        assert_eq!(
-            restored.bindings.get(&SmolStr::new("result")),
-            Some(&Value::Int(999))
-        );
-    }
-
-    #[test]
-    fn test_parse_state_fjall_not_found() {
-        use tempfile::tempdir;
-
-        let temp_dir = tempdir().unwrap();
-        let db = fjall::Database::builder(temp_dir.path()).open().unwrap();
-        let keyspace = db
-            .keyspace("parse_states", fjall::KeyspaceCreateOptions::default)
-            .unwrap();
-
-        let result = ParseState::load_from_fjall(&keyspace, b"nonexistent");
-        assert!(result.unwrap().is_none());
-    }
+    // The Store-backed round-trip and not-found cases exercise the
+    // FjallStore impl and live as integration tests at
+    // `fmpl-core/tests/parse_state_persistence.rs`. Keeping them out of
+    // this `#[cfg(test)] mod tests` block keeps the
+    // no-fjall-in-fmpl-core source gate (T5) satisfied.
 }

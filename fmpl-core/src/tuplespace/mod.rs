@@ -8,11 +8,17 @@ pub mod store;
 pub mod stream;
 
 use crate::value::Value;
+use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::collections::HashMap;
 
 /// A tuple with metadata for pattern matching.
-#[derive(Debug, Clone, PartialEq)]
+///
+/// Derives `Serialize`/`Deserialize` so durable tuples can round-trip
+/// through the persistence envelope writer. The `Value` payload has
+/// full serde coverage including custom handlers for live resource
+/// handles like async streams.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Tuple {
     /// Tuple type for routing/pattern matching
     pub type_name: SmolStr,
@@ -24,6 +30,13 @@ pub struct Tuple {
     pub seq: u64,
     /// The tuple data
     pub data: Value,
+    /// Durability flag (per `specs/tuplespace.md` § Persistence).
+    /// When `true` AND the enclosing space has a backing store, `out`
+    /// writes the tuple through to the store as a `PayloadKind::Tuple`
+    /// envelope record. `true` with no backing store is a hard error.
+    /// `false` is the default and means in-memory only.
+    #[serde(default)]
+    pub durable: bool,
 }
 
 impl Tuple {
@@ -35,6 +48,7 @@ impl Tuple {
             timestamp: 0,
             seq: 0,
             data,
+            durable: false,
         }
     }
 
@@ -54,6 +68,40 @@ impl Tuple {
     pub fn with_seq(mut self, seq: u64) -> Self {
         self.seq = seq;
         self
+    }
+
+    /// Mark this tuple as durable. With a backing store on the
+    /// enclosing space, `out` will write it through.
+    pub fn with_durable(mut self, durable: bool) -> Self {
+        self.durable = durable;
+        self
+    }
+
+    /// Compose this tuple's on-disk key from `(namespace, type, seq)`.
+    /// Key shape: `<ns-len:1><ns-bytes><type-len:2-be><type-bytes><seq:8-be>`.
+    /// `seq` is big-endian so byte-wise sort on the keyspace yields
+    /// the same FIFO order as the in-memory BTreeMap. Namespace is
+    /// length-prefixed so it can be the empty bytes for the no-namespace
+    /// case without colliding with namespaces whose name happens to
+    /// start with the type prefix.
+    pub fn store_key(&self) -> Vec<u8> {
+        let ns_bytes: &[u8] = self.namespace.as_ref().map(|s| s.as_bytes()).unwrap_or(b"");
+        assert!(
+            ns_bytes.len() <= u8::MAX as usize,
+            "namespace must be at most 255 bytes; tuplespace keys assume this for byte-prefix encoding"
+        );
+        let type_bytes = self.type_name.as_bytes();
+        assert!(
+            type_bytes.len() <= u16::MAX as usize,
+            "tuple type_name must be at most 65535 bytes; keys assume this for u16 length prefix"
+        );
+        let mut key = Vec::with_capacity(1 + ns_bytes.len() + 2 + type_bytes.len() + 8);
+        key.push(ns_bytes.len() as u8);
+        key.extend_from_slice(ns_bytes);
+        key.extend_from_slice(&(type_bytes.len() as u16).to_be_bytes());
+        key.extend_from_slice(type_bytes);
+        key.extend_from_slice(&self.seq.to_be_bytes());
+        key
     }
 }
 
@@ -267,5 +315,94 @@ mod tests {
         assert_eq!(tuple.timestamp, 123);
         assert_eq!(tuple.seq, 456);
         assert_eq!(tuple.data, Value::Int(42));
+        assert!(!tuple.durable, "default is non-durable");
+    }
+
+    #[test]
+    fn test_tuple_with_durable_flag() {
+        let tuple = Tuple::new(SmolStr::new("event"), Value::Int(1)).with_durable(true);
+        assert!(tuple.durable);
+    }
+
+    #[test]
+    fn test_tuple_serde_round_trip_primitive_data() {
+        // The Value enum already has serde coverage; check that wrapping
+        // a primitive in a Tuple round-trips bytes-identically.
+        let tuple = Tuple::new(SmolStr::new("event"), Value::Int(42))
+            .with_namespace(SmolStr::new("ns"))
+            .with_timestamp(1234)
+            .with_seq(5)
+            .with_durable(true);
+        let bytes = serde_json::to_vec(&tuple).expect("serialize");
+        let back: Tuple = serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(tuple, back);
+    }
+
+    #[test]
+    fn test_tuple_serde_round_trip_map_data() {
+        // Map payloads are the common case for tuplespace coordination.
+        let tuple = Tuple::new(
+            SmolStr::new("room"),
+            make_map(vec![
+                ("name", Value::String(SmolStr::new("Rusty Flagon"))),
+                ("desc", Value::String(SmolStr::new("cozy"))),
+            ]),
+        )
+        .with_durable(true);
+        let bytes = serde_json::to_vec(&tuple).expect("serialize");
+        let back: Tuple = serde_json::from_slice(&bytes).expect("deserialize");
+        assert_eq!(tuple, back);
+    }
+
+    #[test]
+    fn test_store_key_is_ordered_by_seq() {
+        // Property: for tuples in the same (namespace, type), the
+        // composite key sorts by seq. fjall iter() is byte-ordered,
+        // so this gives FIFO replay on reopen.
+        let t1 = Tuple::new(SmolStr::new("event"), Value::Null).with_seq(1);
+        let t2 = Tuple::new(SmolStr::new("event"), Value::Null).with_seq(2);
+        let t10 = Tuple::new(SmolStr::new("event"), Value::Null).with_seq(10);
+        let t256 = Tuple::new(SmolStr::new("event"), Value::Null).with_seq(256);
+        let mut keys = [
+            t10.store_key(),
+            t1.store_key(),
+            t256.store_key(),
+            t2.store_key(),
+        ];
+        keys.sort();
+        assert_eq!(keys[0], t1.store_key());
+        assert_eq!(keys[1], t2.store_key());
+        assert_eq!(keys[2], t10.store_key());
+        assert_eq!(keys[3], t256.store_key());
+    }
+
+    #[test]
+    fn test_store_key_distinguishes_namespace_from_type_collision() {
+        // Without length prefixing, namespace "evt" + type "X" could
+        // produce the same byte sequence as namespace "ev" + type "tX".
+        // Length-prefixing prevents that.
+        let a = Tuple::new(SmolStr::new("X"), Value::Null)
+            .with_namespace(SmolStr::new("evt"))
+            .with_seq(1);
+        let b = Tuple::new(SmolStr::new("tX"), Value::Null)
+            .with_namespace(SmolStr::new("ev"))
+            .with_seq(1);
+        assert_ne!(
+            a.store_key(),
+            b.store_key(),
+            "different (ns, type) must yield different keys"
+        );
+    }
+
+    #[test]
+    fn test_store_key_no_namespace_distinct_from_empty_namespace() {
+        // `None` namespace encodes as ns-len=0 with no bytes; explicit
+        // empty-string namespace would also be ns-len=0 with no bytes,
+        // which is fine because both are observably the same.
+        let none_ns = Tuple::new(SmolStr::new("event"), Value::Null).with_seq(1);
+        let some_a = Tuple::new(SmolStr::new("event"), Value::Null)
+            .with_namespace(SmolStr::new("a"))
+            .with_seq(1);
+        assert_ne!(none_ns.store_key(), some_a.store_key());
     }
 }

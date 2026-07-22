@@ -74,10 +74,14 @@ fn test_facet_writeonly_cannot_read() {
 #[test]
 fn test_facet_default_allows_all() {
     let mut vm = fmpl_core::Vm::new();
+    // `out` on a TupleSpace value takes a single tagged map. Facet-
+    // bound `out` (the other tests in this file) still takes two args
+    // because facets dispatch separately; shape unification on facets
+    // is a follow-up.
     let source = r#"
         let system = tuplespace.new()
 
-        system.out("event", "data")
+        system.out(%{type: "event", data: "data"})
         let result = system.in("event")
         result.data
     "#;

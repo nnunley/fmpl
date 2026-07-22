@@ -27,7 +27,7 @@ This implementation plan has been marked as complete. The tasks outlined in the 
 | Task 8: Integration tests | ✅ Complete | `33e08a2` |
 | Task 9: Documentation | ✅ Complete | (this commit) |
 
-**Status:** All tasks complete. Run `cargo test -p fmpl-core --features fjall-persistence` to verify.
+**Status:** All tasks complete. Run `cargo test -p fmpl-core --features persistence` to verify.
 
 ---
 
@@ -207,7 +207,7 @@ tempfile = "3"
 
 [features]
 default = []
-fjall-persistence = ["fjall"]
+persistence = ["fjall"]
 ```
 
 Update `StreamSource` enum:
@@ -227,7 +227,7 @@ enum StreamSource {
     Empty,
 }
 
-#[cfg(feature = "fjall-persistence")]
+#[cfg(feature = "persistence")]
 struct FjallOverflow {
     keyspace: fjall::Keyspace,
     partition: fjall::PartitionHandle,
@@ -238,7 +238,7 @@ Add `from_async_with_fjall` constructor and spill/restore logic.
 
 **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p fmpl-core test_large_buffer_spills_to_fjall -v --features fjall-persistence`
+Run: `cargo test -p fmpl-core test_large_buffer_spills_to_fjall -v --features persistence`
 Expected: PASS
 
 **Step 5: Commit**
@@ -700,7 +700,7 @@ Update `get_memo` and `set_memo` to check Fjall when not in memory.
 
 **Step 4: Run test to verify it passes**
 
-Run: `cargo test -p fmpl-core test_memo_table_persists -v --features fjall-persistence`
+Run: `cargo test -p fmpl-core test_memo_table_persists -v --features persistence`
 Expected: PASS
 
 **Step 5: Commit**
@@ -1024,5 +1024,5 @@ git commit -m "docs(grammar): add streaming grammar documentation"
 
 After completing all tasks, run the full test suite:
 ```bash
-cargo test -p fmpl-core --features fjall-persistence
+cargo test -p fmpl-core --features persistence
 ```

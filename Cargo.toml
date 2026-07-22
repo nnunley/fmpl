@@ -8,6 +8,9 @@ members = [
   "fmpl-tui",
   "fmpl-bootstrap",
   "fmpl-wasm",
+  "fmpl-persistence",
+  "fmpl-types",
+  "fmpl-workspace-tests",
   # "benches" is excluded from the default workspace: it depends unconditionally
   # on the external `execution_tape` crate (not part of this repo). To run the
   # benchmarks, vendor `execution_tape` at ../execution/execution_tape and add
@@ -22,31 +25,84 @@ license = "MIT"
 repository = "https://github.com/ndn/fmpl"
 
 [workspace.dependencies]
-# Core dependencies
+# Workspace-level dependency control (Task #21, 2026-05-14):
+# Every direct version pin in member Cargo.tomls is mirrored here so
+# upgrades happen in one place. Per-crate features stay at the call
+# site so each member can opt into what it needs (additive on top of
+# the version + any default-feature decisions made here).
+
+# --- Core / shared crates ---
 logos = "0.15"
 thiserror = "2.0"
 smol_str = { version = "0.3", features = ["serde"] }
-
-# CLI dependencies
-rustyline = "15.0"
-
-# Web dependencies
-axum = { version = "0.8", features = ["ws"] }
-tokio = { version = "1.42", features = ["full"] }
-tower-http = { version = "0.6", features = ["fs", "cors"] }
-tower = "0.5"
-
-# Shared
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
-
-# Persistence & hashing
-fjall = "2"
 blake3 = "1.5"
+zerocopy = { version = "0.8", features = ["derive"] }
+rand = "0.8"
+stacker = "0.1"
+curl = "0.4"
+chrono = "0.4"
 
-# Zero-copy serialization (bytecheck enabled by default)
+# --- Async runtime ---
+# tokio: workspace pin sets only the version with NO default features.
+# Each consumer adds the feature set it actually needs to keep binary
+# size honest. Past usage:
+#   fmpl-core regular-dep:  ["sync", "rt", "rt-multi-thread", "time"]
+#   fmpl-core dev-dep:      ["full", "test-util"]
+#   fmpl-tui:               ["sync", "rt", "rt-multi-thread"]
+#       (corrected by closing PAR R-F-C-1: was only ["sync"] in the
+#       past, but Runtime::new() requires rt-multi-thread; previously
+#       compiled only via Cargo feature unification from fmpl-core)
+#   fmpl-cli:               (was workspace = true with implicit ["full"])
+#   fmpl-web:               ["full"] (via workspace before this change)
+#   fmpl-persistence dev:   ["full"]
+tokio = { version = "1.42", default-features = false }
+
+# --- CLI / UI ---
+rustyline = "15.0"
+ratatui = "0.29"
+crossterm = "0.28"
+dirs = "5.0"
+
+# --- Web ---
+axum = { version = "0.8", features = ["ws"] }
+tower-http = { version = "0.6", features = ["fs", "cors"] }
+tower = "0.5"
+tower-sessions = "0.15"
+uuid = { version = "1.0", features = ["v4"] }
+base64 = "0.22"
+
+# --- Zero-copy serialization ---
 rkyv = { version = "0.8", features = ["smol_str-0_3"] }
 
-# Async streaming
-tokio-stream = "0.1"
-async-trait = "0.1"
+# --- Test / dev ---
+tempfile = "3"
+pretty_assertions = "1.4"
+inventory = "0.3"
+wiremock = "0.6"
+syn = { version = "2", features = ["full", "extra-traits", "visit"] }
+criterion = "0.5"
+
+# --- Persistence & hashing ---
+# fjall is NOT in [workspace.dependencies] — ITER-0005a.6 closed the
+# v2/v3 transition split. The only places that name fjall are:
+# - fmpl-persistence: regular-dep `fjall = "3"` (direct pin), gated
+#   behind `fjall-backend` feature. The Store trait abstracts fjall
+#   away from every other crate.
+# - fmpl-core dev-deps: `fjall = "3"` (direct pin) for integration
+#   tests that probe FjallStore semantics directly.
+# fmpl-web migrated off direct fjall use in 0005a.6; it now consumes
+# `fmpl-persistence = { workspace = true, features = ["fjall-backend"] }`
+# like every other Store consumer.
+
+# --- Internal workspace crates ---
+# Shared cross-crate types (ITER-0005a.0 rescoped, 2026-05-13)
+fmpl-types = { path = "fmpl-types" }
+# Persistence layer (ITER-0005a.5, 2026-05-14)
+fmpl-persistence = { path = "fmpl-persistence" }
+# Local-path entries for the remaining first-party crates. Listing
+# them here makes member Cargo.tomls uniform (`workspace = true`) and
+# centralizes the relative-path knowledge.
+fmpl-core = { path = "fmpl-core" }
+fmpl-scenario-runner = { path = "fmpl-scenario-runner" }

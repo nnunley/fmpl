@@ -1,0 +1,199 @@
+title: "FMPL — three-hash audit + cross-process source handoff"
+
+description: |
+  Two `fmpl-cli` REPL processes, sequenced through the same on-disk
+  content-addressed SourceStore. Alice defines a value, stores it under
+  THREE hashes (source text, runtime Value, compiled bytecode), closes
+  her process. Bob — a fresh process spawned after Alice exits — fetches
+  each hash and recovers the bytes. The harness asserts byte-identical
+  recovery across the process boundary.
+
+  Sequencing is required because fjall (the v3 LSM backend) takes a
+  single-writer file lock on the keyspace directory: two processes
+  cannot hold it open at the same time. Alice writes, closes (releases
+  the lock), Bob opens. This honest constraint is itself a finding —
+  the design invariant "transparent persistence" doesn't yet imply
+  "concurrent multi-process access," and the demo shows where that
+  seam will land.
+
+defaults:
+  # Default sleep between actions (seconds). Per-action `sleep_after`
+  # overrides this. CLI --fast overrides everything to 0.0.
+  sleep_after: 0.6
+
+actions:
+  - type: comment
+    title: "Reading guide"
+    body: |
+      Three artifacts derive from one FMPL binding:
+        1. SOURCE  — the exact bytes the user typed (`\x x * x`).
+        2. VALUE   — the serialized runtime Value enum (JSON).
+        3. BYTECODE — the Lambda's CompiledCode (instructions + nested).
+
+      Each goes into the same content-addressed SourceStore under its
+      blake3 hash. The store doesn't know the kind — that lives only in
+      the metadata `.store-*` prints.
+
+      Two REPL processes (Alice, Bob) sequence through one store.
+      Bob's recovery is byte-identical to Alice's input — that's the
+      audit at the end.
+
+
+  # ───────── Setup ─────────
+  - type: banner
+    title: "Setup — Alice spawns and opens a shared store"
+
+  - type: narrate
+    text: >-
+      Alice starts as an independent `cargo run -p fmpl-cli` process and
+      opens an on-disk SourceStore at a fresh tmpdir.
+
+  - type: spawn
+    name: alice
+
+  - type: open_store
+    in: alice
+    path: "{{ tmpdir }}"
+
+  # ───────── Alice writes ─────────
+  - type: banner
+    title: "Alice — define a lambda, store under THREE hashes"
+
+  - type: narrate
+    text: >-
+      Alice defines `square = \x x * x`. Three distinct artifacts derive
+      from this single binding: the source text the user typed, the
+      runtime Value (a Lambda), and the compiled CompiledCode. Each gets
+      a different content hash because they're different bytes.
+
+  - type: repl_eval
+    in: alice
+    expr: 'let square = \x x * x'
+
+  - type: section
+    title: "1. Hash the SOURCE TEXT"
+
+  - type: narrate
+    text: >-
+      `.store-source` reaches into the REPL's binding→source map
+      (captured at let-bind time) and hashes the exact bytes the user
+      typed.
+
+  - type: store_source
+    in: alice
+    var: square
+    capture_hash_as: source_hash
+
+  - type: section
+    title: "2. Hash the runtime VALUE"
+
+  - type: narrate
+    text: >-
+      `.store-value` serializes the Value enum via serde_json. The Value
+      enum derives `Serialize`/`Deserialize` — that work landed early in
+      ITER-0005, with explicit `#[serde]` handling for every variant
+      (live handles serialize to suspended-reconnect tokens; capability
+      handles are `#[serde(skip)]`).
+
+  - type: store_value
+    in: alice
+    var: square
+    capture_hash_as: value_hash
+
+  - type: section
+    title: "3. Hash the compiled BYTECODE"
+
+  - type: narrate
+    text: >-
+      `.store-bytecode` extracts `Lambda.code: Arc<CompiledCode>` and
+      serializes that. Just instructions + nested code + constants — no
+      Value-level metadata.
+
+  - type: store_bytecode
+    in: alice
+    var: square
+    capture_hash_as: bytecode_hash
+
+  # ───────── Alice exits ─────────
+  - type: banner
+    title: "Alice exits — releases the fjall write lock"
+
+  - type: narrate
+    text: >-
+      Closing Alice's process flushes any pending fjall writes and
+      releases the directory's file lock. The store on disk is now
+      consistent and Bob (or anyone else) can open it.
+
+  - type: close_session
+    name: alice
+
+  # ───────── Bob spawns ─────────
+  - type: banner
+    title: "Bob — fresh process, fetch all three hashes"
+
+  - type: narrate
+    text: >-
+      Bob is a different `cargo run -p fmpl-cli` invocation. He shares no
+      memory with Alice — only the on-disk fjall store. He opens the
+      same directory and fetches each hash. The store doesn't know which
+      hash means what; the kind annotation lives only in the metadata
+      `.store-*` prints, not in the stored record itself.
+
+  - type: spawn
+    name: bob
+
+  - type: open_store
+    in: bob
+    path: "{{ tmpdir }}"
+
+  - type: section
+    title: "Fetch the source-text hash"
+
+  - type: fetch
+    in: bob
+    hash: "{{ source_hash }}"
+    capture_source_as: bob_source
+
+  - type: section
+    title: "Fetch the value hash"
+
+  - type: fetch
+    in: bob
+    hash: "{{ value_hash }}"
+    capture_source_as: bob_value_json
+
+  - type: section
+    title: "Fetch the bytecode hash"
+
+  - type: fetch
+    in: bob
+    hash: "{{ bytecode_hash }}"
+    capture_source_as: bob_bytecode_json
+
+  # ───────── Audit ─────────
+  - type: banner
+    title: "Audit — what Bob recovered must match what Alice stored"
+
+  - type: narrate
+    text: >-
+      The strongest evidence the substrate works: Bob's recovered source
+      text must equal the exact bytes Alice typed. Different processes,
+      sequenced through one shared on-disk store, byte-identical
+      recovery.
+
+  - type: assert_equal
+    label: "Bob's recovered source == Alice's typed source"
+    # `.fetch` prints `source: "<bytes>"` where the printer escapes a
+    # literal backslash as `\\`. We compare the printed form so the
+    # transcript is self-evidently consistent.
+    lhs: "{{ bob_source }}"
+    rhs: "\\\\x x * x"
+
+  - type: narrate
+    text: >-
+      All three round-trips succeeded across process boundaries. This is
+      the FMPL persistence substrate working end-to-end through the
+      shipped REPL. The fjall single-writer constraint is the real
+      limitation today — the next iteration wires this same `Store`
+      trait through the in-memory tuplespace, AND addresses the
+      multi-writer story (broker process or read-replica path).

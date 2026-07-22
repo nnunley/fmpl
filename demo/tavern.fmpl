@@ -10,8 +10,8 @@
 // --- 1. Tuple space: room state -------------------------------------------
 
 let world = tuplespace.new();
-world.out(:room, %{name: "The Rusty Flagon", desc: "A cozy tavern with a roaring fire"});
-world.out(:menu, %{ale: 3, mead: 5, stew: 7})
+world.out(%{type: :room, data: %{name: "The Rusty Flagon", desc: "A cozy tavern with a roaring fire"}});
+world.out(%{type: :menu, data: %{ale: 3, mead: 5, stew: 7}})
 
 // --- 2. Objects with facets -----------------------------------------------
 
@@ -31,35 +31,54 @@ object barkeep {
 }
 
 // --- 3. Grammar: parse player commands ------------------------------------
+//
+// Customer-side verbs (look/talk/order) and staff-side verbs
+// (restock/stock_count) share one grammar; the dispatcher routes
+// through whatever actor facet the caller supplies, so capability
+// discipline rides on the actor, not on the parse.
 
 let cmd_grammar = grammar CmdGrammar {
-  command = look | talk | order
-  look    = "look" => :Look
-  talk    = "talk to " name:n => [:Talk, n]
-  order   = "order " item:i => [:Order, i]
-  name    = [a-zA-Z ]+:cs => cs
-  item    = [a-z]+:cs => cs
+  command  = look | talk | order | stock
+  look     = "look"          => :Look
+  talk     = "talk to " name:n => [:Talk, n]
+  order    = "order " item:i => [:Order, i]
+  stock    = "stock"         => :StockCount
+  name     = [a-zA-Z ]+:cs => cs
+  item     = [a-z]+:cs => cs
 }
 
-// --- 4. Pattern dispatch: route parsed commands ---------------------------
+// --- 4. Pattern dispatch: route parsed commands through an actor ----------
+//
+// Facet-NEUTRAL router: the actor (a facet handle on `barkeep`) is the
+// first argument. `:Look` reads from the world tuplespace (no actor
+// involved); every other branch invokes a method on the actor, so the
+// actor's facet decides whether the call lands or is rejected.
 
-let dispatch = \cmd cmd @ {
-  :Look          => world.rd(:room).data.desc
-  [:Talk, npc]   => barkeep.as(:customer).greet(npc)
-  [:Order, item] => barkeep.as(:customer).order(item)
-  _              => "You can't do that."
+let dispatch = \actor \cmd cmd @ {
+  :Look           => world.rd(:room).data.desc
+  [:Talk, npc]    => actor.greet(npc)
+  [:Order, item]  => actor.order(item)
+  :StockCount     => actor.stock_count()
+  _               => "You can't do that."
 }
 
 // --- 5. Parse commands, then dispatch them ---------------------------------
+//
+// The customer's view of the barkeep — limited to greet/menu/order.
+// Calling a staff-only method through this facet raises a runtime
+// capability error.
+
+let customer = barkeep.as(:customer)
+let staff    = barkeep.as(:staff)
 
 let look_cmd  = "look" @ cmd_grammar.command
 let talk_cmd  = "talk to Traveler" @ cmd_grammar.command
 let order_cmd = "order ale" @ cmd_grammar.command
 
-let look_result  = dispatch(look_cmd)
-let talk_result  = dispatch(talk_cmd)
-let order_result = dispatch(order_cmd)
-let menu_result  = barkeep.as(:customer).menu()
+let look_result  = dispatch(customer)(look_cmd)
+let talk_result  = dispatch(customer)(talk_cmd)
+let order_result = dispatch(customer)(order_cmd)
+let menu_result  = customer.menu()
 
 // Facet denial is tested in fmpl-core/tests/tavern_demo.rs
 
