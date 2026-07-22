@@ -3418,6 +3418,13 @@ impl Vm {
 
     fn call_builtin(&mut self, object: &str, method: &str, args: Vec<Value>) -> Result<Value> {
         match (object, method) {
+            #[cfg(not(all(feature = "curl-builtin", not(target_arch = "wasm32"))))]
+            ("__builtin_curl", _) => Err(Error::Runtime(
+                "curl builtin is not available in this build (requires the \
+                 `curl-builtin` feature on a native target)"
+                    .to_string(),
+            )),
+            #[cfg(all(feature = "curl-builtin", not(target_arch = "wasm32")))]
             ("__builtin_curl", "get") => {
                 let url = match args.first() {
                     Some(Value::String(s)) => s.as_str(),
@@ -3431,6 +3438,7 @@ impl Vm {
                 let options = args.get(2);
                 crate::builtins::CurlBuiltin::get(url, handle, options)
             }
+            #[cfg(all(feature = "curl-builtin", not(target_arch = "wasm32")))]
             ("__builtin_curl", "post") => {
                 let url = match args.first() {
                     Some(Value::String(s)) => s.as_str(),

@@ -39,7 +39,8 @@ pub enum ParseStateError {
     Serialize(serde_json::Error),
     /// Deserialization failed.
     Deserialize(serde_json::Error),
-    /// Fjall operation failed.
+    /// Fjall operation failed (fjall is native-only).
+    #[cfg(not(target_arch = "wasm32"))]
     Fjall(fjall::Error),
 }
 
@@ -48,6 +49,7 @@ impl std::fmt::Display for ParseStateError {
         match self {
             Self::Serialize(e) => write!(f, "serialize error: {}", e),
             Self::Deserialize(e) => write!(f, "deserialize error: {}", e),
+            #[cfg(not(target_arch = "wasm32"))]
             Self::Fjall(e) => write!(f, "fjall error: {}", e),
         }
     }
@@ -78,7 +80,8 @@ impl ParseState {
     /// (unlike `compiler.rs::save_to_fjall` and `object.rs::save_to_fjall`).
     /// The asymmetry is preserved per the ITER-0005a.2 scope-card decision;
     /// closing it is a separate future hardening iteration. The envelope
-    /// helper itself is unconditional, so this works.
+    /// helper itself is unconditional (on native targets), so this works.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn save_to_fjall(
         &self,
         keyspace: &fjall::Keyspace,
@@ -104,6 +107,7 @@ impl ParseState {
     /// 0005a.2's writer sweep, on-disk values have a 56-byte envelope
     /// header followed by the serialized payload. ITER-0005a.3 will
     /// replace this manual strip with `loader::decode(&bytes)`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_from_fjall(
         keyspace: &fjall::Keyspace,
         key: &[u8],

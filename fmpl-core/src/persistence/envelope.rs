@@ -150,6 +150,7 @@ impl EnvelopeHeader {
 
 /// Error from [`write`]. Wraps the two failure modes of envelope writes:
 /// serialization (`serde_json::Error`) and keyspace I/O (`fjall::Error`).
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, thiserror::Error)]
 pub enum EnvelopeWriteError {
     /// Serializing the payload to bytes failed.
@@ -174,6 +175,7 @@ pub enum EnvelopeWriteError {
 ///
 /// On success the keyspace contains a value of exactly
 /// `ENVELOPE_HEADER_SIZE + serialized_payload.len()` bytes.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn write<T: serde::Serialize>(
     keyspace: &fjall::Keyspace,
     key: &[u8],

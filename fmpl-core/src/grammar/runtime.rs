@@ -16,8 +16,23 @@ use crate::value::Value;
 
 /// Stack size threshold for stacker to grow the stack.
 /// Using larger red zone (256KB) to account for large closures and VM frames.
+#[cfg(not(target_arch = "wasm32"))]
 const STACK_RED_ZONE: usize = 256 * 1024;
+#[cfg(not(target_arch = "wasm32"))]
 const STACK_GROWTH: usize = 4 * 1024 * 1024;
+
+/// Grow the stack before deep recursion on native targets. Wasm has a fixed
+/// stack and no stacker support, so the closure runs directly there — the
+/// `trampolined-grammar` feature is the bounded-stack alternative on wasm.
+#[cfg(not(target_arch = "wasm32"))]
+fn grow_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(STACK_RED_ZONE, STACK_GROWTH, f)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn grow_stack<R>(f: impl FnOnce() -> R) -> R {
+    f()
+}
 use super::incremental::{ParseNext, ParseState};
 use super::input::{
     BinaryInput, InputItem, MemoEntry, PegInput, StreamingInput, TextInput, ValueInput,
@@ -125,10 +140,8 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
 
     /// Apply a named rule at a position.
     fn apply_rule(&mut self, rule_name: &SmolStr, pos: I::Position) -> Result<ParseResult> {
-        // Use stacker to dynamically grow stack for deeply recursive grammars
-        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROWTH, || {
-            self.apply_rule_inner(rule_name, pos.clone())
-        })
+        // Grow the stack for deeply recursive grammars (native only)
+        grow_stack(|| self.apply_rule_inner(rule_name, pos.clone()))
     }
 
     /// Inner implementation of apply_rule, called via stacker.
@@ -281,10 +294,8 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
 
     /// Match a pattern at a position.
     fn match_pattern(&mut self, pattern: &Pattern, pos: I::Position) -> Result<ParseResult> {
-        // Use stacker to dynamically grow stack for deeply recursive grammars
-        stacker::maybe_grow(STACK_RED_ZONE, STACK_GROWTH, || {
-            self.match_pattern_inner(pattern, pos.clone())
-        })
+        // Grow the stack for deeply recursive grammars (native only)
+        grow_stack(|| self.match_pattern_inner(pattern, pos.clone()))
     }
 
     /// Inner implementation of match_pattern, called via stacker.
@@ -1234,11 +1245,11 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
     fn evaluate_predicate(&mut self, expr: &crate::ast::Expr) -> Result<Value> {
         // If we have an action evaluator, use it for predicates too
         if let Some(ref evaluator) = self.action_evaluator {
-            // Wrap in stacker to handle deep recursion from VM evaluation
+            // Grow the stack to handle deep recursion from VM evaluation
             let evaluator_clone = evaluator.clone();
             let bindings_clone = self.bindings.clone();
             let expr_clone = expr.clone();
-            return stacker::maybe_grow(STACK_RED_ZONE, STACK_GROWTH, move || {
+            return grow_stack(move || {
                 evaluator_clone.borrow_mut()(&expr_clone, &bindings_clone)
             });
         }
@@ -1251,11 +1262,11 @@ impl<'a, 'e, I: PegInput> PegRuntime<'a, 'e, I> {
     fn evaluate_action(&mut self, action: &crate::ast::Expr, matched: Value) -> Result<Value> {
         // If we have an action evaluator, use it
         if let Some(ref evaluator) = self.action_evaluator {
-            // Wrap in stacker to handle deep recursion from VM evaluation
+            // Grow the stack to handle deep recursion from VM evaluation
             let evaluator_clone = evaluator.clone();
             let bindings_clone = self.bindings.clone();
             let action_clone = action.clone();
-            return stacker::maybe_grow(STACK_RED_ZONE, STACK_GROWTH, move || {
+            return grow_stack(move || {
                 evaluator_clone.borrow_mut()(&action_clone, &bindings_clone)
             });
         }

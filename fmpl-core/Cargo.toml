@@ -7,7 +7,11 @@ license.workspace = true
 description = "FMPL language core: lexer, parser, compiler, and VM"
 
 [features]
-default = []
+default = ["curl-builtin"]
+# HTTP builtins (curl.get / curl.post) via libcurl C bindings. On by default;
+# inert on wasm32 (the dep is native-only, so the builtin reports itself
+# unavailable at runtime there even with the feature on).
+curl-builtin = ["dep:curl"]
 # Use trampolined grammar evaluation for bounded stack usage
 trampolined-grammar = []
 # Cross-compilation to the external `execution_tape` VM. That crate is not part
@@ -20,20 +24,31 @@ cross_compile = []
 fjall-persistence = []
 
 [dependencies]
-curl = "0.4"
 # execution_tape = { optional = true, path = "../../execution/execution_tape", package = "execution_tape" }  # external crate; see the `cross_compile` feature above
-fjall = "3"
 logos = { workspace = true }
 rand = "0.8"
 rkyv = { workspace = true }
 serde = { workspace = true }
 serde_json = "1.0"
 smol_str = { workspace = true }
-stacker = "0.1"
 thiserror = { workspace = true }
-tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time"] }
 zerocopy = { version = "0.8", features = ["derive"] }
 blake3 = "1"
+
+# Native-only: curl binds C libcurl; fjall and stacker need real files/stacks;
+# tokio's rt-multi-thread needs OS threads. Code touching these is gated on
+# `not(target_arch = "wasm32")` (see lib.rs for the fjall-persistence guard).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+curl = { version = "0.4", optional = true }
+fjall = "3"
+stacker = "0.1"
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", features = ["sync", "rt", "time"] }
+# rand's getrandom backend needs the `js` feature to compile for
+# wasm32-unknown-unknown (browser crypto.getRandomValues).
+getrandom = { version = "0.2", features = ["js"] }
 
 [dev-dependencies]
 fmpl-scenario-runner = { path = "../fmpl-scenario-runner" }

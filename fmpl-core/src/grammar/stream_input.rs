@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -61,10 +62,16 @@ pub enum MemoEntry {
 }
 
 /// Fjall-backed overflow storage for spilled positions.
+#[cfg(not(target_arch = "wasm32"))]
 struct FjallOverflow {
     #[allow(dead_code)]
     keyspace: fjall::Keyspace,
 }
+
+/// Wasm stub: fjall is native-only, so overflow storage is never constructed
+/// there — the type exists only to keep field/signature shapes uniform.
+#[cfg(target_arch = "wasm32")]
+struct FjallOverflow {}
 
 impl std::fmt::Debug for FjallOverflow {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -74,7 +81,12 @@ impl std::fmt::Debug for FjallOverflow {
 
 /// Fjall-backed memo storage wrapper for StreamPosition.
 /// Wraps a PartitionHandle with Debug implementation.
+#[cfg(not(target_arch = "wasm32"))]
 struct MemoFjall(fjall::Keyspace);
+
+/// Wasm stub: never constructed (see [`FjallOverflow`]).
+#[cfg(target_arch = "wasm32")]
+struct MemoFjall();
 
 impl std::fmt::Debug for MemoFjall {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -141,6 +153,7 @@ impl StreamPosition {
     /// `timeout` is the timeout for blocking recv operations (use `None` for infinite blocking).
     /// `fjall_path` is the optional directory for Fjall storage (None = no overflow).
     /// `memory_limit` is the number of positions to keep in memory before spilling to Fjall.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_async_with_fjall(
         handle: StreamHandle,
         timeout: Option<Duration>,
@@ -197,6 +210,7 @@ impl StreamPosition {
     /// Create a new stream from a static list of values with Fjall memo backing.
     ///
     /// `fjall_path` is the directory for Fjall storage for memo tables.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn from_values_with_memo_fjall(values: Vec<Value>, fjall_path: PathBuf) -> Rc<Self> {
         if values.is_empty() {
             return Self::end_of_stream(None);
@@ -285,10 +299,13 @@ impl StreamPosition {
         receiver: &mut mpsc::Receiver<StreamEvent>,
         timeout: Option<Duration>,
     ) -> Option<Value> {
-        // Check if we're already in a runtime
+        // Check if we're already in a runtime. block_in_place only exists on
+        // multi-thread runtimes, which don't exist on wasm — there the
+        // temporary-runtime path below is the only one.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
             // We're in a runtime - use block_in_place to allow blocking
-            tokio::task::block_in_place(|| {
+            return tokio::task::block_in_place(|| {
                 rt_handle.block_on(async {
                     match timeout {
                         Some(duration) => {
@@ -307,8 +324,10 @@ impl StreamPosition {
                         }
                     }
                 })
-            })
-        } else {
+            });
+        }
+
+        {
             // Not in a runtime - create a temporary one for the blocking call
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_time()
@@ -389,7 +408,13 @@ impl StreamPosition {
                     }
                 }
 
+                // Fjall overflow/spill is native-only; on wasm these bindings
+                // have no readers.
+                #[cfg(target_arch = "wasm32")]
+                let _ = (fjall, memory_limit);
+
                 // Check if it's in Fjall overflow
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(fjall_overflow) = fjall
                     && let Some(pos) = Self::restore_from_fjall(
                         fjall_overflow,
@@ -420,6 +445,7 @@ impl StreamPosition {
                     positions_guard.push(new_pos.clone());
 
                     // Check if we need to spill to Fjall
+                    #[cfg(not(target_arch = "wasm32"))]
                     if let Some(limit) = memory_limit
                         && positions_guard.len() > *limit
                         && let Some(fjall_overflow) = fjall
@@ -462,6 +488,7 @@ impl StreamPosition {
     /// `Result`. Source-hash deferred to ITER-0005b; uses NO_SOURCE_HASH.
     ///
     /// [`PayloadKind::StreamPosition`]: crate::persistence::schema::PayloadKind::StreamPosition
+    #[cfg(not(target_arch = "wasm32"))]
     fn spill_to_fjall(fjall: &FjallOverflow, pos: &Rc<StreamPosition>) {
         use crate::persistence::envelope::{NO_SOURCE_HASH, write};
         use crate::persistence::schema::PayloadKind;
@@ -494,6 +521,7 @@ impl StreamPosition {
     /// 0005a.2's writer sweep wraps every fjall value in a 56-byte envelope
     /// header followed by the JSON payload. ITER-0005a.3 will replace this
     /// strip with `loader::decode(&bytes)` returning a `DecodedRecord`.
+    #[cfg(not(target_arch = "wasm32"))]
     fn restore_from_fjall(
         fjall: &FjallOverflow,
         index: usize,
@@ -549,8 +577,10 @@ impl StreamPosition {
             return Some(entry);
         }
 
-        // Check Fjall storage if configured
+        // Check Fjall storage if configured (native-only; memo_fjall is
+        // always None on wasm)
         // TODO(ITER-0005a.3): replace manual prefix-strip with loader::decode.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(ref memo_fjall) = self.memo_fjall {
             use crate::persistence::envelope::ENVELOPE_HEADER_SIZE;
             let memo_fjall_guard = memo_fjall.lock().unwrap();
@@ -575,10 +605,12 @@ impl StreamPosition {
         // Write to in-memory cache
         self.memo.borrow_mut().insert(rule.clone(), entry.clone());
 
-        // Write to Fjall storage if configured.
+        // Write to Fjall storage if configured (native-only; memo_fjall is
+        // always None on wasm).
         // Routes through persistence::envelope::write per STORY-0099 AC-5
         // (PayloadKind::MemoTable). Preserves panic-on-write semantics via
         // .expect(). Source-hash deferred to ITER-0005b.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Some(ref memo_fjall) = self.memo_fjall {
             use crate::persistence::envelope::{NO_SOURCE_HASH, write};
             use crate::persistence::schema::PayloadKind;
