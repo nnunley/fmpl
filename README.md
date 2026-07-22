@@ -93,11 +93,13 @@ Source → Lexer (logos) → Parser → AST → Compiler → Indexed RPN bytecod
 | `fmpl-tui` | Ratatui TUI for agentic LLM interaction |
 | `fmpl-scenario-runner` | Data-driven behavior-scenario test runner |
 | `fmpl-bootstrap` | Stage-0 Rust-compiler fallback for the bootstrap |
+| `fmpl-wasm` | wasm-bindgen bindings for the browser REPL |
 
 ## Documentation
 
 - [Engineering tour](https://mparrett.github.io/fmpl/fmpl-tour.html) — one-page overview: architecture, what works, what doesn't
 - [Browser REPL](https://mparrett.github.io/fmpl/repl.html) — fmpl-core as WebAssembly, live on GitHub Pages
+- Field logs — engineering retrospectives: [revitalizing the agent-written codebase](https://mparrett.github.io/fmpl/fmpl-rehab-log.html) and [closing the metacircular-parser gap](https://mparrett.github.io/fmpl/fmpl-field-log.html)
 - [`project.md`](project.md) — north star, principles, design lineage
 - [`docs/design-principles.md`](docs/design-principles.md) — durable design invariants
 - [`AGENTS.md`](AGENTS.md) — workflow rules and gotchas for agents and humans
