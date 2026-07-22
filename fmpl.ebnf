@@ -1,3 +1,12 @@
+Grammar reference for this FMPL dialect (reference only — the working parsers
+are fmpl-core/src/parser.rs and lib/core/fmpl_parser.fmpl).
+
+Provenance: descends from an EBNF that Norman Nunley, Jr. extracted from the
+sources of the original FMPL ("of Accardi", UC Berkeley XCF, c. 1992) in the
+late 1990s. It has since been extended with constructs the original never had
+(grammars, namespaces, pattern matching); the dialect described here is only
+lightly similar to the 1992 language.
+
 The terminal tokens defined in the grammar:
 TOKEN_OFFSET, FMPL_GC_COPIED, FLOAT, OBJ_TAG, TAG, STRING, SYMBOL, FN_TAG,
 NAMESPACE_TAG, GRAMMAR_TAG

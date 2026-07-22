@@ -362,7 +362,7 @@
 
 <span class="bar">$ just build && just test</span><span class="c">-- after four tiers and a publish pass, 2026-07-21:</span>
 <span class="o">1,390 passed / 0 failed / 185 ignored — each with a written reason</span></div>
-  <p class="term-cap">This log is the prequel to <a href="fmpl-field-log.html">Closing the Loop</a> and the making-of behind <a href="fmpl-tour.html">the engineering tour</a>. FMPL itself is a Rust revival of a 1992 MUD language; this is the log of reviving the revival.</p>
+  <p class="term-cap">This log is the prequel to <a href="fmpl-field-log.html">Closing the Loop</a> and the making-of behind <a href="fmpl-tour.html">the engineering tour</a>. FMPL itself is Norman Nunley&rsquo;s Rust-built descendant of a 1992 MUD language; this is the log of reviving his revival.</p>
 </header>
 
 <nav class="toc" aria-label="Contents">
@@ -380,7 +380,7 @@
 <section id="estate">
   <div class="sec-head"><span class="sec-num">§1</span><h2>What the machine left behind</h2></div>
   <div class="prose">
-    <p>The repo we inherited was written almost entirely by an autonomous agent loop — &ldquo;ralph,&rdquo; iterating against a roadmap for months. What it produced is genuinely impressive: a working language with a bytecode VM, a PEG grammar engine, an object system, and a parser that generates itself. What it also produced is the sediment of its own process: a 107-file <code>.agent/</code> memory system, 41 files of &ldquo;superpowers&rdquo; process documentation, ralph driver scripts, run logs, a bespoke <code>.git-issue/</code> tracker, and prompt files — roughly 30,000 lines of machinery <em>about</em> building the thing, interleaved with the thing.</p>
+    <p>The repo we inherited was written almost entirely by an autonomous agent loop — &ldquo;ralph,&rdquo; set up and steered by the project&rsquo;s creator, Norman Nunley, iterating against a roadmap for months. What it produced is genuinely impressive: a working language with a bytecode VM, a PEG grammar engine, an object system, and a parser that generates itself. What it also produced is the sediment of its own process: a 107-file <code>.agent/</code> memory system, 41 files of &ldquo;superpowers&rdquo; process documentation, ralph driver scripts, run logs, a bespoke <code>.git-issue/</code> tracker, and prompt files — roughly 30,000 lines of machinery <em>about</em> building the thing, interleaved with the thing.</p>
     <p>And the repo did not build. Not subtly: <code>cargo build</code> failed at manifest resolution, before compiling a line, because one workspace member had a path dependency on <code>execution_tape</code> — a &ldquo;verified bytecode VM&rdquo; crate that existed on exactly one machine, and this wasn&rsquo;t it. Cargo resolves every member&rsquo;s manifest before building any of them, so the missing path failed everything, including <code>cargo build -p fmpl-cli</code>. The agent never noticed because the agent never had to do a fresh clone.</p>
     <p>The first day was recon before surgery: a static read plus live runs of the REPL, TUI, and web app, written up as findings <em>before any code changed</em>. That ordering was deliberate. With an inherited codebase — especially an agent-inherited one — the temptation is to start fixing what you see; the discipline is to first record what is actually true, because you will not get a second chance to observe the artifact undisturbed.</p>
   </div>

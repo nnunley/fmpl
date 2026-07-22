@@ -15,11 +15,11 @@ capabilities, and durable state:
 - **Fjall-backed persistence** for live image and streaming overflow
 - **Pattern matching via `@` operator** for parsing and data transformation
 
-**Historical note**: FMPL ("of Accardi") was created in 1992 by Jon Blow at UC
-Berkeley's Experimental Computing Facility — a MUD server language in the
-LambdaMOO / ColdMUD tradition. This repository is a Rust revival adding modern
-streaming and agent capabilities. See [`README.md`](README.md) and
-[`project.md`](project.md).
+**Historical note**: this FMPL is Norman Nunley's descendant of the original
+FMPL ("of Accardi", UC Berkeley XCF, c. 1992, interpreter by Jon Blow) — seeded
+from an EBNF grammar Nunley extracted from the original sources in the late
+1990s, with new syntax and semantics beyond it. See [`README.md`](README.md)
+and [`project.md`](project.md).
 
 ## Workspace layout
 
@@ -70,7 +70,7 @@ comments):
 - `fmpl-core/src/parser_epoch.rs` — generator epoch; read its bump policy before changing codegen
 - `fmpl-core/src/error.rs` — Unified error types with `thiserror`
 - `fmpl-core/src/object.rs` — Prototype-based object system (spawn, facets)
-- `fmpl.ebnf` — Language grammar (reference only, not used by the parser)
+- `fmpl.ebnf` — Language grammar (reference only, not used by the parser; descends from Nunley's late-1990s extraction of the original FMPL grammar)
 
 ## Test organization
 

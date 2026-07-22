@@ -10,8 +10,9 @@ The long-term design borrows from VPRI FoNC's emphasis on live, inspectable syst
 
 ## Lineage
 
-- **1992**: FMPL ("of Accardi") created by Jon Blow at UC Berkeley's Experimental Computing Facility (XCF). A MUD server language similar to ColdMUD and LambdaMOO.
-- **2025-present**: Revival as a Rust implementation combining MUD heritage with modern streaming, grammars, and agent capabilities.
+- **c. 1992**: The original FMPL ("of Accardi") at UC Berkeley's Experimental Computing Facility (XCF), interpreter written by Jon Blow. A MUD server language similar to ColdMUD and LambdaMOO.
+- **Late 1990s**: Norman Nunley, Jr. extracts an EBNF grammar from the original FMPL sources.
+- **2025-present**: Nunley builds this language from that grammar — a Rust implementation whose syntax is only lightly similar to the original, combining the MUD heritage with modern streaming, grammars, and agent capabilities.
 
 ## Inspirations
 

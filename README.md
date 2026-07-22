@@ -17,11 +17,20 @@ or try the **[browser REPL](https://mparrett.github.io/fmpl/repl.html)**
 
 ## Lineage
 
-FMPL ("of Accardi") was created in 1992 by Jon Blow at UC Berkeley's
-Experimental Computing Facility — a MUD server language in the LambdaMOO /
-ColdMUD tradition. This is a 2025-present revival as a Rust implementation,
-combining that MUD heritage with modern streaming, first-class PEG grammars, and
-capability security. See [`project.md`](project.md) for the full north star.
+The original FMPL ("of Accardi") came out of UC Berkeley's Experimental
+Computing Facility around 1992 — a MUD server language in the LambdaMOO /
+ColdMUD tradition, with an interpreter written by Jon Blow.
+
+This FMPL was created by [Norman Nunley, Jr.](https://github.com/nnunley) and
+is a descendant of the original, not a restoration of it. Nunley extracted an
+EBNF grammar from the original FMPL sources in the late 1990s; decades later
+that grammar (see [`fmpl.ebnf`](fmpl.ebnf)) seeded this project. The syntax is
+only lightly similar to the 1992 language, and everything beyond the grammar —
+the streaming model, first-class PEG grammars, the indexed-RPN VM, capability
+security, the metacircular bootstrap — is new design. The MUD lineage is
+first-hand: Nunley also co-wrote cool++, a C++ rewrite of Stephen White's
+CoolMUD (White created MOO, from which LambdaMOO was forked). See
+[`project.md`](project.md) for the full north star.
 
 ## A taste
 
