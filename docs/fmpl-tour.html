@@ -114,7 +114,7 @@
     border: 1px solid var(--line);
     border-radius: 3px;
     padding: 0.08em 0.35em;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   pre {
     background: var(--code-bg);
@@ -363,7 +363,8 @@
     color: var(--missing);
     padding: 0.9rem 0 0.9rem 1.1rem;
   }
-  .ledger-row .desc { padding: 1rem 1.25rem 1rem 0.5rem; }
+  .ledger-row .desc { padding: 1rem 1.25rem 1rem 0.5rem; min-width: 0; }
+  @media (max-width: 30rem) { .ledger-row { grid-template-columns: 1fr; } }
   .ledger-row .desc b { display: block; font-size: 0.95rem; }
   .ledger-row .desc span { font-size: 0.875rem; color: var(--muted); }
 

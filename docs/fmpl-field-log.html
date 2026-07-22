@@ -115,7 +115,7 @@
     border: 1px solid var(--line);
     border-radius: 3px;
     padding: 0.08em 0.35em;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
   }
   pre {
     background: var(--code-bg);
@@ -289,7 +289,7 @@
     color: var(--accent-ink);
     padding: 0.9rem 0 0.9rem 1.1rem;
   }
-  .stack-row .desc { padding: 1rem 1.25rem 1rem 0.5rem; }
+  .stack-row .desc { padding: 1rem 1.25rem 1rem 0.5rem; min-width: 0; }
   .stack-row .desc b { display: block; font-size: 0.95rem; }
   .stack-row .desc span { font-size: 0.875rem; color: var(--muted); }
 
@@ -320,7 +320,8 @@
     padding: 0.9rem 0 0.9rem 1.1rem;
     white-space: nowrap;
   }
-  .ledger-row .desc { padding: 0.95rem 1.25rem 0.95rem 0.5rem; font-size: 0.9rem; color: var(--muted); }
+  .ledger-row .desc { padding: 0.95rem 1.25rem 0.95rem 0.5rem; font-size: 0.9rem; color: var(--muted); min-width: 0; }
+  @media (max-width: 30rem) { .ledger-row, .stack-row { grid-template-columns: 1fr; } }
 
   /* ---------- footer ---------- */
   footer {
