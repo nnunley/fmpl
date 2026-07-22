@@ -386,8 +386,13 @@ let fmpl_parser = grammar fmpl_parser {
              | peg_prefix:p ":" sym_ident:name sp => [:Bind, p, name]
              | peg_prefix
 
-    -- PEG sequence: space-separated patterns
-    peg_seq_item = peg_bind
+    -- PEG sequence: space-separated patterns.
+    -- A sequence item must stop before the next rule definition: in
+    -- `digit = [0-9] letter = [a-z]`, `letter` starts a new rule, not a rule
+    -- ref in digit's body. Mirrors GrammarParser::is_at_rule_start (ident
+    -- followed by '=' but not '=>').
+    peg_rule_start = ident_start ident_rest* sp "=" ~">"
+    peg_seq_item = ~peg_rule_start peg_bind:p => p
     peg_seq = peg_seq_item:first peg_seq_item+:rest => [:Seq, prepend(first, rest)]
             | peg_seq_item
 

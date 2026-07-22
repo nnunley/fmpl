@@ -846,7 +846,6 @@ fn test_grammar_simple_rule() {
     assert!(ast.is_ok(), "Failed to parse grammar: {:?}", ast);
 }
 
-#[ignore = "canonical meta-grammar cannot yet parse multi-rule grammar bodies (missing rule-start boundary), see docs/known-gaps.md"]
 #[test]
 fn test_grammar_multiple_rules() {
     let ast = generated_parse(r#"grammar G { digit = [0-9] letter = [a-zA-Z] }"#);
@@ -867,7 +866,6 @@ fn test_grammar_with_action() {
     );
 }
 
-#[ignore = "canonical meta-grammar cannot yet parse multi-rule grammar bodies (missing rule-start boundary), see docs/known-gaps.md"]
 #[test]
 fn test_grammar_with_repetition() {
     let ast = generated_parse(r#"grammar G { digits = [0-9]+ word = [a-z]* }"#);
