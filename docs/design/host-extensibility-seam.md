@@ -1,16 +1,16 @@
 # Host Extensibility Seam
 
-**Status**: Draft — being reframed onto A₀
+**Status**: Superseded — split into A₀/A₁/A₂
 **Date**: 2026-07-22
-**Related**: [computable-value-model.md](./computable-value-model.md), [async-streams.md](../../specs/async-streams.md), [persistence.md](../../specs/persistence.md), [vm.md](../../specs/vm.md)
+**Related**: [computable-value-model.md](./computable-value-model.md) (A₀), [stream-computation.md](./stream-computation.md) (A₁), [builtin-registry.md](./builtin-registry.md) (A₂)
 
-> **Reframe (2026-07-22, post-pushback):** this document predates the
-> [computable-value model (A₀)](./computable-value-model.md). The work splits into
-> **A₁ — streams** (a stream is a `Computation`; the `StreamProvider` `snapshot()`
-> below is a computation continuation) and **A₂ — builtin registry** (`HostCtx`
-> becomes the A₀ `StepCtx`, carrying the `io::load` evaluator re-entrancy). Both sit
-> on A₀. The registry/seam ideas here stand; the value-model plumbing moves to A₀.
-> This doc will be split into A₁ and A₂ specs.
+> **Superseded (2026-07-23, post-pushback).** This document predated the
+> [computable-value model (A₀)](./computable-value-model.md) and has been split:
+> **A₁ — [streams as `Computation`](./stream-computation.md)** and
+> **A₂ — [builtin & stream registry](./builtin-registry.md)**, both on A₀. Read those
+> for the current design; this doc is retained for context/history. The registry and
+> seam ideas here stand; the value-model plumbing moved to A₀, `HostCtx` became A₀'s
+> `StepCtx`, and `StreamProvider` became a `Computation` shape.
 
 ## Overview
 

@@ -32,14 +32,23 @@ invariants, see [`docs/design-principles.md`](../docs/design-principles.md).
 
 ## In progress / next
 
-Three sequenced sub-projects (see the design docs under `docs/design/`):
+Sequenced sub-projects (see the design docs under `docs/design/`):
 
-- **A — Host extensibility seam.** A `HostRegistry` the VM holds (injected like
-  `Store`) that replaces hardcoded builtin dispatch and hand-rolled tokio streams
-  with registered implementations; unifies `Value::Stream`/`AsyncStream` behind a
-  `StreamProvider` trait. Behavior-preserving; enables B.
-  → [`docs/design/host-extensibility-seam.md`](../docs/design/host-extensibility-seam.md)
-  *(design approved; implementation plan next)*
+- **A₀ — Computable-value model** *(foundation)*. `Value::Deferred(Arc<dyn Computation>)`;
+  a value *is* a computation. Trampolined `Computation` (`step → Done | Yield | Pending`);
+  the `Pending`/`Yield` continuation is the serializable snapshot. Subsumes
+  `Partial`/`Stream`/`AsyncStream`/`SuspendedStream`/`ParseStream` incrementally.
+  Enables async-without-tokio, no_std/wasm cooperative forcing, and unified persistence.
+  → [`docs/design/computable-value-model.md`](../docs/design/computable-value-model.md)
+- **A₁ — Streams as `Computation`** (on A₀). Folds the stream variants into
+  `Value::Deferred`; op pipeline becomes step-combinators; retires the tokio
+  busy-poll bridge.
+  → [`docs/design/stream-computation.md`](../docs/design/stream-computation.md)
+- **A₂ — Builtin & stream registry** (on A₀). A `HostRegistry` the VM holds (injected
+  like `Store`) replacing hardcoded builtin dispatch and hand-rolled tokio streams;
+  `HostCtx` is A₀'s `StepCtx`. *(Supersedes the earlier combined
+  [`host-extensibility-seam.md`](../docs/design/host-extensibility-seam.md).)*
+  → [`docs/design/builtin-registry.md`](../docs/design/builtin-registry.md)
 - **B — `#![no_std]` fmpl-core.** A default-on `std` feature gates
   async/persistence/io/http/threads/time; sync-thunk stream provider keeps
   streams alive in no_std; `hashbrown` HashMap + no_std lock replace the std

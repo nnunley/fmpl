@@ -85,8 +85,9 @@ pub trait Computation: Send + Sync {
 pub enum Step {
     /// Computation is complete.
     Done(Value),
-    /// Suspended, with everything needed to resume. May carry a reason
-    /// (awaiting IO, awaiting a sub-value, yielding a stream element, …).
+    /// Emitted a sequence element; resume for more. (streams — see A₁)
+    Yield(Value, Continuation),
+    /// Suspended, awaiting IO or a sub-value; resume when ready.
     Pending(Continuation),
 }
 ```
@@ -94,8 +95,11 @@ pub enum Step {
 - `step` does a **bounded** amount of work and returns — never blocks a runtime,
   never recurses unboundedly. This is what bounds the stack and lets the driver
   interleave/suspend.
-- A stream is a `Computation` whose `Pending` steps each carry a yielded element; a
-  promise is a `Computation` that `Pending`s until its IO resolves; a partial
+- The `Yield` arm is what [A₁](./stream-computation.md) needs: a stream `Computation`
+  `Yield`s elements and finally `Done`s; a non-stream computation never yields. An
+  async stream `Pending`s (awaiting IO) *between* `Yield`s — that is how async
+  elements arrive without a runtime.
+- A promise is a `Computation` that `Pending`s until its IO resolves, then `Done`s; a partial
   application `Done`s once fully applied. One interface, several shapes.
 
 ### The driver
