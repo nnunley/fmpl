@@ -400,7 +400,7 @@
 <div class="wrap">
 
 <header class="masthead">
-  <p class="eyebrow">Engineering tour &middot; github.com/mparrett/fmpl</p>
+  <p class="eyebrow">Engineering tour &middot; github.com/nnunley/fmpl</p>
   <h1>FMPL<span class="of">, &ldquo;of Accardi&rdquo;</span></h1>
   <p class="dek">Norman Nunley&rsquo;s streaming-first language for AI agents — grown in Rust from the grammar of a 1992 MUD-server language, with first-class PEG grammars, an indexed-RPN bytecode VM, and a parser that compiles itself.</p>
   <div class="meta-row">
@@ -649,7 +649,7 @@ code::eval(ir::compile(ir))
     <p>The build is two-step because of the bootstrap: a plain <code>cargo build</code> works but silently uses the Rust fallback parser. <code>just build</code> runs both steps and leaves the canonical FMPL-generated parser active (a parity test enforces it).</p>
   </div>
 
-<pre><code>git clone https://github.com/mparrett/fmpl && cd fmpl
+<pre><code>git clone https://github.com/nnunley/fmpl && cd fmpl
 just build      # bootstrap the FMPL-generated parser, then build the workspace
 just test       # 1,519 passing / 74 pinned to future work
 just repl       # REPL        (dot-commands: .help, .quit)
@@ -662,7 +662,7 @@ just tui        # terminal UI (Ctrl+L for LLM chat)</code></pre>
 </section>
 
 <footer>
-  <span>FMPL &middot; MIT &middot; github.com/mparrett/fmpl (fork of nnunley/fmpl)</span>
+  <span>FMPL &middot; MIT &middot; github.com/nnunley/fmpl</span>
   <span>Written 2026-07-20, counts updated 2026-07-22 &middot; all claims verified against a fresh REPL</span>
   <span>Field logs: <a href="fmpl-rehab-log.html">the rehabilitation</a> &middot; <a href="fmpl-field-log.html">closing the metacircular-parser gap</a></span>
 </footer>
