@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Revitalizing an Agent-Written Codebase: An FMPL Field Log</title>
+<title>Opening the Door: An FMPL Field Log</title>
 <style>
   :root {
     --ground: #f7f5f0;
@@ -342,32 +342,32 @@
 <div class="wrap">
 
 <header class="masthead">
-  <p class="eyebrow">Engineering field log &middot; github.com/mparrett/fmpl</p>
-  <h1>The Revival, Revived<span class="of">, in four tiers</span></h1>
+  <p class="eyebrow">Engineering field log &middot; github.com/nnunley/fmpl</p>
+  <h1>Opening the Door<span class="of">, in four tiers</span></h1>
   <p class="dek">Revitalizing an agent-written codebase: 24 commits from a repo that wouldn&rsquo;t build on a fresh clone to a published fork with CI, executable claims, and an honest ledger of its own gaps.</p>
   <div class="meta-row">
     <span><b>2</b> days, 2026-07-20&ndash;21</span>
-    <span><b>24</b> commits (PR&nbsp;#1)</span>
+    <span><b>24</b> commits</span>
     <span><b>4</b> tiers</span>
     <span><b>~30k</b> lines sidelined, 0 deleted</span>
     <span><b>build</b> broken &rarr; CI green</span>
   </div>
 
-  <div class="term" role="img" aria-label="Terminal transcript: a fresh clone failing to build before the rehabilitation, and the full suite passing after">
+  <div class="term" role="img" aria-label="Terminal transcript: a fresh clone failing to build before the work, and the full suite passing after">
 <span class="bar">$ git clone … fmpl && cd fmpl && cargo build</span><span class="c">-- first contact, 2026-07-20, HEAD bd7bcab:</span>
 <span class="e">error: failed to read `…/execution/execution_tape/Cargo.toml`</span>
 <span class="e">  No such file or directory (os error 2)</span>
-<span class="c">-- a path dep on a crate that exists on one machine in the world.</span>
+<span class="c">-- a path dep on a sibling crate that lives outside the repo.</span>
 <span class="c">-- one member's manifest fails the workspace — even `-p fmpl-cli`.</span>
 
 <span class="bar">$ just build && just test</span><span class="c">-- after four tiers and a publish pass, 2026-07-21:</span>
-<span class="o">1,390 passed / 0 failed / 185 ignored — each with a written reason</span></div>
-  <p class="term-cap">This log is the prequel to <a href="fmpl-field-log.html">Closing the Loop</a> and the making-of behind <a href="fmpl-tour.html">the engineering tour</a>. FMPL itself is Norman Nunley&rsquo;s Rust-built descendant of a 1992 MUD language; this is the log of reviving his revival.</p>
+<span class="o">~1,390 passed / 0 failed / ~185 ignored — reasons written into the suite</span></div>
+  <p class="term-cap">This log is the prequel to <a href="fmpl-field-log.html">Closing the Loop</a> and the making-of behind <a href="fmpl-tour.html">the engineering tour</a>. FMPL itself is Norman Nunley&rsquo;s Rust-built descendant of a 1992 MUD language; this is the log of preparing it for readers other than its author.</p>
 </header>
 
 <nav class="toc" aria-label="Contents">
   <ol>
-    <li><a href="#estate"><span class="n">§1</span> What the machine left behind</a></li>
+    <li><a href="#clone"><span class="n">§1</span> What a fresh clone met</a></li>
     <li><a href="#triage"><span class="n">§2</span> Keep, sideline, delete</a></li>
     <li><a href="#tiers"><span class="n">§3</span> Four tiers, one stack</a></li>
     <li><a href="#ci"><span class="n">§4</span> First contact with CI</a></li>
@@ -377,25 +377,25 @@
   </ol>
 </nav>
 
-<section id="estate">
-  <div class="sec-head"><span class="sec-num">§1</span><h2>What the machine left behind</h2></div>
+<section id="clone">
+  <div class="sec-head"><span class="sec-num">§1</span><h2>What a fresh clone met</h2></div>
   <div class="prose">
-    <p>The repo we inherited was written almost entirely by an autonomous agent loop — &ldquo;ralph,&rdquo; set up and steered by the project&rsquo;s creator, Norman Nunley, iterating against a roadmap for months. What it produced is genuinely impressive: a working language with a bytecode VM, a PEG grammar engine, an object system, and a parser that generates itself. What it also produced is the sediment of its own process: a 107-file <code>.agent/</code> memory system, 41 files of &ldquo;superpowers&rdquo; process documentation, ralph driver scripts, run logs, a bespoke <code>.git-issue/</code> tracker, and prompt files — roughly 30,000 lines of machinery <em>about</em> building the thing, interleaved with the thing.</p>
-    <p>And the repo did not build. Not subtly: <code>cargo build</code> failed at manifest resolution, before compiling a line, because one workspace member had a path dependency on <code>execution_tape</code> — a &ldquo;verified bytecode VM&rdquo; crate that existed on exactly one machine, and this wasn&rsquo;t it. Cargo resolves every member&rsquo;s manifest before building any of them, so the missing path failed everything, including <code>cargo build -p fmpl-cli</code>. The agent never noticed because the agent never had to do a fresh clone.</p>
-    <p>The first day was recon before surgery: a static read plus live runs of the REPL, TUI, and web app, written up as findings <em>before any code changed</em>. That ordering was deliberate. With an inherited codebase — especially an agent-inherited one — the temptation is to start fixing what you see; the discipline is to first record what is actually true, because you will not get a second chance to observe the artifact undisturbed.</p>
+    <p>FMPL is Norman Nunley&rsquo;s project, and most of its implementation was written by an autonomous agent loop — &ldquo;ralph&rdquo; — that he set up and steered against a roadmap for months. What that produced is genuinely impressive: a working language with a bytecode VM, a PEG grammar engine, an object system, and a parser that generates itself. It arrived with its development process attached, in the tree: a 107-file <code>.agent/</code> memory system, 41 files under <code>docs/superpowers/</code> (a roadmap, 31 EPIC requirement documents, a dated iteration log, a coverage ledger, a behavior corpus), ralph driver scripts and run logs, a bespoke <code>.git-issue/</code> tracker, and the prompt files that drove the loop. Roughly 30,000 lines — a real process, written down in the shape its tooling wanted, living beside the language it built.</p>
+    <p>And a fresh clone did not build. Not subtly: <code>cargo build</code> failed at manifest resolution, before compiling a line, because one workspace member had a path dependency on <code>execution_tape</code> — a &ldquo;verified bytecode VM&rdquo; crate developed alongside FMPL but outside the repo. Cargo resolves every member&rsquo;s manifest before building any of them, so the missing path failed everything, including <code>cargo build -p fmpl-cli</code>. Nothing in the loop&rsquo;s environment could have surfaced this: the crate was there, so the build was green every time it ran. A project with one machine can be correct on that machine indefinitely.</p>
+    <p>The first day was recon before surgery: a static read plus live runs of the REPL, TUI, and web app, written up as findings <em>before any code changed</em>. That ordering was deliberate. Arriving at someone else&rsquo;s working project, the temptation is to start fixing what you see; the discipline is to first record what is actually true — partly because you get one chance to observe the repo undisturbed, and partly because a fair amount of what looks like a defect from outside is a decision you haven&rsquo;t read yet. We held to the first half of that better than the second (§7).</p>
   </div>
 </section>
 
 <section id="triage">
   <div class="sec-head"><span class="sec-num">§2</span><h2>Keep, sideline, delete</h2></div>
   <div class="prose">
-    <p>The central judgment call of the whole rehabilitation: what to do with the agent&rsquo;s machinery. Deleting it would have been clean and irreversible — and wrong twice over. The harness is part of the project&rsquo;s story (the tour says plainly that the implementation is agent-written), and it may be useful again if an autonomous loop resumes. Keeping it in place was also wrong: a public repo where the first thing a visitor meets is the scaffolding, not the building.</p>
-    <p>The answer was a third category. Everything the agent needed and a human doesn&rsquo;t was moved — intact, in one commit — to an <code>archive/agent-harness</code> branch. Nothing was deleted; the main branch simply stopped carrying it. The same commit unified the agent&rsquo;s <code>CLAUDE.md</code> into a single human-and-agent <code>AGENTS.md</code>, later split again into lean workflow rules plus a <code>DEV.md</code> inventory. The test of the triage: in the days since, nobody has needed the process machinery back from the archive — though agent-era feature work off the same lineage (the ITER-0005 persistence arc — durable TupleSpace, content-addressed recovery, bytecode persistence — on branches this fork predated) was since grafted onto main and now underpins active design. The scaffolding was disposable; the code beneath it was not. Keeping the archive costs nothing, and it makes the history honest.</p>
+    <p>The central judgment call of the whole arc: what to do with the development harness. Deleting it would have been clean, irreversible, and wrong — it is how the project was actually built, and it may build it again. Keeping it on main was wrong for a narrower and more specific reason: our tooling is not ralph. We drive this repo with different agents on a different loop, so the harness&rsquo;s memory system, hooks, and state machine encoded a process we would not be following — sitting in the place a visitor looks first.</p>
+    <p>So the answer was a third category. Everything specific to the ralph loop was moved — intact, in one commit — to an <code>archive/agent-harness</code> branch. Nothing was deleted; the main branch simply stopped carrying it. The same commit unified the agent&rsquo;s <code>CLAUDE.md</code> into a single human-and-agent <code>AGENTS.md</code>, later split again into lean workflow rules plus a <code>DEV.md</code> inventory. What stayed on main is the part of the process that outlives the tooling change: <code>specs/</code>, the curated index that pairs each spec with the code implementing it, and <code>docs/behavior-scenarios.md</code>, which is a literal build input. Two days on, nobody has needed the process machinery back from the archive — though agent-era feature work off the same lineage (the ITER-0005 persistence arc — durable TupleSpace, content-addressed recovery, bytecode persistence — on branches this fork predated) was since grafted onto main and now underpins active design. The scaffolding was disposable; the code beneath it was not. Keeping the archive costs nothing, and it keeps the history honest.</p>
   </div>
 
   <div class="fieldnote">
     <span class="fn-label">Field note &middot; nothing is deleted</span>
-    <p>&ldquo;Sideline, don&rsquo;t delete&rdquo; became the arc&rsquo;s standing rule, and it echoes forward: the <code>pre-rehab</code> branch freezes the untouched inherited tip as PR&nbsp;#1&rsquo;s base, the advisory-PR convention pins every later phase boundary the same way, and the dormant <code>cross_compile</code> feature keeps the <code>execution_tape</code> integration described in comments rather than erased. A revitalization you can diff against its &ldquo;before&rdquo; is one you can trust.</p>
+    <p>&ldquo;Sideline, don&rsquo;t delete&rdquo; became the arc&rsquo;s standing rule, and it echoes forward: the <code>pre-rehab</code> branch freezes the untouched upstream tip as the first advisory PR&rsquo;s base, the advisory-PR convention pins every later phase boundary the same way, and the dormant <code>cross_compile</code> feature keeps the <code>execution_tape</code> integration described in comments rather than erased. A revitalization you can diff against its &ldquo;before&rdquo; is one you can trust.</p>
   </div>
 </section>
 
@@ -409,7 +409,7 @@
     <div class="stack-row"><div class="n">Tier 0/1</div><div class="desc"><b>Build hygiene: a fresh clone must build</b>
       <span>Drop the phantom <code>execution_tape</code> dependency (the <code>cross_compile</code> feature goes dormant, documented in Cargo.toml comments), untrack build artifacts, add README, LICENSE, a justfile, and a CI workflow. Everything else assumes this floor exists.</span></div></div>
     <div class="stack-row"><div class="n">Tier 2</div><div class="desc"><b>Sideline the harness</b>
-      <span>The ~30k-line move to <code>archive/agent-harness</code> (§2). Done early so every later diff is about the language, not the scaffolding.</span></div></div>
+      <span>The ~30k-line move to <code>archive/agent-harness</code> (§2). Done early so every later diff is about the language, not the harness.</span></div></div>
     <div class="stack-row"><div class="n">Tier 3</div><div class="desc"><b>Ergonomics: fix what bites in the first five minutes</b>
       <span>Accept <code>if</code> as a guard alias for <code>when</code> (the docs&rsquo; own idiom didn&rsquo;t parse), universal type predicates on every value, a targeted hint when <code>@{&hellip;}</code> misroutes, and a DEMO.md sweep against a live REPL.</span></div></div>
     <div class="stack-row"><div class="n">Tier 4</div><div class="desc"><b>Test quality: make the suite tell the truth</b>
@@ -417,38 +417,38 @@
   </div>
 
   <div class="prose">
-    <p>The ordering encodes a belief about inherited code: credibility is restored outside-in. A stranger&rsquo;s first five minutes are clone, build, run an example from the README, hit an edge. Ergonomic polish on a repo that doesn&rsquo;t build is decoration; deep test work before the harness is sidelined gets tangled in machinery that&rsquo;s about to move.</p>
+    <p>The ordering encodes a belief about arriving at someone else&rsquo;s code: credibility is restored outside-in. A stranger&rsquo;s first five minutes are clone, build, run an example from the README, hit an edge. Ergonomic polish on a repo that doesn&rsquo;t build is decoration; deep test work before the harness is sidelined gets tangled in files that are about to move.</p>
   </div>
 </section>
 
 <section id="ci">
   <div class="sec-head"><span class="sec-num">§4</span><h2>First contact with CI</h2></div>
   <div class="prose">
-    <p>The repo had never had CI — the agent ran its own checks, on its own machine, in its own environment. The very first CI run failed twice, and both failures were the same lesson wearing different clothes: <em>properties nobody asserts are properties nobody has</em>.</p>
-    <p>The first failure was the determinism check: regenerate the parser twice, byte-compare. The outputs differed every run — grammar rules travel through a <code>HashMap</code>, so each generator process emitted the parser&rsquo;s functions in a different random order. Rust doesn&rsquo;t care about definition order, so ~1,390 tests had been green for months over a nondeterministic build. The fix was one sort; the point is that the assertion had existed the whole time as an ignored test nobody ran.</p>
+    <p>The repo had never had CI; the loop ran its checks locally, which is what a solo project does right up until someone else needs to run them. The first CI contact taught the same lesson twice in quick succession: <em>properties nobody asserts are properties nobody has</em>.</p>
+    <p>The first failure was the determinism check: regenerate the parser twice, byte-compare. The outputs differed every run — grammar rules travel through a <code>HashMap</code>, so each generator process emitted the parser&rsquo;s functions in a different random order. Rust doesn&rsquo;t care about definition order, so ~1,390 tests had been green for months over a nondeterministic build. The fix was one sort. The part worth keeping is that the assertion already existed, as an ignored test: the property had been identified and written down long before anything was in a position to check it. CI didn&rsquo;t find a blind spot — it was the first machine other than the author&rsquo;s to run the check, which is the only thing the check had ever been missing.</p>
     <p>The second was humbler: CI installs the latest stable toolchain, and its clippy was newer than the local one, with new lints. A locally-clean build is only evidence about the local toolchain. That became a standing rule in <code>AGENTS.md</code> — keep local Rust current, because a clean local clippy is not proof of a green CI.</p>
-    <p>A third repair completed the set: the checked-arithmetic work from Tier 4 had moved a panic rather than removing it — the <em>generated parser&rsquo;s</em> digit-fold actions were emitted with <code>.unwrap()</code> on the newly-fallible ops. Threading <code>Result</code> through generated grammar actions (and rejecting the tempting <code>catch_unwind</code> shortcut, which would have poisoned VM mutexes) is the change that started the parser-generator epoch history at 6 — the same counter the <a href="fmpl-field-log.html">next arc</a> drove to 9.</p>
+    <p>A follow-up repair completed the set: the checked-arithmetic work from Tier 4 had moved a panic rather than removing it — the <em>generated parser&rsquo;s</em> digit-fold actions were emitted with <code>.unwrap()</code> on the newly-fallible ops. Threading <code>Result</code> through generated grammar actions (and rejecting the tempting <code>catch_unwind</code> shortcut, which would have poisoned VM mutexes) is the change that started the parser-generator epoch history at 6 — the same counter the <a href="fmpl-field-log.html">next arc</a> drove to 9.</p>
   </div>
 </section>
 
 <section id="ledger">
   <div class="sec-head"><span class="sec-num">§5</span><h2>The ledger is born</h2></div>
   <div class="prose">
-    <p>The suite we inherited had ~185 ignored tests with no stated reasons — indistinguishable from neglect, and unusable as a map. The Tier 4 pass read every one, grouped them by root cause, wrote a machine-readable reason into each <code>#[ignore]</code>, and distilled the result into <code>docs/known-gaps.md</code>: metacircular parser (~120), pattern matching (~50), pending design decisions, odds and ends.</p>
-    <p>This was the quiet keystone of the whole revitalization. An agent-written test suite encodes months of intent — tests written <em>ahead</em> of features, aspirational behavior pinned before it exists — but intent you can&rsquo;t read is indistinguishable from cruft. Turning the ignore pile into a ledger did two things: it made the repo honest to visitors (the count reads as roadmap, not rot), and it made progress <em>measurable</em>. The payoff came fast: the next arc picked the ~120 bucket off the top of the ledger, burned it to zero in two days, and could prove it — because the ledger defined what zero meant.</p>
+    <p>The suite carried ~185 ignored tests, and none of the <code>#[ignore]</code> attributes said why. The reasons were not missing, though — they were one system over, in the iteration log, where ITER-0000 records that &ldquo;22 full-pipeline tests remain ignored — these are the bootstrap bottleneck that ITER-0002/0003 will address.&rdquo; That is a stated reason. It just lived in the process layer, which is exactly the layer §2 had moved off main. The Tier 4 pass read every ignore, grouped them by root cause, wrote a machine-readable reason into the attribute itself, and distilled the result into <code>docs/known-gaps.md</code>: metacircular parser (~120), pattern matching (~50), pending design decisions, odds and ends.</p>
+    <p>This was the quiet keystone of the whole revitalization, and it is better described as a <em>relocation</em> than a discovery: intent moved from the process docs into the code, where it survives a change of tooling. A suite written ahead of its features encodes months of planning, but planning a reader can&rsquo;t reach from the test is planning they will misread as abandonment — we nearly did. Putting the reason inside the <code>#[ignore]</code> did two things: it made the count legible to a visitor as a roadmap, and it made progress <em>measurable</em>. The payoff came fast: the next arc picked the ~120 bucket off the top of the ledger, burned it to zero in two days, and could prove it — because the ledger defined what zero meant.</p>
   </div>
 </section>
 
 <section id="publish">
   <div class="sec-head"><span class="sec-num">§6</span><h2>Going public</h2></div>
   <div class="prose">
-    <p>Publishing had its own fork points. The upstream repo wasn&rsquo;t pushable (403 — no access), which settled the topology: a fork carries the work, upstream remains the lineage. The rehabilitated history needed to be <em>reviewable</em> without being <em>mergeable</em> — the fork&rsquo;s main already contained everything — which produced the advisory-PR convention: freeze a <code>pre-rehab</code> branch at the inherited tip, open a PR from main against it, mark it review-only, close it when read. The frozen base <em>is</em> the &ldquo;before&rdquo; snapshot; merging would destroy it. That convention outlived the rehab — every phase since gets an advisory PR based on the previous phase&rsquo;s frozen tip.</p>
+    <p>Publishing had its own fork points. The upstream repo wasn&rsquo;t pushable (403 — no access), which settled the topology: a fork carries the work, upstream remains the lineage. The revitalized history needed to be <em>reviewable</em> without being <em>mergeable</em> — the fork&rsquo;s main already contained everything — which produced the advisory-PR convention: freeze a <code>pre-rehab</code> branch at the upstream tip, open a PR from main against it, mark it review-only, close it when read. The frozen base <em>is</em> the &ldquo;before&rdquo; snapshot; merging would destroy it. That convention outlived this arc — every phase since gets an advisory PR based on the previous phase&rsquo;s frozen tip.</p>
     <p>The last mile was the <a href="fmpl-tour.html">engineering tour</a>: a single page that says what the thing is, what provably works, and what honestly doesn&rsquo;t — every claim in it verified against a fresh REPL, like the TUTORIAL sweep before it. GitHub Pages hosting came with one classic paper cut: Jekyll choked on the design docs, so <code>.nojekyll</code> ships in <code>docs/</code>. (Pages later moved to Actions-based deploys in the wasm arc; the file remains as a fossil of this one.)</p>
   </div>
 
   <dl class="forks">
     <dt>FORK-1<b>Sideline the harness, or delete it</b></dt>
-    <dd>Sidelined to an archive branch, zero lines deleted. The harness is provenance, not garbage — and reversibility was the theme of the whole arc.</dd>
+    <dd>Sidelined to an archive branch, zero lines deleted. It is how the project was built and may build it again; ours is simply a different loop. Reversibility was the theme of the whole arc.</dd>
     <dt>FORK-2<b>Vendor the phantom crate, or go dormant</b></dt>
     <dd><code>execution_tape</code> could have been vendored to keep <code>cross_compile</code> alive. Dormancy won: a fresh clone must build with zero external state, and the feature&rsquo;s seam is documented for whenever the crate returns.</dd>
     <dt>FORK-3<b>Fix the suite, or make it legible</b></dt>
@@ -461,21 +461,29 @@
 <section id="carried">
   <div class="sec-head"><span class="sec-num">§7</span><h2>What carried forward</h2></div>
   <div class="prose">
-    <p>Revitalizing an agent-written codebase turned out to differ from ordinary legacy work in one repeated way: the artifact is strong where humans are weak, and weak where humans are strong. The agent never got tired, so the language core is deep and the test suite vast. The agent never changed machines, so the build was broken for everyone else on earth. Its review and roadmap lived inside its own process layer — PAR adversarial audits, an iteration log, a behavior-scenario corpus — so to an outside reader who never opened that layer, nothing on the surface distinguished roadmap from rot. Every tier addressed some version of that asymmetry — and the fixes were mostly <em>social</em> artifacts, not code: a README, a ledger, a review convention, an archive, CI as an outside observer.</p>
-    <p>What the later arcs inherited from this one: a build a stranger can run, a ledger that made &ldquo;burn down the bucket&rdquo; a measurable goal, an advisory-PR convention still in use at #5 and #6, the epoch discipline for generated-parser changes, and the habit — docs verified against a live REPL — that grew into the doctest harness in the very next phase.</p>
+    <p>Joining an agent-built solo project turned out to differ from ordinary legacy work in one repeated way: almost nothing we fixed was a quality problem. It was the absence of an <em>independent</em> second party. The loop never got tired, so the language core is deep and the suite is vast. It also never changed machines, so a dependency living outside the repo stayed invisible; never opened a pull request, so a nondeterministic build had nobody to fail in front of; and kept its review and roadmap inside its own process layer — PAR adversarial audits, an iteration log, a behavior-scenario corpus — so to an outside reader who never opened that layer, nothing on the surface distinguished roadmap from rot. Every tier here is a version of adding that second party — and the fixes were mostly <em>social</em> artifacts rather than code: a README, a ledger, a review convention, an archive, CI as an outside observer.</p>
+    <p>What the later arcs kept from this one: a build a stranger can run, a ledger that made &ldquo;burn down the bucket&rdquo; a measurable goal, an advisory-PR convention still in use several phases later, the epoch discipline for generated-parser changes, and the habit — docs verified against a live REPL — that grew into the doctest harness in the very next phase.</p>
+    <p>One honest caveat for the work that followed: sidelining the harness did not only swap tooling. Several invariants the loop had enforced <em>in code</em> — full suite green before <code>jj describe</code>, design docs read before the first write, filtered cargo output — became prose in <code>AGENTS.md</code> that an agent is merely trusted to remember. That cost is real for forward work; restoring those gates in a form that is not bolted to one machine is sketched in <code>specs/portable-invariant-enforcement.md</code>.</p>
+  </div>
+
+  <div class="fieldnote">
+    <span class="fn-label">Field note &middot; the correction</span>
+    <p>Nunley corrected this claim, and the one in §2, on the published draft — by pull request, keeping our structure and changing two sentences. The framing that replaced them, review and roadmap living inside the loop&rsquo;s own process layer, is his. Thanks for both.</p>
+    <p>An earlier version of this log said the project &ldquo;never had a reviewer, so nothing distinguished roadmap from rot.&rdquo; That was wrong, and wrong in the way outsiders usually are. The process layer carried PAR (parallel adversarial review) — documented rounds that returned APPROVE / REVISE with numbered findings — plus a roadmap, 31 EPIC requirement documents, and a dated iteration log. <code>PROMPT.md</code> describes a state machine whose implementation arc runs <code>IMPLEMENT → VERIFY → REVIEW → COMMIT</code> (the research arc is <code>RESEARCH → DOCUMENT → COMMIT</code>, with no REVIEW); a directive early in that prompt sends the loop to study <code>specs/README.md</code>; and <code>specs/</code> stayed on main as a curated index pairing each spec with the code implementing it.</p>
+    <p>We read the absence of <em>our</em> process as the absence of <em>a</em> process, and we did it while holding the evidence: §2 of this log moved those files with our own hands. The body above is corrected. The note stays, because it is the most generalizable thing in here — when you fork someone&rsquo;s solo project, the undocumented part is the part that was obvious to its participants, and it is the first thing you will get wrong.</p>
   </div>
 
   <div class="ledger">
     <div class="ledger-row"><div class="count">broken &rarr; green</div><div class="desc">fresh-clone build; CI added and passing from the second run onward</div></div>
-    <div class="ledger-row"><div class="count">~30,000 &rarr; 0 lines</div><div class="desc">agent machinery on main — moved to <code>archive/agent-harness</code>, none deleted</div></div>
-    <div class="ledger-row"><div class="count">185 unexplained &rarr; 185 cataloged</div><div class="desc">ignored tests, each with a reason, grouped by root cause in <code>known-gaps.md</code></div></div>
+    <div class="ledger-row"><div class="count">~30,000 &rarr; 0 lines</div><div class="desc">ralph-specific harness on main — moved to <code>archive/agent-harness</code>, none deleted</div></div>
+    <div class="ledger-row"><div class="count">~185 cataloged</div><div class="desc">ignored tests — reasons moved out of the process docs and into the integration-suite <code>#[ignore]</code> attributes, grouped by root cause in <code>known-gaps.md</code></div></div>
     <div class="ledger-row"><div class="count">0 &rarr; 3</div><div class="desc">published surfaces: repo, engineering tour, review PR — the browser REPL followed one arc later</div></div>
   </div>
 </section>
 
 <footer>
-  <span>FMPL &middot; MIT &middot; github.com/mparrett/fmpl (fork of nnunley/fmpl)</span>
-  <span>Field log written 2026-07-22 &middot; prequel to <a href="fmpl-field-log.html">Closing the Loop</a> &middot; companion to <a href="fmpl-tour.html">the tour</a></span>
+  <span>FMPL &middot; MIT &middot; github.com/nnunley/fmpl</span>
+  <span>Field log written 2026-07-22, corrected 2026-07-24 &middot; the prequel to <a href="fmpl-field-log.html">Closing the Loop</a> &middot; companion to <a href="fmpl-tour.html">the tour</a></span>
 </footer>
 
 </div>
