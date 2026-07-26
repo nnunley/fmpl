@@ -357,10 +357,13 @@ impl StreamPosition {
         receiver: &mut mpsc::Receiver<StreamEvent>,
         timeout: Option<Duration>,
     ) -> Option<Value> {
-        // Check if we're already in a runtime
+        // Check if we're already in a runtime. `block_in_place` only exists on
+        // multi-thread runtimes, which don't exist on wasm — there the
+        // temporary-runtime path below is the only one.
+        #[cfg(not(target_arch = "wasm32"))]
         if let Ok(rt_handle) = tokio::runtime::Handle::try_current() {
             // We're in a runtime - use block_in_place to allow blocking
-            tokio::task::block_in_place(|| {
+            return tokio::task::block_in_place(|| {
                 rt_handle.block_on(async {
                     match timeout {
                         Some(duration) => {
@@ -379,9 +382,11 @@ impl StreamPosition {
                         }
                     }
                 })
-            })
-        } else {
-            // Not in a runtime - create a temporary one for the blocking call
+            });
+        }
+
+        {
+            // Not in a runtime (or on wasm) - create a temporary one for the call
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_time()
                 .build()

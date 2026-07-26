@@ -1,5 +1,11 @@
 # Known gaps
 
+> **Ground truth for work remaining.** The actionable checkbox form of this
+> analysis lives at [`specs/gaps.md`](../specs/gaps.md) — pick and check off work
+> there. This document is the prose root-cause narrative behind that tracker,
+> paired with [`specs/ROADMAP.md`](../specs/ROADMAP.md) (the arc), and registered
+> in [`specs/README.md`](../specs/README.md).
+
 FMPL is an experimental prototype, and the test suite encodes where the language
 is *going* as well as where it *is*. Roughly **75 tests are `#[ignore]`d** — not
 because they're broken, but because they pin behavior for features that aren't

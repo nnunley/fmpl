@@ -144,12 +144,13 @@ async fn test_multi_session_isolation() {
     let dir = temp_path();
     let session_store = MemoryStore::default();
 
-    // Simulate two different browser sessions
-    let app1 = build_test_app(&dir, &session_store);
-    let app2 = build_test_app(&dir, &session_store);
+    // Two browser sessions share one server/backend, distinguished by the
+    // session layer — not by opening the fjall backend twice (fjall
+    // exclusive-locks the keyspace, so a second open returns Backend(Locked)).
+    let app = build_test_app(&dir, &session_store);
 
-    // Session 1: GET /play
-    let response1 = app1
+    // Session 1: GET /play (no cookie -> a fresh session)
+    let response1 = app
         .clone()
         .oneshot(Request::get("/play").body(Body::empty()).unwrap())
         .await
@@ -161,8 +162,8 @@ async fn test_multi_session_isolation() {
         .trim_start_matches("/play/")
         .to_string();
 
-    // Session 2: GET /play (should create different continuation)
-    let response2 = app2
+    // Session 2: GET /play (no cookie -> a different fresh session)
+    let response2 = app
         .clone()
         .oneshot(Request::get("/play").body(Body::empty()).unwrap())
         .await

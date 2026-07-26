@@ -4,9 +4,9 @@
 multi-user/multi-agent environment, implemented in Rust. The persistent object
 image is the source of truth; source files are a bootstrapping convenience.
 
-New here? Read the **[engineering tour](https://mparrett.github.io/fmpl/fmpl-tour.html)** —
+New here? Read the **[engineering tour](https://nnunley.github.io/fmpl/fmpl-tour.html)** —
 architecture, verified capabilities, and the honest gap ledger, in one page —
-or try the **[browser REPL](https://mparrett.github.io/fmpl/repl.html)**
+or try the **[browser REPL](https://nnunley.github.io/fmpl/repl.html)**
 (fmpl-core compiled to WebAssembly, no install).
 
 > **Status: experimental.** FMPL is a working prototype under active
@@ -106,15 +106,25 @@ Source → Lexer (logos) → Parser → AST → Compiler → Indexed RPN bytecod
 
 ## Documentation
 
-- [Engineering tour](https://mparrett.github.io/fmpl/fmpl-tour.html) — one-page overview: architecture, what works, what doesn't
-- [Browser REPL](https://mparrett.github.io/fmpl/repl.html) — fmpl-core as WebAssembly, live on GitHub Pages
-- Field logs — engineering retrospectives: [revitalizing the agent-written codebase](https://mparrett.github.io/fmpl/fmpl-rehab-log.html) and [closing the metacircular-parser gap](https://mparrett.github.io/fmpl/fmpl-field-log.html)
+- [Engineering tour](https://nnunley.github.io/fmpl/fmpl-tour.html) — one-page overview: architecture, what works, what doesn't
+- [Browser REPL](https://nnunley.github.io/fmpl/repl.html) — fmpl-core as WebAssembly, live on GitHub Pages
+- Field logs — engineering retrospectives: [revitalizing the agent-written codebase](https://nnunley.github.io/fmpl/fmpl-rehab-log.html) and [closing the metacircular-parser gap](https://nnunley.github.io/fmpl/fmpl-field-log.html)
 - [`project.md`](project.md) — north star, principles, design lineage
 - [`docs/design-principles.md`](docs/design-principles.md) — durable design invariants
 - [`AGENTS.md`](AGENTS.md) — workflow rules and gotchas for agents and humans
 - [`DEV.md`](DEV.md) — codebase inventory: workspace layout, key files, documentation map
 - [`TUTORIAL.md`](TUTORIAL.md) / [`DEMO.md`](DEMO.md) — language walkthrough and examples
 - [`specs/`](specs/) — implementation specs (VM, object system, grammars, tuplespace, persistence, pattern matching)
+
+## Acknowledgements
+
+[Matt Parrett](https://github.com/mparrett) rehabilitated the repository for
+public release — a fresh clone that builds, GitHub Actions CI, the honest gap
+ledger ([`docs/known-gaps.md`](docs/known-gaps.md)), the WebAssembly browser
+REPL, and the engineering [tour](https://nnunley.github.io/fmpl/fmpl-tour.html)
+and field logs. See the
+[rehab field log](https://nnunley.github.io/fmpl/fmpl-rehab-log.html) for the
+full account.
 
 ## License
 
