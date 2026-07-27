@@ -105,6 +105,9 @@ Source → Lexer (logos) → Parser → AST → Compiler → Indexed RPN bytecod
 | `fmpl-scenario-runner` | Data-driven behavior-scenario test runner |
 | `fmpl-bootstrap` | Stage-0 Rust-compiler fallback for the bootstrap |
 | `fmpl-wasm` | wasm-bindgen bindings for the browser REPL |
+| `fmpl-persistence` | Persistence layer: envelope writer, loader, Store trait |
+| `fmpl-types` | Shared cross-crate types: VmVersion, Hash, SourceHash |
+| `fmpl-workspace-tests` | Workspace-level structural invariants (integration tests only) |
 
 ## Documentation
 
