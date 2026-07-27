@@ -30,9 +30,8 @@ that grammar (see [`fmpl.ebnf`](fmpl.ebnf)) seeded this project. The syntax is
 only lightly similar to the 1992 language, and everything beyond the grammar —
 the streaming model, first-class PEG grammars, the indexed-RPN VM, capability
 security, the metacircular bootstrap — is new design. The MUD lineage is
-first-hand: Nunley also co-wrote cool++, a C++ rewrite of Stephen White's
-CoolMUD (White created MOO, from which LambdaMOO was forked). See
-[`project.md`](project.md) for the full north star.
+first-hand: Nunley was one of the developers on cool++/ColdMUD and ColdStore.
+See [`project.md`](project.md) for the full north star.
 
 ## A taste
 
